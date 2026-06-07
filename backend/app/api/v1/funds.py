@@ -88,9 +88,16 @@ async def search_funds_master(query: str):
 async def get_funds(
     category: Optional[str] = None,
     min_cagr_1y: Optional[float] = None,
+    max_cagr_1y: Optional[float] = None,
     min_cagr_3y: Optional[float] = None,
+    max_cagr_3y: Optional[float] = None,
+    min_cagr_5y: Optional[float] = None,
+    max_cagr_5y: Optional[float] = None,
+    min_expense_ratio: Optional[float] = None,
     max_expense_ratio: Optional[float] = None,
     min_sharpe_ratio: Optional[float] = None,
+    max_sharpe_ratio: Optional[float] = None,
+    min_pe_ratio: Optional[float] = None,
     max_pe_ratio: Optional[float] = None,
     sort_by: Optional[str] = "cagr_3y",
     sort_order: str = "desc",
@@ -109,12 +116,26 @@ async def get_funds(
         query = query.where(FundMaster.category == category)
     if min_cagr_1y is not None:
         query = query.where(FundMaster.cagr_1y >= (min_cagr_1y / 100.0))
+    if max_cagr_1y is not None:
+        query = query.where(FundMaster.cagr_1y <= (max_cagr_1y / 100.0))
     if min_cagr_3y is not None:
         query = query.where(FundMaster.cagr_3y >= (min_cagr_3y / 100.0))
+    if max_cagr_3y is not None:
+        query = query.where(FundMaster.cagr_3y <= (max_cagr_3y / 100.0))
+    if min_cagr_5y is not None:
+        query = query.where(FundMaster.cagr_5y >= (min_cagr_5y / 100.0))
+    if max_cagr_5y is not None:
+        query = query.where(FundMaster.cagr_5y <= (max_cagr_5y / 100.0))
+    if min_expense_ratio is not None:
+        query = query.where(FundMaster.expense_ratio >= min_expense_ratio)
     if max_expense_ratio is not None:
         query = query.where(FundMaster.expense_ratio <= max_expense_ratio)
     if min_sharpe_ratio is not None:
         query = query.where(FundMaster.sharpe_ratio >= min_sharpe_ratio)
+    if max_sharpe_ratio is not None:
+        query = query.where(FundMaster.sharpe_ratio <= max_sharpe_ratio)
+    if min_pe_ratio is not None:
+        query = query.where(FundMaster.pe_ratio >= min_pe_ratio)
     if max_pe_ratio is not None:
         query = query.where(FundMaster.pe_ratio <= max_pe_ratio)
         

@@ -11,9 +11,29 @@ class ParsedFilters(BaseModel):
         default=None,
         description="Minimum 1-year CAGR expected as float (e.g. 15.0 for 15%)"
     )
+    max_cagr_1y: Optional[float] = Field(
+        default=None,
+        description="Maximum 1-year CAGR expected as float (e.g. 0.0 for 0%)"
+    )
     min_cagr_3y: Optional[float] = Field(
         default=None, 
         description="Minimum 3-year CAGR expected as float (e.g. 15.0 for 15%)"
+    )
+    max_cagr_3y: Optional[float] = Field(
+        default=None, 
+        description="Maximum 3-year CAGR expected as float (e.g. 0.0 for 0%)"
+    )
+    min_cagr_5y: Optional[float] = Field(
+        default=None, 
+        description="Minimum 5-year CAGR expected as float (e.g. 15.0 for 15%)"
+    )
+    max_cagr_5y: Optional[float] = Field(
+        default=None, 
+        description="Maximum 5-year CAGR expected as float (e.g. 0.0 for 0%)"
+    )
+    min_expense_ratio: Optional[float] = Field(
+        default=None, 
+        description="Minimum expense ratio allowed as float (e.g. 0.5 for 0.5%)"
     )
     max_expense_ratio: Optional[float] = Field(
         default=None, 
@@ -23,13 +43,21 @@ class ParsedFilters(BaseModel):
         default=None, 
         description="Minimum Sharpe ratio allowed"
     )
+    max_sharpe_ratio: Optional[float] = Field(
+        default=None, 
+        description="Maximum Sharpe ratio allowed"
+    )
+    min_pe_ratio: Optional[float] = Field(
+        default=None, 
+        description="Minimum PE ratio allowed"
+    )
     max_pe_ratio: Optional[float] = Field(
         default=None, 
         description="Maximum PE ratio allowed"
     )
     sort_by: Optional[str] = Field(
         default=None, 
-        description="Field to sort by: 'cagr_3y', 'cagr_5y', 'sharpe_ratio', 'sortino_ratio', 'alpha', 'beta', 'expense_ratio'"
+        description="Field to sort by: 'cagr_1y', 'cagr_3y', 'cagr_5y', 'sharpe_ratio', 'sortino_ratio', 'alpha', 'beta', 'expense_ratio', 'pe_ratio'"
     )
     sort_order: str = Field(
         default="desc", 

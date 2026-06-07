@@ -34,21 +34,30 @@ User Query: "{query}"
 Translate this query into a JSON object matching this schema:
 {{
   "category": "Large Cap" | "Mid Cap" | "Small Cap" | "Sectoral" | "Index" | null,
+  "min_cagr_1y": float | null,
+  "max_cagr_1y": float | null,
   "min_cagr_3y": float | null,
+  "max_cagr_3y": float | null,
+  "min_cagr_5y": float | null,
+  "max_cagr_5y": float | null,
+  "min_expense_ratio": float | null,
   "max_expense_ratio": float | null,
   "min_sharpe_ratio": float | null,
+  "max_sharpe_ratio": float | null,
+  "min_pe_ratio": float | null,
   "max_pe_ratio": float | null,
-  "sort_by": "cagr_3y" | "cagr_5y" | "sharpe_ratio" | "sortino_ratio" | "alpha" | "beta" | "expense_ratio" | null,
+  "sort_by": "cagr_1y" | "cagr_3y" | "cagr_5y" | "sharpe_ratio" | "sortino_ratio" | "alpha" | "beta" | "expense_ratio" | "pe_ratio" | null,
   "sort_order": "asc" | "desc",
-  "sql_explanation": "A short natural language explanation of how you mapped the user's terms (e.g. mapping 'high yield' to min_cagr_3y=18.0 and sorting by cagr_3y desc)"
+  "sql_explanation": "A short natural language explanation of how you mapped the user's terms"
 }}
 
 Rules:
 1. Return ONLY the JSON object. Do not include any markdown backticks or extra text outside the JSON.
-2. If "high yield" or "high return" is mentioned, set min_cagr_3y to 15.0 or 18.0, and set sort_by to "cagr_3y".
-3. If "low risk" is mentioned, set min_sharpe_ratio to 1.2 or set sort_by to "sharpe_ratio".
-4. If a specific category like "mid cap", "large cap", "small cap", "index", or "sectoral" is mentioned, map it exactly to category field.
-5. If no sort order is implied, default to "desc" for performance metrics and "asc" for risk or expense ratio.
+2. If "lost money", "negative return" or "negative performance" over the last year is mentioned, set max_cagr_1y to 0.0.
+3. If "high yield" or "high return" is mentioned, set min_cagr_3y to 15.0 or 18.0, and set sort_by to "cagr_3y".
+4. If "low risk" is mentioned, set min_sharpe_ratio to 1.2 or set sort_by to "sharpe_ratio".
+5. If a specific category like "mid cap", "large cap", "small cap", "index", or "sectoral" is mentioned, map it exactly to category field.
+6. If no sort order is implied, default to "desc" for performance metrics and "asc" for risk or expense ratio.
 """
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
@@ -163,59 +172,220 @@ Use these details to answer user queries about this fund.
 # --- MOCK FALLBACKS ---
 
 def _mock_parse_semantic_query(query: str) -> Dict[str, Any]:
+    import re
     q = query.lower()
     filters = {
         "category": None,
         "min_cagr_1y": None,
+        "max_cagr_1y": None,
         "min_cagr_3y": None,
+        "max_cagr_3y": None,
+        "min_cagr_5y": None,
+        "max_cagr_5y": None,
+        "min_expense_ratio": None,
         "max_expense_ratio": None,
         "min_sharpe_ratio": None,
+        "max_sharpe_ratio": None,
+        "min_pe_ratio": None,
         "max_pe_ratio": None,
         "sort_by": "cagr_3y",
         "sort_order": "desc",
-        "sql_explanation": "Parsed query locally using keyword filters: "
+        "sql_explanation": "Parsed query locally using keyword & regex filters: "
     }
     
-    # Category matches
-    if "large cap" in q or "bluechip" in q:
+    # 1. Category matches using word boundaries
+    if re.search(r'\b(?:large\s*cap|bluechip)\b', q):
         filters["category"] = "Large Cap"
-        filters["sql_explanation"] += "category = 'Large Cap'; "
-    elif "mid cap" in q:
+    elif re.search(r'\b(?:mid\s*cap)\b', q):
         filters["category"] = "Mid Cap"
-        filters["sql_explanation"] += "category = 'Mid Cap'; "
-    elif "small cap" in q:
+    elif re.search(r'\b(?:small\s*cap)\b', q):
         filters["category"] = "Small Cap"
-        filters["sql_explanation"] += "category = 'Small Cap'; "
-    elif "sector" in q or "it" in q or "pharma" in q or "banking" in q:
+    elif re.search(r'\b(?:sectoral|sector|it|pharma|banking)\b', q):
         filters["category"] = "Sectoral"
-        filters["sql_explanation"] += "category = 'Sectoral'; "
-    elif "index" in q or "nifty" in q:
+    elif re.search(r'\b(?:index|nifty)\b', q):
         filters["category"] = "Index"
-        filters["sql_explanation"] += "category = 'Index'; "
+
+    # 2. Duration detection for CAGR/Return queries
+    duration = None
+    if any(x in q for x in ["1 year", "1y", "1-year", "last year", "one year", "past year"]):
+        duration = 1
+    elif any(x in q for x in ["3 year", "3y", "3-year", "three year"]):
+        duration = 3
+    elif any(x in q for x in ["5 year", "5y", "5-year", "five year"]):
+        duration = 5
+
+    # 3. Match lost money/negative return keywords
+    if any(x in q for x in ["lost money", "negative return", "negative performance", "negative cagr", "lost value"]):
+        dur = duration if duration is not None else 1
+        if dur == 1:
+            filters["max_cagr_1y"] = 0.0
+        elif dur == 3:
+            filters["max_cagr_3y"] = 0.0
+        elif dur == 5:
+            filters["max_cagr_5y"] = 0.0
+
+    # 4. Regex Matchers for inequalities and numbers
+    # --- Sharpe ratio ---
+    sharpe_above = re.search(r'(?:sharpe|sharpe ratio)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if sharpe_above:
+        filters["min_sharpe_ratio"] = float(sharpe_above.group(1))
+    
+    sharpe_below = re.search(r'(?:sharpe|sharpe ratio)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if sharpe_below:
+        filters["max_sharpe_ratio"] = float(sharpe_below.group(1))
+
+    if "high sharpe" in q or "good sharpe" in q:
+        if filters["min_sharpe_ratio"] is None:
+            filters["min_sharpe_ratio"] = 1.2
+            filters["sort_by"] = "sharpe_ratio"
+    elif "low sharpe" in q:
+        if filters["max_sharpe_ratio"] is None:
+            filters["max_sharpe_ratio"] = 0.8
+            filters["sort_by"] = "sharpe_ratio"
+            filters["sort_order"] = "asc"
+
+    # --- PE Ratio ---
+    pe_above = re.search(r'(?:pe|pe ratio|p/e|p/e ratio|valuation)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if pe_above:
+        filters["min_pe_ratio"] = float(pe_above.group(1))
         
-    # Parameter matches
+    pe_below = re.search(r'(?:pe|pe ratio|p/e|p/e ratio|valuation)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if pe_below:
+        filters["max_pe_ratio"] = float(pe_below.group(1))
+
+    if "cheap" in q or "low pe" in q or "undervalued" in q:
+        if filters["max_pe_ratio"] is None:
+            filters["max_pe_ratio"] = 22.0
+            filters["sort_by"] = "pe_ratio"
+            filters["sort_order"] = "asc"
+    elif "expensive" in q or "high pe" in q or "overvalued" in q:
+        if filters["min_pe_ratio"] is None:
+            filters["min_pe_ratio"] = 35.0
+            filters["sort_by"] = "pe_ratio"
+            filters["sort_order"] = "desc"
+
+    # --- Expense Ratio ---
+    expense_above = re.search(r'(?:expense|expense ratio|cost|fee)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if expense_above:
+        filters["min_expense_ratio"] = float(expense_above.group(1))
+        
+    expense_below = re.search(r'(?:expense|expense ratio|cost|fee)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
+    if expense_below:
+        filters["max_expense_ratio"] = float(expense_below.group(1))
+
+    if "low cost" in q or "low expense" in q or "cheap expense" in q:
+        if filters["max_expense_ratio"] is None:
+            filters["max_expense_ratio"] = 1.0
+            filters["sort_by"] = "expense_ratio"
+            filters["sort_order"] = "asc"
+    elif "high cost" in q or "high expense" in q:
+        if filters["min_expense_ratio"] is None:
+            filters["min_expense_ratio"] = 1.5
+            filters["sort_by"] = "expense_ratio"
+            filters["sort_order"] = "desc"
+
+    # --- CAGR / Returns ---
+    cagr_above = re.search(r'(?:cagr|return|returns|yield|performance)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    cagr_below = re.search(r'(?:cagr|return|returns|yield|performance)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    
+    cagr_1y_above = re.search(r'(?:1\s*y(?:ear)?|last\s*year)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    cagr_3y_above = re.search(r'(?:3\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    cagr_5y_above = re.search(r'(?:5\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+
+    cagr_1y_below = re.search(r'(?:1\s*y(?:ear)?|last\s*year)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    cagr_3y_below = re.search(r'(?:3\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+    cagr_5y_below = re.search(r'(?:5\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+
+    if cagr_1y_above:
+        filters["min_cagr_1y"] = float(cagr_1y_above.group(1))
+    elif cagr_1y_below:
+        filters["max_cagr_1y"] = float(cagr_1y_below.group(1))
+        
+    if cagr_3y_above:
+        filters["min_cagr_3y"] = float(cagr_3y_above.group(1))
+    elif cagr_3y_below:
+        filters["max_cagr_3y"] = float(cagr_3y_below.group(1))
+
+    if cagr_5y_above:
+        filters["min_cagr_5y"] = float(cagr_5y_above.group(1))
+    elif cagr_5y_below:
+        filters["max_cagr_5y"] = float(cagr_5y_below.group(1))
+
+    if cagr_above and not (cagr_1y_above or cagr_3y_above or cagr_5y_above):
+        val = float(cagr_above.group(1))
+        dur = duration if duration is not None else 3
+        if dur == 1:
+            filters["min_cagr_1y"] = val
+        elif dur == 5:
+            filters["min_cagr_5y"] = val
+        else:
+            filters["min_cagr_3y"] = val
+
+    if cagr_below and not (cagr_1y_below or cagr_3y_below or cagr_5y_below):
+        val = float(cagr_below.group(1))
+        dur = duration if duration is not None else 3
+        if dur == 1:
+            filters["max_cagr_1y"] = val
+        elif dur == 5:
+            filters["max_cagr_5y"] = val
+        else:
+            filters["max_cagr_3y"] = val
+
     if "high yield" in q or "high cagr" in q or "high return" in q:
-        filters["min_cagr_3y"] = 18.0
-        filters["sort_by"] = "cagr_3y"
-        filters["sql_explanation"] += "min_cagr_3y >= 18.0, sorting by CAGR 3Y desc; "
-    elif "low risk" in q or "stable" in q:
-        filters["min_sharpe_ratio"] = 1.1
-        filters["sort_by"] = "sharpe_ratio"
-        filters["sql_explanation"] += "min_sharpe_ratio >= 1.1, sorting by Sharpe desc; "
-    elif "cheap" in q or "low pe" in q:
-        filters["max_pe_ratio"] = 25.0
-        filters["sort_by"] = "pe_ratio"
+        dur = duration if duration is not None else 3
+        if dur == 1 and filters["min_cagr_1y"] is None:
+            filters["min_cagr_1y"] = 15.0
+            filters["sort_by"] = "cagr_1y"
+        elif dur == 5 and filters["min_cagr_5y"] is None:
+            filters["min_cagr_5y"] = 15.0
+            filters["sort_by"] = "cagr_5y"
+        elif dur == 3 and filters["min_cagr_3y"] is None:
+            filters["min_cagr_3y"] = 18.0
+            filters["sort_by"] = "cagr_3y"
+
+    # 5. Sorting overrides
+    sort_match = re.search(r'(?:sort|sorted|order|ordered)\s*by\s*([a-z0-9\s\-]+)', q)
+    if sort_match:
+        sort_field_text = sort_match.group(1).strip()
+        sort_mapping = {
+            "cagr 1y": "cagr_1y", "cagr 1 year": "cagr_1y", "1y cagr": "cagr_1y", "1 year cagr": "cagr_1y", "1y return": "cagr_1y",
+            "cagr 5y": "cagr_5y", "cagr 5 year": "cagr_5y", "5y cagr": "cagr_5y", "5 year cagr": "cagr_5y", "5y return": "cagr_5y",
+            "cagr 3y": "cagr_3y", "cagr 3 year": "cagr_3y", "3y cagr": "cagr_3y", "3 year cagr": "cagr_3y", "3y return": "cagr_3y",
+            "sharpe": "sharpe_ratio", "sortino": "sortino_ratio", "alpha": "alpha", "beta": "beta",
+            "expense": "expense_ratio", "fee": "expense_ratio", "cost": "expense_ratio",
+            "pe": "pe_ratio", "valuation": "pe_ratio"
+        }
+        for keyword, field in sort_mapping.items():
+            if keyword in sort_field_text:
+                filters["sort_by"] = field
+                break
+
+    if "ascending" in q or "asc" in q or "lowest" in q or "least" in q:
         filters["sort_order"] = "asc"
-        filters["sql_explanation"] += "max_pe_ratio <= 25.0, sorting by PE ratio asc; "
-    elif "low cost" in q or "low expense" in q:
-        filters["max_expense_ratio"] = 1.0
-        filters["sort_by"] = "expense_ratio"
-        filters["sort_order"] = "asc"
-        filters["sql_explanation"] += "max_expense_ratio <= 1.0, sorting by Expense Ratio asc; "
+    elif "descending" in q or "desc" in q or "highest" in q or "most" in q:
+        filters["sort_order"] = "desc"
+
+    # 6. Build explanation text
+    explanation_parts = []
+    if filters["category"]:
+        explanation_parts.append(f"category = '{filters['category']}'")
+    for key, val in filters.items():
+        if key not in ["category", "sort_by", "sort_order", "sql_explanation"] and val is not None:
+            if "min_" in key:
+                op = ">="
+            else:
+                op = "<="
+            field_name = key.replace("min_", "").replace("max_", "")
+            explanation_parts.append(f"{field_name} {op} {val}")
+    
+    if filters["sort_by"]:
+        explanation_parts.append(f"sort by {filters['sort_by']} {filters['sort_order']}")
         
-    if filters["sql_explanation"] == "Parsed query locally using keyword filters: ":
-        filters["sql_explanation"] += "No filters matched, returning defaults sorted by CAGR 3Y."
-        
+    if explanation_parts:
+        filters["sql_explanation"] += ", ".join(explanation_parts) + "."
+    else:
+        filters["sql_explanation"] += "No specific filters matched, returning defaults sorted by CAGR 3Y."
+
     return filters
 
 def _generate_mock_fund_summary(fund_data: Dict[str, Any]) -> str:

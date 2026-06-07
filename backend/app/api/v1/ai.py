@@ -30,9 +30,16 @@ async def ai_semantic_query(payload: AISemanticQueryRequest, db: AsyncSession = 
         # 2. Extract filter attributes
         category = parsed_data.get("category")
         min_cagr_1y = parsed_data.get("min_cagr_1y")
+        max_cagr_1y = parsed_data.get("max_cagr_1y")
         min_cagr_3y = parsed_data.get("min_cagr_3y")
+        max_cagr_3y = parsed_data.get("max_cagr_3y")
+        min_cagr_5y = parsed_data.get("min_cagr_5y")
+        max_cagr_5y = parsed_data.get("max_cagr_5y")
+        min_expense = parsed_data.get("min_expense_ratio")
         max_expense = parsed_data.get("max_expense_ratio")
         min_sharpe = parsed_data.get("min_sharpe_ratio")
+        max_sharpe = parsed_data.get("max_sharpe_ratio")
+        min_pe = parsed_data.get("min_pe_ratio")
         max_pe = parsed_data.get("max_pe_ratio")
         sort_by = parsed_data.get("sort_by")
         sort_order = parsed_data.get("sort_order", "desc")
@@ -44,12 +51,26 @@ async def ai_semantic_query(payload: AISemanticQueryRequest, db: AsyncSession = 
             query = query.where(FundMaster.category == category)
         if min_cagr_1y is not None:
             query = query.where(FundMaster.cagr_1y >= (min_cagr_1y / 100.0))
+        if max_cagr_1y is not None:
+            query = query.where(FundMaster.cagr_1y <= (max_cagr_1y / 100.0))
         if min_cagr_3y is not None:
             query = query.where(FundMaster.cagr_3y >= (min_cagr_3y / 100.0))
+        if max_cagr_3y is not None:
+            query = query.where(FundMaster.cagr_3y <= (max_cagr_3y / 100.0))
+        if min_cagr_5y is not None:
+            query = query.where(FundMaster.cagr_5y >= (min_cagr_5y / 100.0))
+        if max_cagr_5y is not None:
+            query = query.where(FundMaster.cagr_5y <= (max_cagr_5y / 100.0))
+        if min_expense is not None:
+            query = query.where(FundMaster.expense_ratio >= min_expense)
         if max_expense is not None:
             query = query.where(FundMaster.expense_ratio <= max_expense)
         if min_sharpe is not None:
             query = query.where(FundMaster.sharpe_ratio >= min_sharpe)
+        if max_sharpe is not None:
+            query = query.where(FundMaster.sharpe_ratio <= max_sharpe)
+        if min_pe is not None:
+            query = query.where(FundMaster.pe_ratio >= min_pe)
         if max_pe is not None:
             query = query.where(FundMaster.pe_ratio <= max_pe)
             
@@ -88,9 +109,16 @@ async def ai_semantic_query(payload: AISemanticQueryRequest, db: AsyncSession = 
             "parsed_filters": {
                 "category": category,
                 "min_cagr_1y": min_cagr_1y,
+                "max_cagr_1y": max_cagr_1y,
                 "min_cagr_3y": min_cagr_3y,
+                "max_cagr_3y": max_cagr_3y,
+                "min_cagr_5y": min_cagr_5y,
+                "max_cagr_5y": max_cagr_5y,
+                "min_expense_ratio": min_expense,
                 "max_expense_ratio": max_expense,
                 "min_sharpe_ratio": min_sharpe,
+                "max_sharpe_ratio": max_sharpe,
+                "min_pe_ratio": min_pe,
                 "max_pe_ratio": max_pe,
                 "sort_by": sort_by,
                 "sort_order": sort_order
