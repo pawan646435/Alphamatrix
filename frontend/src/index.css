@@ -1,0 +1,123 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-color: #E8DDC9; /* Warm Ivory background */
+  --text-color: #0A0908; /* Rich Black text */
+  --text-muted: #595247; /* Warm charcoal muted text */
+  --border-color: #dfd5bd; /* Muted warm border */
+  --card-bg: #f3ebd9; /* Warm cream surface bg */
+  --accent-gold: #A37D45; /* Rich darker gold for light mode readability */
+  --accent-gold-hover: #8c6732;
+  --accent-success: #2e7d32;
+  --accent-danger: #c62828;
+  --accent-warning: #ef6c00;
+}
+
+.dark {
+  --bg-color: #0A0908; /* Rich Black background */
+  --text-color: #E8DDC9; /* Warm Ivory text */
+  --text-muted: #BFB2A0; /* Dim Ivory text */
+  --border-color: #23201b; /* Dark warm border */
+  --card-bg: #161412; /* Deep warm black card bg */
+  --accent-gold: #C9A56B; /* Signature lunchlab gold */
+  --accent-gold-hover: #DDB985;
+  --accent-success: #4caf50;
+  --accent-danger: #ef5350;
+  --accent-warning: #ffb74d;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    @apply antialiased overflow-x-hidden transition-colors duration-300;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    
+    /* Clean luxury radial glow background */
+    background-image: 
+      radial-gradient(circle at 50% -20%, rgba(197, 168, 128, 0.08) 0%, transparent 60%);
+  }
+
+  /* Distinct Display Headers */
+  h1, h2, h3, .font-display {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Distinct Coding numbers/dates font */
+  .font-mono, td, .font-number {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Custom minimalist scrollbars */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg-color);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-gold);
+  }
+}
+
+/* Premium Visual Elements */
+.glassmorphism {
+  background: rgba(var(--card-bg), 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+}
+
+.terminal-card {
+  position: relative;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  padding: 1.5rem;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.terminal-card:hover {
+  border-color: var(--accent-gold);
+  box-shadow: 0 4px 20px -5px rgba(201, 165, 107, 0.15);
+}
+
+/* Glow effects matching gold theme */
+.glow-orange, .glow-cyan, .glow-yellow {
+  box-shadow: 0 4px 20px -5px rgba(197, 168, 128, 0.08);
+  border-color: var(--accent-gold) !important;
+}
+
+/* Staggered load animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}

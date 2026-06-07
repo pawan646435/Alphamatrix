@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+backend/.venv/
+
+# Python cache
+__pycache__/
+backend/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+backend/.pytest_cache/
+
+# Local databases
+*.db
+backend/*.db
+alphamatrix.db
+backend/alphamatrix.db
+*.sqlite
+
+# Sensitive variables
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+frontend/dist/
+build/
+out/
+
+# System / IDE files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
