@@ -174,6 +174,8 @@ Use these details to answer user queries about this fund.
 def _mock_parse_semantic_query(query: str) -> Dict[str, Any]:
     import re
     q = query.lower()
+    
+    # Initialize completely fresh and blank on every single function call
     filters = {
         "category": None,
         "min_cagr_1y": None,
@@ -188,163 +190,192 @@ def _mock_parse_semantic_query(query: str) -> Dict[str, Any]:
         "max_sharpe_ratio": None,
         "min_pe_ratio": None,
         "max_pe_ratio": None,
-        "sort_by": "cagr_3y",
+        "sort_by": None,
         "sort_order": "desc",
         "sql_explanation": "Parsed query locally using keyword & regex filters: "
     }
     
-    # 1. Category matches using word boundaries
+    # 1. Global context extraction (e.g. category and duration detection from entire query)
+    global_category = None
     if re.search(r'\b(?:large\s*cap|bluechip)\b', q):
-        filters["category"] = "Large Cap"
+        global_category = "LARGE_CAP"
     elif re.search(r'\b(?:mid\s*cap)\b', q):
-        filters["category"] = "Mid Cap"
+        global_category = "MID_CAP"
     elif re.search(r'\b(?:small\s*cap)\b', q):
-        filters["category"] = "Small Cap"
-    elif re.search(r'\b(?:sectoral|sector|it|pharma|banking)\b', q):
-        filters["category"] = "Sectoral"
+        global_category = "SMALL_CAP"
     elif re.search(r'\b(?:index|nifty)\b', q):
-        filters["category"] = "Index"
+        global_category = "INDEX"
+    elif re.search(r'\b(?:sectoral|sector|it|pharma|banking)\b', q):
+        global_category = "SECTORAL"
 
-    # 2. Duration detection for CAGR/Return queries
-    duration = None
+    global_duration = None
     if any(x in q for x in ["1 year", "1y", "1-year", "last year", "one year", "past year"]):
-        duration = 1
+        global_duration = 1
     elif any(x in q for x in ["3 year", "3y", "3-year", "three year"]):
-        duration = 3
+        global_duration = 3
     elif any(x in q for x in ["5 year", "5y", "5-year", "five year"]):
-        duration = 5
+        global_duration = 5
 
-    # 3. Match lost money/negative return keywords
-    if any(x in q for x in ["lost money", "negative return", "negative performance", "negative cagr", "lost value"]):
-        dur = duration if duration is not None else 1
-        if dur == 1:
-            filters["max_cagr_1y"] = 0.0
-        elif dur == 3:
-            filters["max_cagr_3y"] = 0.0
-        elif dur == 5:
-            filters["max_cagr_5y"] = 0.0
+    filters["category"] = global_category
 
-    # 4. Regex Matchers for inequalities and numbers
-    # --- Sharpe ratio ---
-    sharpe_above = re.search(r'(?:sharpe|sharpe ratio)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if sharpe_above:
-        filters["min_sharpe_ratio"] = float(sharpe_above.group(1))
+    # 2. Split query by conjunctions chunk-by-chunk to avoid dropping constraints
+    chunks = re.split(r'\b(?:and|but|with|still|yet|for|so|although|though|whereas|while|which|that|who|whose)\b|,', q)
     
-    sharpe_below = re.search(r'(?:sharpe|sharpe ratio)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if sharpe_below:
-        filters["max_sharpe_ratio"] = float(sharpe_below.group(1))
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+            
+        # Detect local duration if any, fallback to global
+        chunk_duration = global_duration
+        if any(x in chunk for x in ["1 year", "1y", "1-year", "last year", "one year", "past year"]):
+            chunk_duration = 1
+        elif any(x in chunk for x in ["3 year", "3y", "3-year", "three year"]):
+            chunk_duration = 3
+        elif any(x in chunk for x in ["5 year", "5y", "5-year", "five year"]):
+            chunk_duration = 5
+            
+        # Match positive / gains / made money
+        if any(x in chunk for x in ["positive", "gains", "made money", "gain"]):
+            dur = chunk_duration if chunk_duration is not None else 3
+            if dur == 1:
+                filters["min_cagr_1y"] = 0.0
+            elif dur == 3:
+                filters["min_cagr_3y"] = 0.0
+            elif dur == 5:
+                filters["min_cagr_5y"] = 0.0
 
-    if "high sharpe" in q or "good sharpe" in q:
-        if filters["min_sharpe_ratio"] is None:
-            filters["min_sharpe_ratio"] = 1.2
-            filters["sort_by"] = "sharpe_ratio"
-    elif "low sharpe" in q:
-        if filters["max_sharpe_ratio"] is None:
-            filters["max_sharpe_ratio"] = 0.8
-            filters["sort_by"] = "sharpe_ratio"
-            filters["sort_order"] = "asc"
+        # Match lost money / negative / in the red
+        if any(x in chunk for x in ["lost money", "negative", "in the red", "lose money", "lost value"]):
+            dur = chunk_duration if chunk_duration is not None else 1
+            if dur == 1:
+                filters["max_cagr_1y"] = 0.0
+            elif dur == 3:
+                filters["max_cagr_3y"] = 0.0
+            elif dur == 5:
+                filters["max_cagr_5y"] = 0.0
 
-    # --- PE Ratio ---
-    pe_above = re.search(r'(?:pe|pe ratio|p/e|p/e ratio|valuation)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if pe_above:
-        filters["min_pe_ratio"] = float(pe_above.group(1))
+        # Match numeric inequalities
+        # --- Sharpe ratio ---
+        sharpe_above = re.search(r'\b(?:sharpe|sharpe\s*ratio)\b\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if sharpe_above:
+            filters["min_sharpe_ratio"] = float(sharpe_above.group(1))
+            
+        sharpe_below = re.search(r'\b(?:sharpe|sharpe\s*ratio)\b\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if sharpe_below:
+            filters["max_sharpe_ratio"] = float(sharpe_below.group(1))
+
+        if "high sharpe" in chunk or "good sharpe" in chunk:
+            if filters["min_sharpe_ratio"] is None:
+                filters["min_sharpe_ratio"] = 1.2
+                filters["sort_by"] = "sharpe_ratio"
+        elif "low sharpe" in chunk:
+            if filters["max_sharpe_ratio"] is None:
+                filters["max_sharpe_ratio"] = 0.8
+                filters["sort_by"] = "sharpe_ratio"
+                filters["sort_order"] = "asc"
+
+        # --- PE Ratio (Strict word boundary prevents leakage matching "sharpe ratio") ---
+        pe_above = re.search(r'\b(?:pe|pe\s*ratio|p/e|p/e\s*ratio|valuation)\b\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if pe_above:
+            filters["min_pe_ratio"] = float(pe_above.group(1))
+            
+        pe_below = re.search(r'\b(?:pe|pe\s*ratio|p/e|p/e\s*ratio|valuation)\b\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if pe_below:
+            filters["max_pe_ratio"] = float(pe_below.group(1))
+
+        if "cheap" in chunk or "low pe" in chunk or "undervalued" in chunk:
+            if filters["max_pe_ratio"] is None:
+                filters["max_pe_ratio"] = 22.0
+                filters["sort_by"] = "pe_ratio"
+                filters["sort_order"] = "asc"
+        elif "expensive" in chunk or "high pe" in chunk or "overvalued" in chunk:
+            if filters["min_pe_ratio"] is None:
+                filters["min_pe_ratio"] = 35.0
+                filters["sort_by"] = "pe_ratio"
+                filters["sort_order"] = "desc"
+
+        # --- Expense Ratio ---
+        expense_above = re.search(r'\b(?:expense|expense\s*ratio|cost|fee)\b\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if expense_above:
+            filters["min_expense_ratio"] = float(expense_above.group(1))
+            
+        expense_below = re.search(r'\b(?:expense|expense\s*ratio|cost|fee)\b\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', chunk)
+        if expense_below:
+            filters["max_expense_ratio"] = float(expense_below.group(1))
+
+        if "low cost" in chunk or "low expense" in chunk or "cheap expense" in chunk:
+            if filters["max_expense_ratio"] is None:
+                filters["max_expense_ratio"] = 1.0
+                filters["sort_by"] = "expense_ratio"
+                filters["sort_order"] = "asc"
+        elif "high cost" in chunk or "high expense" in chunk:
+            if filters["min_expense_ratio"] is None:
+                filters["min_expense_ratio"] = 1.5
+                filters["sort_by"] = "expense_ratio"
+                filters["sort_order"] = "desc"
+
+        # --- CAGR / Returns ---
+        cagr_above = re.search(r'\b(?:cagr|return|returns|yield|performance)\b\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
+        cagr_below = re.search(r'\b(?:cagr|return|returns|yield|performance)\b\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
         
-    pe_below = re.search(r'(?:pe|pe ratio|p/e|p/e ratio|valuation)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if pe_below:
-        filters["max_pe_ratio"] = float(pe_below.group(1))
+        cagr_1y_above = re.search(r'\b(?:1\s*y(?:ear)?|last\s*year)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
+        cagr_3y_above = re.search(r'\b(?:3\s*y(?:ear)?)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
+        cagr_5y_above = re.search(r'\b(?:5\s*y(?:ear)?)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
 
-    if "cheap" in q or "low pe" in q or "undervalued" in q:
-        if filters["max_pe_ratio"] is None:
-            filters["max_pe_ratio"] = 22.0
-            filters["sort_by"] = "pe_ratio"
-            filters["sort_order"] = "asc"
-    elif "expensive" in q or "high pe" in q or "overvalued" in q:
-        if filters["min_pe_ratio"] is None:
-            filters["min_pe_ratio"] = 35.0
-            filters["sort_by"] = "pe_ratio"
-            filters["sort_order"] = "desc"
+        cagr_1y_below = re.search(r'\b(?:1\s*y(?:ear)?|last\s*year)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
+        cagr_3y_below = re.search(r'\b(?:3\s*y(?:ear)?)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
+        cagr_5y_below = re.search(r'\b(?:5\s*y(?:ear)?)\b\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', chunk)
 
-    # --- Expense Ratio ---
-    expense_above = re.search(r'(?:expense|expense ratio|cost|fee)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if expense_above:
-        filters["min_expense_ratio"] = float(expense_above.group(1))
-        
-    expense_below = re.search(r'(?:expense|expense ratio|cost|fee)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)', q)
-    if expense_below:
-        filters["max_expense_ratio"] = float(expense_below.group(1))
+        if cagr_1y_above:
+            filters["min_cagr_1y"] = float(cagr_1y_above.group(1))
+        elif cagr_1y_below:
+            filters["max_cagr_1y"] = float(cagr_1y_below.group(1))
+            
+        if cagr_3y_above:
+            filters["min_cagr_3y"] = float(cagr_3y_above.group(1))
+        elif cagr_3y_below:
+            filters["max_cagr_3y"] = float(cagr_3y_below.group(1))
 
-    if "low cost" in q or "low expense" in q or "cheap expense" in q:
-        if filters["max_expense_ratio"] is None:
-            filters["max_expense_ratio"] = 1.0
-            filters["sort_by"] = "expense_ratio"
-            filters["sort_order"] = "asc"
-    elif "high cost" in q or "high expense" in q:
-        if filters["min_expense_ratio"] is None:
-            filters["min_expense_ratio"] = 1.5
-            filters["sort_by"] = "expense_ratio"
-            filters["sort_order"] = "desc"
+        if cagr_5y_above:
+            filters["min_cagr_5y"] = float(cagr_5y_above.group(1))
+        elif cagr_5y_below:
+            filters["max_cagr_5y"] = float(cagr_5y_below.group(1))
 
-    # --- CAGR / Returns ---
-    cagr_above = re.search(r'(?:cagr|return|returns|yield|performance)\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    cagr_below = re.search(r'(?:cagr|return|returns|yield|performance)\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    
-    cagr_1y_above = re.search(r'(?:1\s*y(?:ear)?|last\s*year)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    cagr_3y_above = re.search(r'(?:3\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    cagr_5y_above = re.search(r'(?:5\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:above|greater than|more than|over|>|>=|of at least|at least)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+        if cagr_above and not (cagr_1y_above or cagr_3y_above or cagr_5y_above):
+            val = float(cagr_above.group(1))
+            dur = chunk_duration if chunk_duration is not None else 3
+            if dur == 1:
+                filters["min_cagr_1y"] = val
+            elif dur == 5:
+                filters["min_cagr_5y"] = val
+            else:
+                filters["min_cagr_3y"] = val
 
-    cagr_1y_below = re.search(r'(?:1\s*y(?:ear)?|last\s*year)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    cagr_3y_below = re.search(r'(?:3\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
-    cagr_5y_below = re.search(r'(?:5\s*y(?:ear)?)\s*(?:cagr|return|returns|yield|performance)?\s*(?:below|less than|under|<|<=|of at most|at most)\s*([0-9]+(?:\.[0-9]+)?)\s*%?', q)
+        if cagr_below and not (cagr_1y_below or cagr_3y_below or cagr_5y_below):
+            val = float(cagr_below.group(1))
+            dur = chunk_duration if chunk_duration is not None else 3
+            if dur == 1:
+                filters["max_cagr_1y"] = val
+            elif dur == 5:
+                filters["max_cagr_5y"] = val
+            else:
+                filters["max_cagr_3y"] = val
 
-    if cagr_1y_above:
-        filters["min_cagr_1y"] = float(cagr_1y_above.group(1))
-    elif cagr_1y_below:
-        filters["max_cagr_1y"] = float(cagr_1y_below.group(1))
-        
-    if cagr_3y_above:
-        filters["min_cagr_3y"] = float(cagr_3y_above.group(1))
-    elif cagr_3y_below:
-        filters["max_cagr_3y"] = float(cagr_3y_below.group(1))
+        if "high yield" in chunk or "high cagr" in chunk or "high return" in chunk:
+            dur = chunk_duration if chunk_duration is not None else 3
+            if dur == 1 and filters["min_cagr_1y"] is None:
+                filters["min_cagr_1y"] = 15.0
+                filters["sort_by"] = "cagr_1y"
+            elif dur == 5 and filters["min_cagr_5y"] is None:
+                filters["min_cagr_5y"] = 15.0
+                filters["sort_by"] = "cagr_5y"
+            elif dur == 3 and filters["min_cagr_3y"] is None:
+                filters["min_cagr_3y"] = 18.0
+                filters["sort_by"] = "cagr_3y"
 
-    if cagr_5y_above:
-        filters["min_cagr_5y"] = float(cagr_5y_above.group(1))
-    elif cagr_5y_below:
-        filters["max_cagr_5y"] = float(cagr_5y_below.group(1))
-
-    if cagr_above and not (cagr_1y_above or cagr_3y_above or cagr_5y_above):
-        val = float(cagr_above.group(1))
-        dur = duration if duration is not None else 3
-        if dur == 1:
-            filters["min_cagr_1y"] = val
-        elif dur == 5:
-            filters["min_cagr_5y"] = val
-        else:
-            filters["min_cagr_3y"] = val
-
-    if cagr_below and not (cagr_1y_below or cagr_3y_below or cagr_5y_below):
-        val = float(cagr_below.group(1))
-        dur = duration if duration is not None else 3
-        if dur == 1:
-            filters["max_cagr_1y"] = val
-        elif dur == 5:
-            filters["max_cagr_5y"] = val
-        else:
-            filters["max_cagr_3y"] = val
-
-    if "high yield" in q or "high cagr" in q or "high return" in q:
-        dur = duration if duration is not None else 3
-        if dur == 1 and filters["min_cagr_1y"] is None:
-            filters["min_cagr_1y"] = 15.0
-            filters["sort_by"] = "cagr_1y"
-        elif dur == 5 and filters["min_cagr_5y"] is None:
-            filters["min_cagr_5y"] = 15.0
-            filters["sort_by"] = "cagr_5y"
-        elif dur == 3 and filters["min_cagr_3y"] is None:
-            filters["min_cagr_3y"] = 18.0
-            filters["sort_by"] = "cagr_3y"
-
-    # 5. Sorting overrides
-    sort_match = re.search(r'(?:sort|sorted|order|ordered)\s*by\s*([a-z0-9\s\-]+)', q)
+    # 3. Sorting overrides parsed globally
+    sort_match = re.search(r'\b(?:sort|sorted|order|ordered)\b\s*by\s*([a-z0-9\s\-]+)', q)
     if sort_match:
         sort_field_text = sort_match.group(1).strip()
         sort_mapping = {
@@ -365,7 +396,7 @@ def _mock_parse_semantic_query(query: str) -> Dict[str, Any]:
     elif "descending" in q or "desc" in q or "highest" in q or "most" in q:
         filters["sort_order"] = "desc"
 
-    # 6. Build explanation text
+    # 4. Build explanation text
     explanation_parts = []
     if filters["category"]:
         explanation_parts.append(f"category = '{filters['category']}'")

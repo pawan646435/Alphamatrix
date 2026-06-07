@@ -29,6 +29,20 @@ async def ai_semantic_query(payload: AISemanticQueryRequest, db: AsyncSession = 
         
         # 2. Extract filter attributes
         category = parsed_data.get("category")
+        
+        # Map category enums to database values
+        category_db = category
+        if category == "LARGE_CAP":
+            category_db = "Large Cap"
+        elif category == "MID_CAP":
+            category_db = "Mid Cap"
+        elif category == "SMALL_CAP":
+            category_db = "Small Cap"
+        elif category == "INDEX":
+            category_db = "Index"
+        elif category == "SECTORAL":
+            category_db = "Sectoral"
+            
         min_cagr_1y = parsed_data.get("min_cagr_1y")
         max_cagr_1y = parsed_data.get("max_cagr_1y")
         min_cagr_3y = parsed_data.get("min_cagr_3y")
@@ -47,8 +61,8 @@ async def ai_semantic_query(payload: AISemanticQueryRequest, db: AsyncSession = 
         
         # 3. Query DB
         query = select(FundMaster)
-        if category:
-            query = query.where(FundMaster.category == category)
+        if category_db:
+            query = query.where(FundMaster.category == category_db)
         if min_cagr_1y is not None:
             query = query.where(FundMaster.cagr_1y >= (min_cagr_1y / 100.0))
         if max_cagr_1y is not None:
