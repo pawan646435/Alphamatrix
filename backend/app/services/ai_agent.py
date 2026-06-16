@@ -60,7 +60,7 @@ Rules:
 6. If no sort order is implied, default to "desc" for performance metrics and "asc" for risk or expense ratio.
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-3.1-flash-lite")
         response = model.generate_content(
             prompt,
             generation_config={"response_mime_type": "application/json"}
@@ -111,7 +111,7 @@ You MUST write about these specific domains:
 Return ONLY the 3 bullet points starting with a hyphen (-). Mention the numerical metrics in your points.
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-3.1-flash-lite")
         response = model.generate_content(prompt)
         summary = response.text.strip()
         if not summary:
@@ -162,7 +162,7 @@ Use these details to answer user queries about this fund.
     contents.append({"role": "user", "parts": latest_parts})
     
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
+        model = genai.GenerativeModel("gemini-3.1-flash-lite", system_instruction=system_instruction)
         response = model.generate_content(contents)
         return response.text.strip()
     except Exception as e:
