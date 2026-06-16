@@ -1,6 +1,6 @@
 import logging
 import json
-from typing import List
+import asyncio
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -27,6 +27,8 @@ if settings.REDIS_URL:
 async def global_search(query: str, db: AsyncSession = Depends(get_db)):
     """
     Unified search endpoint. Returns matches from both Stocks and Mutual Funds.
+    For ticker-like queries with no local results, does a quick Yahoo Finance lookup
+    and returns a 'discover' candidate so the frontend can offer auto-ingestion.
     """
     query_clean = query.strip().lower()
     if not query_clean or len(query_clean) < 2:
@@ -84,6 +86,46 @@ async def global_search(query: str, db: AsyncSession = Depends(get_db)):
                         break
     except Exception as e:
         logger.error(f"Fund search in global search failed: {e}")
+
+    # 3. Dynamic ticker suggestion:
+    #    If no stock results and query looks like a ticker, do a fast yfinance
+    #    check to see if the symbol exists on NSE.  Return a 'discover' candidate.
+    no_stocks = not any(r["type"] == "stock" for r in results)
+    looks_like_ticker = len(query_clean) <= 15 and " " not in query_clean
+
+    if no_stocks and looks_like_ticker:
+        ticker_upper = query_clean.upper()
+
+        def _quick_check():
+            try:
+                import yfinance as yf
+                t = yf.Ticker(f"{ticker_upper}.NS")
+                info = t.info or {}
+                name = info.get("longName") or info.get("shortName")
+                if name:
+                    return {"name": name, "symbol": ticker_upper}
+            except Exception:
+                pass
+            return None
+
+        try:
+            loop = asyncio.get_event_loop()
+            yf_result = await asyncio.wait_for(
+                loop.run_in_executor(None, _quick_check),
+                timeout=4.0  # Fast timeout so search stays snappy
+            )
+            if yf_result:
+                results.append({
+                    "type": "stock",
+                    "symbol": yf_result["symbol"],
+                    "name": yf_result["name"],
+                    "sector": "Unknown",
+                    "discover": True  # Frontend uses this flag to show a special "Discover" badge
+                })
+        except asyncio.TimeoutError:
+            logger.info(f"yfinance quick-check timed out for ticker {ticker_upper}")
+        except Exception as e:
+            logger.debug(f"yfinance quick-check failed for {ticker_upper}: {e}")
 
     if redis_client and results:
         try:

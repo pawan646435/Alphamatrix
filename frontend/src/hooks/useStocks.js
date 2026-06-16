@@ -36,23 +36,46 @@ export function useGetStockDetail() {
   const [stockDetail, setStockDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveringMessage, setDiscoveringMessage] = useState('');
 
   const fetchDetail = useCallback(async (symbol) => {
     if (!symbol) return;
     setLoading(true);
     setError(null);
     try {
-      const response = await apiClient.get(`/stocks/detail/${symbol}`);
-      setStockDetail(response.data);
+      const response = await apiClient.get(`/stocks/detail/${symbol}`, {
+        validateStatus: (s) => s < 500, // Allow 202 to pass through
+      });
+      if (response.status === 202 && response.data?.status === 'discovering') {
+        setDiscovering(true);
+        setDiscoveringMessage(response.data.message || `Discovering ${symbol}...`);
+        setStockDetail(null);
+      } else {
+        setDiscovering(false);
+        setDiscoveringMessage('');
+        setStockDetail(response.data);
+      }
     } catch (err) {
-      setError(err.detail || 'Failed to fetch stock details.');
+      setError(err.response?.data?.detail || err.detail || 'Failed to fetch stock details.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  return { stockDetail, loading, error, fetchDetail, setStockDetail };
+  const checkStatus = useCallback(async (symbol) => {
+    if (!symbol) return null;
+    try {
+      const response = await apiClient.get(`/stocks/status/${symbol}`);
+      return response.data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  return { stockDetail, loading, error, fetchDetail, setStockDetail, discovering, discoveringMessage, checkStatus };
 }
+
 
 // Cache to store search results for memoization
 const stockSearchCache = new Map();

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity } from 'lucide-react';
 import { useGetStockDetail, useStockAIChat, useWatchlist } from '../hooks/useStocks';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -9,16 +9,49 @@ export default function StockDetail() {
   const { symbol } = useParams();
   const navigate = useNavigate();
   
-  const { stockDetail, loading, error, fetchDetail } = useGetStockDetail();
+  const { stockDetail, loading, error, fetchDetail, discovering, discoveringMessage, checkStatus } = useGetStockDetail();
   const { watchlist, addToWatchlist, removeFromWatchlist, fetchWatchlist } = useWatchlist();
   
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
+  const [discoverStep, setDiscoverStep] = useState(0);
 
   useEffect(() => {
     fetchDetail(symbol);
     fetchWatchlist();
   }, [symbol, fetchDetail, fetchWatchlist]);
+
+  // Discovering state: poll /status every 5s until stock is ready, then load full detail
+  useEffect(() => {
+    if (!discovering) return;
+    const DISCOVERY_STEPS = [
+      'Connecting to NSE live data feed...',
+      'Fetching 6Y price history from Yahoo Finance...',
+      'Computing CAGR (1Y / 3Y / 5Y) metrics...',
+      'Calculating Beta against NIFTY benchmark...',
+      'Running multi-factor Alpha Score model...',
+      'Persisting to AlphaMatrix intelligence database...',
+      'Running AI equity briefing synthesis...',
+    ];
+    // Cycle through step labels every 4s
+    const stepInterval = setInterval(() => {
+      setDiscoverStep((prev) => (prev + 1) % DISCOVERY_STEPS.length);
+    }, 4000);
+    // Poll status every 6s
+    const pollInterval = setInterval(async () => {
+      const statusData = await checkStatus(symbol);
+      if (statusData?.status === 'ready') {
+        clearInterval(stepInterval);
+        clearInterval(pollInterval);
+        // Re-fetch full detail now that ingestion is complete
+        fetchDetail(symbol);
+      }
+    }, 6000);
+    return () => {
+      clearInterval(stepInterval);
+      clearInterval(pollInterval);
+    };
+  }, [discovering, symbol, checkStatus, fetchDetail]);
 
   // Polling to reload details when background AI summary is ready
   useEffect(() => {
@@ -29,6 +62,7 @@ export default function StockDetail() {
       return () => clearTimeout(pollTimer);
     }
   }, [stockDetail, symbol, fetchDetail]);
+
 
   const handleSendChat = (e) => {
     e.preventDefault();
@@ -53,11 +87,77 @@ export default function StockDetail() {
     }
   };
 
-  if (loading && !stockDetail) {
+  if (loading && !stockDetail && !discovering) {
     return (
       <div className="h-[60vh] flex flex-col items-center justify-center text-brand-textMuted font-mono">
         <RefreshCw className="h-6 w-6 animate-spin text-brand-primary mb-3" />
         <p className="text-[10px] tracking-wider">RESOLVING STOCK PERFORMANCE PARAMETERS...</p>
+      </div>
+    );
+  }
+
+  // Discovering: new stock being auto-ingested from Yahoo Finance
+  const DISCOVERY_STEPS = [
+    'Connecting to NSE live data feed...',
+    'Fetching 6Y price history from Yahoo Finance...',
+    'Computing CAGR (1Y / 3Y / 5Y) metrics...',
+    'Calculating Beta against NIFTY benchmark...',
+    'Running multi-factor Alpha Score model...',
+    'Persisting to AlphaMatrix intelligence database...',
+    'Running AI equity briefing synthesis...',
+  ];
+
+  if (discovering) {
+    return (
+      <div className="max-w-2xl mx-auto mt-16 px-4 font-mono">
+        <div className="bg-brand-surface border border-brand-border/60 p-8 space-y-6">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Activity className="h-8 w-8 text-brand-primary" />
+              <span className="absolute -top-1 -right-1 h-2.5 w-2.5 bg-brand-primary rounded-full animate-ping" />
+            </div>
+            <div>
+              <p className="text-[9px] text-brand-textMuted tracking-widest uppercase">AlphaMatrix Discovery Engine</p>
+              <h2 className="text-lg font-bold text-white tracking-wide">{symbol}</h2>
+            </div>
+          </div>
+
+          {/* Terminal log */}
+          <div className="bg-black border border-brand-border/30 p-4 space-y-2 text-[10px] font-mono">
+            <p className="text-green-400 text-[9px] tracking-widest mb-3">[ALPHA_MATRIX_DISCOVERY v2.0] INITIATING LIVE STOCK INGESTION</p>
+            {DISCOVERY_STEPS.map((step, i) => (
+              <div key={i} className={`flex items-center gap-2 transition-opacity duration-500 ${
+                i < discoverStep ? 'text-green-400' :
+                i === discoverStep ? 'text-brand-primary' :
+                'text-brand-textMuted/40'
+              }`}>
+                {i < discoverStep ? (
+                  <span className="text-green-500">✓</span>
+                ) : i === discoverStep ? (
+                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                ) : (
+                  <span className="w-2.5">·</span>
+                )}
+                <span>{step}</span>
+              </div>
+            ))}
+            <p className="text-brand-textMuted text-[9px] mt-3 animate-pulse">█ Polling every 6s...</p>
+          </div>
+
+          {/* ETA note */}
+          <div className="border-t border-brand-border/30 pt-4 flex items-center gap-2 text-brand-textMuted text-[10px]">
+            <Zap className="h-3 w-3 text-brand-primary" />
+            <p>This stock is being auto-discovered from live exchanges. Estimated time: <span className="text-white font-bold">15–45 seconds</span>. Page will auto-reload when ready.</p>
+          </div>
+
+          <button
+            onClick={() => navigate('/stocks/explorer')}
+            className="text-[9px] text-brand-textMuted hover:text-brand-primary transition-colors tracking-wider"
+          >
+            ← Return to Stock Explorer
+          </button>
+        </div>
       </div>
     );
   }

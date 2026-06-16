@@ -283,11 +283,28 @@ async def get_stock_detail(
     # Fetch stock metadata from DB
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
-    
+
     if not stock:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock with symbol {symbol} not found in database."
+        # Trigger dynamic ingestion for any NSE-listed stock not yet in DB
+        logger.info(f"Stock {symbol} not in DB — triggering dynamic ingestion via BackgroundTask")
+        async def _ingest_and_brief(sym: str):
+            from app.core.database import async_session_maker
+            from app.workers.stock_ingestion import dynamic_ingest_stock
+            async with async_session_maker() as ingest_session:
+                result = await dynamic_ingest_stock(sym, ingest_session)
+                if result["status"] == "ingested":
+                    # Trigger AI briefing after ingestion
+                    await generate_briefing_background(sym)
+        background_tasks.add_task(_ingest_and_brief, symbol)
+        # Return a 202 Accepted with discovering state so frontend can poll
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "discovering",
+                "symbol": symbol,
+                "message": f"AlphaMatrix is fetching market data for {symbol} from live exchanges. This takes 10–30 seconds. Please wait..."
+            }
         )
         
     # Trigger background AI briefing if missing
@@ -756,4 +773,29 @@ async def get_market_regime():
             logger.error(f"Redis set market regime failed: {e}")
 
     return diagnostics
+
+
+@router.get("/status/{symbol}", dependencies=[Depends(check_rate_limit)])
+async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
+    """
+    Poll whether a dynamically ingested stock is ready.
+    Returns status: 'ready' | 'discovering'
+    """
+    symbol = symbol.upper().strip()
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+
+    if stock:
+        return {
+            "status": "ready",
+            "symbol": symbol,
+            "company_name": stock.company_name,
+            "sector": stock.sector,
+            "alpha_score": stock.alpha_score,
+        }
+    return {
+        "status": "discovering",
+        "symbol": symbol,
+        "message": "Market data ingestion is in progress. Please wait..."
+    }
 

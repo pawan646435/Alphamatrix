@@ -232,6 +232,7 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
     """
     Downloads historical close prices and stock metadata from Yahoo Finance.
     Handles NSE suffix (.NS) for Indian equities.
+    Tries multiple period lengths to handle newer listings that don't have 6Y history.
     """
     import yfinance as yf
     try:
@@ -239,10 +240,17 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
         logger.info(f"Querying yfinance for symbol {yf_symbol}...")
         ticker = yf.Ticker(yf_symbol)
         
-        # 5.5 years of daily history is about 6 years of history
-        hist = ticker.history(period="6y")
+        # Try progressively shorter periods to accommodate newer listings
+        hist = pd.DataFrame()
+        for period in ("6y", "max", "3y", "2y", "1y"):
+            hist = ticker.history(period=period)
+            if not hist.empty:
+                logger.info(f"Got {len(hist)} rows for {yf_symbol} with period={period}")
+                break
+            logger.debug(f"No data for {yf_symbol} with period={period}, trying shorter period...")
+        
         if hist.empty:
-            logger.warning(f"No history returned from yfinance for {yf_symbol}.")
+            logger.warning(f"No history returned from yfinance for {yf_symbol} across all tried periods.")
             return None, None
             
         try:
@@ -255,6 +263,191 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
     except Exception as e:
         logger.error(f"yfinance query failed for symbol {symbol}: {e}")
         return None, None
+
+
+async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Dynamically fetches, computes, and persists a stock record for any NSE-listed symbol.
+    Called when a user searches or navigates to a stock not in the local database.
+
+    Returns a dict with status: 'ingested' | 'already_exists' | 'not_found' | 'error'
+    """
+    symbol = symbol.upper().strip()
+    logger.info(f"[DynamicIngest] Starting dynamic ingestion for symbol: {symbol}")
+
+    # 1. Check if already exists (safety check — should not be called if exists)
+    check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    if check_q.scalar_one_or_none():
+        logger.info(f"[DynamicIngest] {symbol} already exists in DB. Skipping ingestion.")
+        return {"status": "already_exists", "symbol": symbol}
+
+    # 2. Fetch data from Yahoo Finance (blocking IO in thread to avoid blocking event loop)
+    import asyncio
+    loop = asyncio.get_event_loop()
+    hist, info = await loop.run_in_executor(None, lambda: fetch_ticker_data_yfinance(symbol))
+
+    if hist is None or hist.empty:
+        # Try BSE suffix as fallback
+        logger.warning(f"[DynamicIngest] NSE lookup failed for {symbol}. Trying BSE suffix (.BO)...")
+        def fetch_bse():
+            import yfinance as yf
+            try:
+                ticker = yf.Ticker(f"{symbol}.BO")
+                h = pd.DataFrame()
+                for period in ("6y", "max", "3y", "2y", "1y"):
+                    h = ticker.history(period=period)
+                    if not h.empty:
+                        break
+                if h.empty:
+                    return None, None
+                try:
+                    i = ticker.info
+                except Exception:
+                    i = {}
+                return h, i
+            except Exception as e:
+                logger.error(f"[DynamicIngest] BSE fallback failed for {symbol}: {e}")
+                return None, None
+
+
+        hist, info = await loop.run_in_executor(None, fetch_bse)
+
+    if hist is None or hist.empty:
+        logger.warning(f"[DynamicIngest] No market data found for symbol {symbol} on NSE or BSE.")
+        return {"status": "not_found", "symbol": symbol}
+
+    # 3. Extract metadata from yfinance info
+    info = info or {}
+    company_name = (
+        info.get("longName") or
+        info.get("shortName") or
+        symbol
+    )
+    sector = info.get("sector") or "Unknown"
+    industry = info.get("industry") or "Unknown"
+    isin = info.get("isin")
+
+    mc = info.get("marketCap")
+    market_cap = round(mc / 10_000_000.0, 2) if mc else None
+
+    pe_raw = info.get("trailingPE") or info.get("forwardPE")
+    pe_ratio = round(float(pe_raw), 2) if pe_raw else None
+
+    pb_raw = info.get("priceToBook")
+    pb_ratio = round(float(pb_raw), 2) if pb_raw else None
+
+    roe_raw = info.get("returnOnEquity")
+    roe = round(float(roe_raw) * 100.0, 2) if roe_raw is not None else None
+
+    de_raw = info.get("debtToEquity")
+    if de_raw is not None:
+        debt_equity = round(de_raw / 100.0 if de_raw > 3.0 else de_raw, 2)
+    else:
+        debt_equity = None
+
+    dy_raw = info.get("dividendYield")
+    dividend_yield = round(float(dy_raw) * 100.0, 2) if dy_raw is not None else None
+
+    beta_raw = info.get("beta")
+    beta = round(float(beta_raw), 2) if beta_raw is not None else 1.0
+
+    # 4. Build price history from historical data
+    end_date = date.today()
+    start_date = end_date - timedelta(days=int(5.5 * 365.25))
+
+    prices_to_insert = []
+    for timestamp, row in hist.iterrows():
+        try:
+            close_val = float(row["Close"])
+        except Exception:
+            continue
+        if np.isnan(close_val):
+            continue
+        p_date = timestamp.date()
+        if p_date < start_date:
+            continue
+        prices_to_insert.append(
+            StockPriceHistory(symbol=symbol, date=p_date, close=round(close_val, 2))
+        )
+
+    # 5. Compute CAGR metrics from historical series
+    cagr_1y = cagr_3y = cagr_5y = None
+    computed_beta = beta
+
+    if len(prices_to_insert) >= 30:
+        prices_df = pd.DataFrame(
+            [{"date": p.date, "close": p.close} for p in prices_to_insert]
+        )
+        prices_df["date"] = pd.to_datetime(prices_df["date"])
+        prices_df = prices_df.sort_values("date").reset_index(drop=True)
+
+        def get_cagr(years: int) -> float:
+            latest_row = prices_df.iloc[-1]
+            target_d = latest_row["date"] - pd.DateOffset(years=years)
+            prices_df["diff"] = (prices_df["date"] - target_d).abs()
+            idx = prices_df["diff"].idxmin()
+            best_row = prices_df.loc[idx]
+            if best_row["diff"].days > 30:
+                return 0.0
+            days = (latest_row["date"] - best_row["date"]).days
+            years_act = days / 365.25
+            if years_act < (years * 0.9):
+                return 0.0
+            return (latest_row["close"] / best_row["close"]) ** (1.0 / years_act) - 1.0
+
+        cagr_1y = get_cagr(1)
+        cagr_3y = get_cagr(3)
+        cagr_5y = get_cagr(5)
+
+    # 6. Calculate Alpha Score
+    stock_meta = {
+        "roe": roe or 15.0,
+        "debt_equity": debt_equity or 0.5,
+        "pe_ratio": pe_ratio or 20.0,
+        "pb_ratio": pb_ratio or 3.0,
+        "target_beta": computed_beta,
+    }
+    alpha_score = calculate_alpha_score(stock_meta, cagr_1y or 0.0, cagr_3y or 0.0)
+
+    # 7. Insert StockMaster record
+    stock_master = StockMaster(
+        symbol=symbol,
+        company_name=company_name,
+        isin=isin,
+        sector=sector,
+        industry=industry,
+        market_cap=market_cap,
+        pe_ratio=pe_ratio,
+        pb_ratio=pb_ratio,
+        roe=roe,
+        debt_equity=debt_equity,
+        dividend_yield=dividend_yield,
+        beta=round(computed_beta, 2),
+        cagr_1y=cagr_1y,
+        cagr_3y=cagr_3y,
+        cagr_5y=cagr_5y,
+        alpha_score=alpha_score,
+        ai_summary="Generating Equity Intelligence Briefing in the background..."
+    )
+    db.add(stock_master)
+
+    if prices_to_insert:
+        db.add_all(prices_to_insert)
+
+    await db.commit()
+    logger.info(
+        f"[DynamicIngest] Successfully ingested {symbol} ({company_name}) "
+        f"with {len(prices_to_insert)} price records. Alpha Score: {alpha_score}"
+    )
+
+    return {
+        "status": "ingested",
+        "symbol": symbol,
+        "company_name": company_name,
+        "sector": sector,
+        "alpha_score": alpha_score
+    }
+
 
 async def seed_stocks_data(db: AsyncSession):
     """
