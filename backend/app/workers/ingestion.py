@@ -145,14 +145,32 @@ async def ingest_fund(
             logger.info(f"Benchmark fund {settings.BENCHMARK_SCHEME_CODE} not found. Ingesting benchmark first.")
             await ingest_fund(db, settings.BENCHMARK_SCHEME_CODE, force_recompute=True, background_tasks=background_tasks)
             
-    # 2. Fetch from MFapi.in
+    # 2. Fetch from MFapi.in with robust retries and dynamic backoffs
+    import asyncio
     url = f"https://api.mfapi.in/mf/{scheme_code}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, timeout=30.0)
-        if response.status_code != 200:
-            raise Exception(f"Failed to fetch data from MFapi.in. Status code: {response.status_code}")
+    max_retries = 3
+    response = None
+    json_data = None
+    
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                logger.info(f"Fetching NAV data from MFapi for scheme {scheme_code} (attempt {attempt + 1}/{max_retries})...")
+                res = await client.get(url)
+                if res.status_code == 200:
+                    response = res
+                    json_data = res.json()
+                    break
+                logger.warning(f"MFapi returned status {res.status_code} for scheme {scheme_code} on attempt {attempt + 1}")
+        except Exception as exc:
+            logger.warning(f"Request to MFapi failed for scheme {scheme_code} on attempt {attempt + 1}: {exc}")
+            if attempt == max_retries - 1:
+                raise Exception(f"Failed to fetch data from MFapi.in after {max_retries} attempts due to request error: {exc}")
+            await asyncio.sleep(2.0 * (attempt + 1))
             
-        json_data = response.json()
+    if not response or response.status_code != 200:
+        status_code = response.status_code if response else "No Response"
+        raise Exception(f"Failed to fetch data from MFapi.in after {max_retries} attempts. Status: {status_code}")
         
     meta = json_data.get("meta", {})
     nav_data = json_data.get("data", [])
