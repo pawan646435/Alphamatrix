@@ -256,7 +256,7 @@ export default function Detail() {
               <h2 className="font-bold text-black dark:text-white uppercase tracking-wider font-display">Quantitative Intelligence Briefing</h2>
             </div>
             <span className="text-[9px] font-mono text-brand-textMuted bg-brand-bg border border-brand-border px-2 py-0.5 uppercase">
-              MODEL: GEMINI_1.5_FLASH
+              MODEL: GEMINI_2.5_FLASH
             </span>
           </div>
 
