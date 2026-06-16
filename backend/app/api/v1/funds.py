@@ -234,7 +234,7 @@ async def get_fund_detail(
         .where(NAVHistory.scheme_code == scheme_code)
         .order_by(NAVHistory.date.desc())
     )
-    navs = [{"date": row.date, "nav": row.nav} for row in nav_check.all()]
+    navs = [{"date": row.date.isoformat(), "nav": row.nav} for row in nav_check.all()]
     
     response_data = {
         "fund": {
