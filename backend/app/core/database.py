@@ -46,4 +46,5 @@ async def init_db():
         # Import models inside function to prevent circular imports
         from app.models.fund import FundMaster, NAVHistory
         from app.models.user import User
+        from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
         await conn.run_sync(Base.metadata.create_all)

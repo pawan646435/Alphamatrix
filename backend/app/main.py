@@ -10,6 +10,8 @@ from app.core.database import init_db, async_session_maker
 from app.api.api import api_router
 from app.workers.ingestion import ingest_fund
 
+from app.workers.stock_ingestion import seed_stocks_data
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +54,7 @@ async def health():
 async def seed_data_background():
     """
     Background worker task to seed database with popular Indian mutual funds
-    on initial startup. Runs asynchronously to avoid blocking the main API thread.
+    and stock market equities on initial startup.
     """
     logger.info("Starting background database seeding...")
     
@@ -65,11 +67,6 @@ async def seed_data_background():
         return
         
     # 2. Seed popular funds (including Benchmark fund 120687)
-    # 120687: HDFC Index Nifty 50 (Benchmark)
-    # 119063: HDFC Top 100 (Large Cap)
-    # 120586: Nippon India Small Cap (Small Cap)
-    # 120716: SBI Bluechip (Large Cap)
-    # 120828: Quant Small Cap (Small Cap)
     seed_schemes = [
         settings.BENCHMARK_SCHEME_CODE,
         119063,
@@ -100,6 +97,13 @@ async def seed_data_background():
                 await asyncio.sleep(1.0)
             except Exception as e:
                 logger.error(f"Error seeding scheme {scheme_code}: {e}")
+                
+    # 3. Seed Stocks
+    try:
+        async with async_session_maker() as session:
+            await seed_stocks_data(session)
+    except Exception as e:
+        logger.error(f"Error seeding stocks data: {e}")
                 
     logger.info("Seeding background task finished.")
 

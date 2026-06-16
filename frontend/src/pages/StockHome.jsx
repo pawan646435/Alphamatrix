@@ -1,31 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, ShieldAlert, BookOpen, Layers, MessageSquare, RefreshCw, Star, Cpu, Crosshair } from 'lucide-react';
-import { useGetFunds, useSearchFunds, useAIChat } from '../hooks/useFunds';
-import RiskScatterplot from '../components/charts/RiskScatterplot';
-import FundLogo from '../components/FundLogo';
+import { Search, TrendingUp, Star, Cpu, Layers, MessageSquare, RefreshCw, Crosshair, ArrowUpRight, Activity } from 'lucide-react';
+import { useGetStocks, useSearchStocks, useStockAIChat, useMarketRegime } from '../hooks/useStocks';
+import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
+import StockLogo from '../components/StockLogo';
 import GlobalSearch from '../components/GlobalSearch';
 
-export default function Home() {
+export default function StockHome() {
   const navigate = useNavigate();
-  const { funds, loading: loadingFunds, fetchFunds } = useGetFunds();
-  const { searchResults, loading: searching, search, setSearchResults } = useSearchFunds();
+  const { stocks, loading: loadingStocks, fetchStocks } = useGetStocks();
+  const { searchResults, loading: searching, search, setSearchResults } = useSearchStocks();
+  const { marketRegime, loading: regimeLoading, fetchMarketRegime } = useMarketRegime();
   
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
-  const { messages, loading: chatLoading, sendMessage } = useAIChat();
+  const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
   useEffect(() => {
-    fetchFunds();
-  }, [fetchFunds]);
+    fetchStocks();
+    fetchMarketRegime();
+  }, [fetchStocks, fetchMarketRegime]);
 
   // Debounced search trigger
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (searchQuery.trim().length >= 3) {
+      if (searchQuery.trim().length >= 2) {
         search(searchQuery);
       } else {
         setSearchResults([]);
@@ -34,12 +36,12 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [searchQuery, search, setSearchResults]);
 
-  const handleCategoryClick = (category) => {
-    navigate(`/explorer?category=${encodeURIComponent(category)}`);
+  const handleSectorClick = (sector) => {
+    navigate(`/stocks/sector/${sector}`);
   };
 
-  const handleFundSelect = (schemeCode) => {
-    navigate(`/detail/${schemeCode}`);
+  const handleStockSelect = (symbol) => {
+    navigate(`/stocks/detail/${symbol}`);
   };
 
   const handleSendChat = (e) => {
@@ -49,34 +51,35 @@ export default function Home() {
     setChatMessage('');
   };
 
-  // Limit suggestions to top 10 for lazy rendering / DOM efficiency
+  // Limit suggestions
   const visibleSuggestions = React.useMemo(() => {
     return searchResults.slice(0, 10);
   }, [searchResults]);
 
-  // High-level cards details
-  const segments = [
-    { name: 'Large Cap', desc: 'Stable, blue-chip investments targeting long-term growth.', count: '100+ Funds', color: 'border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]' },
-    { name: 'Mid Cap', desc: 'Compounding growth engine balancing volatility and high yield.', count: '80+ Funds', color: 'border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]' },
-    { name: 'Small Cap', desc: 'Aggressive wealth creators tapping high-potential businesses.', count: '60+ Funds', color: 'border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]' },
-    { name: 'Index', desc: 'Low-cost passive investing copying benchmark market indices.', count: '50+ Funds', color: 'border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]' },
-    { name: 'Sectoral', desc: 'Tactical sector-specific thematic funds.', count: '90+ Funds', color: 'border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]' },
+  // Sector list configuration
+  const sectors = [
+    { name: 'Banking', desc: 'Financial engines driving retail and industrial expansion.', codeCount: 'HDFCBANK, ICICIBANK' },
+    { name: 'IT', desc: 'Software exports and enterprise digital transformation leaders.', codeCount: 'TCS, INFY' },
+    { name: 'Auto', desc: 'Commercial and passenger vehicle compounding growth.', codeCount: 'TATAMOTORS, M&M' },
+    { name: 'Energy', desc: 'Refining, conglomerates, and green transition powerhouses.', codeCount: 'RELIANCE' },
+    { name: 'Defence', desc: 'Indigenization mandates and specialized aerospace manufacturers.', codeCount: 'HAL, BEL' },
+    { name: 'FMCG', desc: 'Resilient consumer staples and diversified conglomerates.', codeCount: 'ITC' },
   ];
 
   // Calculate statistics
   const stats = React.useMemo(() => {
-    if (!funds.length) return { avgCagr: '0.00%', maxSharpe: '0.00', activeCount: 0 };
-    const validCagrs = funds.filter(f => f.cagr_3y !== null).map(f => f.cagr_3y);
+    if (!stocks.length) return { avgCagr: '0.00%', peakAlpha: '0.00', activeCount: 0 };
+    const validCagrs = stocks.filter(s => s.cagr_3y !== null).map(s => s.cagr_3y);
     const avgCagr = validCagrs.length ? (validCagrs.reduce((a, b) => a + b, 0) / validCagrs.length) * 100 : 0;
-    const sharpes = funds.filter(f => f.sharpe_ratio !== null).map(f => f.sharpe_ratio);
-    const maxSharpe = sharpes.length ? Math.max(...sharpes) : 0;
+    const alphas = stocks.filter(s => s.alpha_score !== null).map(s => s.alpha_score);
+    const peakAlpha = alphas.length ? Math.max(...alphas) : 0;
     
     return {
       avgCagr: `${avgCagr.toFixed(2)}%`,
-      maxSharpe: maxSharpe.toFixed(2),
-      activeCount: funds.length
+      peakAlpha: peakAlpha.toFixed(1),
+      activeCount: stocks.length
     };
-  }, [funds]);
+  }, [stocks]);
 
   return (
     <div className="space-y-12 pb-16">
@@ -85,24 +88,24 @@ export default function Home() {
         className="relative border border-brand-border p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
       >
         {/* Terminal Corner Crosshairs decoration */}
-        <div className="absolute top-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [MATRIX_SYS]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted select-none font-mono text-xs">[ONLINE] +</div>
-        <div className="absolute bottom-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [LOC_IN]</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [EQUITY_SYS]</div>
+        <div className="absolute top-2 right-2 text-brand-textMuted select-none font-mono text-xs">[ACTIVE] +</div>
+        <div className="absolute bottom-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [NIFTY_SEEDS]</div>
         <div className="absolute bottom-2 right-2 text-brand-textMuted select-none font-mono text-xs">[SECURE] +</div>
         
         {/* Subtle grid accent inside hero */}
         <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/5 via-transparent to-brand-primary/5 opacity-40 pointer-events-none" />
 
         <div className="flex items-center gap-1.5 px-3 py-1 bg-brand-primary/10 border border-brand-primary/40 text-brand-primary text-[10px] font-mono uppercase tracking-wider mb-5 animate-pulse-subtle">
-          <Cpu className="h-3 w-3" /> COGNITIVE COMPILATION LAYER ACTIVE [v1.5_FLASH]
+          <Cpu className="h-3 w-3" /> EQUITIES INTEL CORE [GEMINI_3.1_FLASH_LITE]
         </div>
         
         <h1 className="text-4xl md:text-5xl font-extrabold text-black dark:text-white tracking-tight leading-none max-w-4xl font-display uppercase">
-          NAVIGATE MUTUAL FUNDS WITH <span className="text-brand-primary">QUANTITATIVE RIGOR</span>
+          EVALUATE EQUITIES WITH <span className="text-brand-primary">QUANTITATIVE RIGOR</span>
         </h1>
         
         <p className="text-brand-textMuted text-sm md:text-base max-w-2xl mt-4 leading-relaxed font-sans">
-          Compute Rolling Sharpe, Sortino, CAGR, and CAPM Beta across 10,000+ Indian mutual funds. Powered by strict RAG models.
+          Analyze valuation multiples, multi-factor Alpha Scores, and historical returns across major NIFTY equities. Powered by Gemini.
         </p>
 
         {/* Master Search Input */}
@@ -111,74 +114,90 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Analytics Overview Cards - Staggered Animations */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up"
-          style={{ animationDelay: '100ms' }}
-        >
+      {/* Analytics Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="terminal-card flex items-center gap-4 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
           <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
             <Layers className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">OPERATIONAL DATABASE</p>
+            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">EQUITIES MASTERSTORE</p>
             <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.activeCount} seeded</h3>
           </div>
         </div>
 
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
-          style={{ animationDelay: '150ms' }}
-        >
+        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '150ms' }}>
           <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
             <TrendingUp className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3-YEAR YIELD</p>
+            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3Y STOCKS YIELD</p>
             <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.avgCagr}</h3>
           </div>
         </div>
 
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
-          style={{ animationDelay: '200ms' }}
-        >
+        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '200ms' }}>
           <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
             <Star className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK SHARPE RATIO</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.maxSharpe}</h3>
+            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK ALPHA SCORE</p>
+            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.peakAlpha}/100</h3>
+          </div>
+        </div>
+
+        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '250ms' }}>
+          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary shrink-0">
+            <Activity className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">MARKET REGIME</p>
+            {regimeLoading ? (
+              <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Calculating...</p>
+            ) : marketRegime ? (
+              <div className="space-y-0.5">
+                <h3 className="text-sm font-bold text-black dark:text-white font-mono flex items-center gap-1.5 leading-none">
+                  <span className={marketRegime.regime === 'RISK ON' ? 'text-green-500' : marketRegime.regime === 'RISK OFF' ? 'text-red-500' : 'text-yellow-500'}>
+                    {marketRegime.regime}
+                  </span>
+                  <span className="text-[9px] font-mono text-brand-textMuted font-normal">({marketRegime.confidence}%)</span>
+                </h3>
+                <p className="text-[9px] text-brand-textMuted leading-tight truncate font-sans hover:text-clip hover:whitespace-normal" title={marketRegime.explanation}>
+                  {marketRegime.explanation}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Unavailable</p>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Middle Grid: Segment Matrix cards and Scatterplot */}
+      {/* Middle Grid: Sector Matrix cards and Scatterplot */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Segments Cards */}
-        <div 
-          className="lg:col-span-5 space-y-4 animate-fade-in-up"
-          style={{ animationDelay: '250ms' }}
-        >
+        {/* Sectors list */}
+        <div className="lg:col-span-5 space-y-4 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
           <div className="flex items-center justify-between border-b border-brand-border pb-2">
-            <h2 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Asset Classes Matrix</h2>
-            <span className="font-mono text-[10px] text-brand-textMuted">[SEC_COUNT: 5]</span>
+            <h2 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Sector Intelligence Matrix</h2>
+            <span className="font-mono text-[10px] text-brand-textMuted">[SECTORS: 6]</span>
           </div>
           
           <div className="grid grid-cols-1 gap-3">
-            {segments.map((seg) => (
+            {sectors.map((sec) => (
               <button
-                key={seg.name}
-                onClick={() => handleCategoryClick(seg.name)}
-                className={`w-full text-left p-4 border transition-all duration-200 hover:-translate-x-1 flex justify-between items-center group ${seg.color}`}
+                key={sec.name}
+                onClick={() => handleSectorClick(sec.name)}
+                className="w-full text-left p-4 border border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)] transition-all duration-200 hover:-translate-x-1 flex justify-between items-center group"
               >
-                <div className="space-y-1">
-                  <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wide">{seg.name} Funds</h3>
-                  <p className="text-[10px] text-brand-textMuted max-w-sm line-clamp-1 font-sans">{seg.desc}</p>
+                <div className="space-y-1 min-w-0 pr-3">
+                  <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                    {sec.name} <ArrowUpRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </h3>
+                  <p className="text-[10px] text-brand-textMuted truncate font-sans">{sec.desc}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[9px] font-mono bg-brand-bg px-2 py-1 border border-brand-border text-black dark:text-white">
-                    {seg.count}
+                  <span className="text-[8px] font-mono bg-brand-bg px-2 py-1 border border-brand-border text-black dark:text-white">
+                    {sec.codeCount}
                   </span>
                 </div>
               </button>
@@ -187,11 +206,8 @@ export default function Home() {
         </div>
 
         {/* Scatterplot */}
-        <div 
-          className="lg:col-span-7 h-[420px] animate-fade-in-up"
-          style={{ animationDelay: '300ms' }}
-        >
-          <RiskScatterplot funds={funds} />
+        <div className="lg:col-span-7 h-[420px] animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+          <StockRiskScatterplot stocks={stocks} />
         </div>
       </div>
 
@@ -203,7 +219,7 @@ export default function Home() {
             <div className="bg-brand-bg border-b border-brand-border px-4 py-3 flex justify-between items-center text-xs">
               <div className="flex items-center gap-1.5 font-display">
                 <span className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
-                <span className="font-bold text-black dark:text-white">COGNITIVE_ANALYST.EXE</span>
+                <span className="font-bold text-black dark:text-white">EQUITY_ANALYST.EXE</span>
               </div>
               <button
                 onClick={() => setChatOpen(false)}
@@ -218,7 +234,7 @@ export default function Home() {
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted px-2 space-y-2">
                   <MessageSquare className="h-6 w-6 opacity-30 text-brand-primary" />
-                  <p className="text-[10px]">Ready to process queries. Ask about metrics, CAPM calculations, or portfolio risk parameters.</p>
+                  <p className="text-[10px]">Equity intelligence terminal online. Ask about PE ratios, Beta metrics, or request stock diagnostics.</p>
                 </div>
               ) : (
                 messages.map((m, idx) => (
@@ -253,7 +269,7 @@ export default function Home() {
             <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
               <input
                 type="text"
-                placeholder="Query system database..."
+                placeholder="Ask about TCS vs Infosys, etc..."
                 value={chatMessage}
                 onChange={(e) => setChatMessage(e.target.value)}
                 className="flex-1 bg-brand-surface border border-brand-border px-3 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"

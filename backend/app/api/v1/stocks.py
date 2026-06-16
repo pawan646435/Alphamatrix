@@ -1,0 +1,759 @@
+import logging
+import json
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import delete
+
+from app.core.database import get_db
+from app.core.security import check_rate_limit
+from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
+from app.schemas.stock_schema import (
+    StockGridItem, StockDetailResponse, StockMasterResponse, 
+    StockPriceHistoryBase, WatchlistItemResponse, WatchlistAnalyticsResponse,
+    SectorDetailsResponse, StockComparisonResponse
+)
+from app.schemas.ai_schema import AIChatRequest, AIChatResponse, ChatMessage
+
+import redis
+from app.core.config import settings
+
+router = APIRouter()
+logger = logging.getLogger("app.api.v1.stocks")
+
+def get_alpha_breakdown(stock_obj) -> dict:
+    """
+    Computes a proprietary multi-factor Alpha Score breakdown based on:
+    1. Fundamentals (ROE, Debt/Equity) - 30% weight
+    2. Valuation (PE ratio, PB ratio) - 30% weight
+    3. Momentum (1Y CAGR, Slope) - 25% weight
+    4. Risk (Beta stability) - 15% weight
+    5. Sentiment (Alpha-inferred)
+    6. Macro (Beta-inferred)
+    """
+    # 1. Fundamental score
+    roe = stock_obj.roe if stock_obj.roe is not None else 15.0
+    de = stock_obj.debt_equity if stock_obj.debt_equity is not None else 0.5
+    roe_score = min(100.0, roe * 4.0)
+    de_score = max(0.0, 100.0 - (de * 100.0))
+    fundamental_score = 0.6 * roe_score + 0.4 * de_score
+
+    # 2. Valuation score
+    pe = stock_obj.pe_ratio if stock_obj.pe_ratio is not None else 20.0
+    pb = stock_obj.pb_ratio if stock_obj.pb_ratio is not None else 3.0
+    pe_score = max(10.0, min(100.0, 100.0 - (pe - 12) * 2.5))
+    pb_score = max(10.0, min(100.0, 100.0 - (pb - 1.5) * 10.0))
+    valuation_score = 0.5 * pe_score + 0.5 * pb_score
+
+    # 3. Momentum score
+    cagr_1y_val = stock_obj.cagr_1y if stock_obj.cagr_1y is not None else 0.0
+    cagr_3y_val = stock_obj.cagr_3y if stock_obj.cagr_3y is not None else 0.0
+    mom_return_score = max(0.0, min(100.0, cagr_1y_val * 200.0))
+    acceleration_bonus = 20.0 if cagr_1y_val > cagr_3y_val else 0.0
+    momentum_score = min(100.0, mom_return_score + acceleration_bonus)
+
+    # 4. Risk score
+    beta = stock_obj.beta if stock_obj.beta is not None else 1.0
+    if beta <= 0.8:
+        risk_score = 95.0
+    elif beta <= 1.2:
+        risk_score = 80.0
+    else:
+        risk_score = max(20.0, 100.0 - (beta - 1.2) * 150.0)
+
+    # 5. Sentiment score
+    sentiment_score = 85.0 if getattr(stock_obj, "alpha_score", 50.0) >= 70.0 else 70.0 if getattr(stock_obj, "alpha_score", 50.0) >= 50.0 else 45.0
+
+    # 6. Macro score
+    macro_score = 80.0 if beta <= 0.9 else 55.0 if beta > 1.2 else 70.0
+
+    return {
+        "fundamentals": round(fundamental_score, 1),
+        "valuation": round(valuation_score, 1),
+        "momentum": round(momentum_score, 1),
+        "risk": round(risk_score, 1),
+        "sentiment": round(sentiment_score, 1),
+        "macro": round(macro_score, 1)
+    }
+
+class MockStock:
+    def __init__(self, d):
+        self.roe = d.get("roe")
+        self.debt_equity = d.get("debt_equity")
+        self.pe_ratio = d.get("pe_ratio")
+        self.pb_ratio = d.get("pb_ratio")
+        self.cagr_1y = d.get("cagr_1y")
+        self.cagr_3y = d.get("cagr_3y")
+        self.beta = d.get("beta")
+        self.alpha_score = d.get("alpha_score", 50)
+
+# Initialize Redis client if REDIS_URL is configured
+redis_client = None
+if settings.REDIS_URL:
+    try:
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        redis_client.ping()
+        logger.info("Connected to Redis successfully for Stocks API caching.")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis for Stocks API caching: {e}")
+
+async def generate_briefing_background(symbol: str):
+    """
+    Background worker task to generate the AI briefing for a stock.
+    Spawns its own session to avoid sharing session across threads.
+    """
+    logger.info(f"Background stock briefing task started for symbol {symbol}")
+    from app.core.database import async_session_maker
+    
+    async with async_session_maker() as session:
+        # Fetch stock from DB
+        stock_check = await session.execute(
+            select(StockMaster).where(StockMaster.symbol == symbol)
+        )
+        stock = stock_check.scalar_one_or_none()
+        if not stock:
+            logger.warning(f"Background briefing worker could not find symbol {symbol} in DB")
+            return
+            
+        stock_dict = {
+            "symbol": stock.symbol,
+            "company_name": stock.company_name,
+            "sector": stock.sector,
+            "industry": stock.industry,
+            "market_cap": stock.market_cap,
+            "pe_ratio": stock.pe_ratio,
+            "pb_ratio": stock.pb_ratio,
+            "roe": stock.roe,
+            "debt_equity": stock.debt_equity,
+            "dividend_yield": stock.dividend_yield,
+            "beta": stock.beta,
+            "alpha_score": stock.alpha_score,
+            "cagr_1y": stock.cagr_1y,
+            "cagr_3y": stock.cagr_3y,
+            "cagr_5y": stock.cagr_5y
+        }
+        
+        try:
+            from app.services.ai_agent import generate_stock_briefing
+            briefing = await generate_stock_briefing(stock_dict)
+            stock.ai_summary = briefing
+            await session.commit()
+            
+            # Invalidate Redis cache
+            if settings.REDIS_URL:
+                try:
+                    import redis
+                    r = redis.from_url(settings.REDIS_URL)
+                    r.delete(
+                        f"stock_detail:{symbol}", 
+                        f"stock_master:{symbol}", 
+                        f"stock_briefing:{symbol}", 
+                        f"stock_history:{symbol}"
+                    )
+                    logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
+                except Exception as cache_err:
+                    logger.error(f"Failed to invalidate Redis cache for stock {symbol}: {cache_err}")
+            logger.info(f"Background AI briefing generated successfully for stock {symbol}")
+        except Exception as e:
+            logger.error(f"Error in background briefing task for stock {symbol}: {e}")
+
+@router.get("/search", dependencies=[Depends(check_rate_limit)])
+async def search_stocks(query: str, db: AsyncSession = Depends(get_db)):
+    """
+    Search seeded stocks by symbol or company name.
+    """
+    cache_key = f"stock_search:{query.strip().lower()}"
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.error(f"Redis get search failed: {e}")
+
+    # Query DB
+    q_lower = f"%{query.strip().lower()}%"
+    result = await db.execute(
+        select(StockMaster)
+        .where(
+            (StockMaster.symbol.ilike(q_lower)) | 
+            (StockMaster.company_name.ilike(q_lower))
+        )
+        .limit(20)
+    )
+    stocks = result.scalars().all()
+    
+    response_data = [
+        {"symbol": s.symbol, "company_name": s.company_name, "sector": s.sector}
+        for s in stocks
+    ]
+    
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 600, json.dumps(response_data)) # Cache search results for 10 mins
+        except Exception as e:
+            logger.error(f"Redis set search failed: {e}")
+            
+    return response_data
+
+@router.get("/list", response_model=List[StockGridItem], dependencies=[Depends(check_rate_limit)])
+async def get_stocks(
+    sector: Optional[str] = None,
+    min_cagr_3y: Optional[float] = None,
+    min_roe: Optional[float] = None,
+    max_debt_equity: Optional[float] = None,
+    max_pe: Optional[float] = None,
+    sort_by: Optional[str] = "alpha_score",
+    sort_order: str = "desc",
+    skip: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of seeded stocks applying sector/financial filters.
+    """
+    query = select(StockMaster)
+    
+    # Apply filters
+    if sector:
+        query = query.where(StockMaster.sector == sector)
+    if min_cagr_3y is not None:
+        query = query.where(StockMaster.cagr_3y >= (min_cagr_3y / 100.0))
+    if min_roe is not None:
+        query = query.where(StockMaster.roe >= min_roe)
+    if max_debt_equity is not None:
+        query = query.where(StockMaster.debt_equity <= max_debt_equity)
+    if max_pe is not None:
+        query = query.where(StockMaster.pe_ratio <= max_pe)
+        
+    # Apply sorting
+    if sort_by and hasattr(StockMaster, sort_by):
+        sort_attr = getattr(StockMaster, sort_by)
+        if sort_order.lower() == "asc":
+            query = query.order_by(sort_attr.asc())
+        else:
+            query = query.order_by(sort_attr.desc())
+            
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
+    stocks = result.scalars().all()
+    
+    return stocks
+
+@router.get("/detail/{symbol}", response_model=StockDetailResponse, dependencies=[Depends(check_rate_limit)])
+async def get_stock_detail(
+    symbol: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve stock metadata, fundamentals, return metrics, and daily close history.
+    Triggers AI research briefing in the background if not present.
+    Splits caching into metadata, history, and briefings for fine-grained invalidation.
+    """
+    symbol = symbol.upper().strip()
+    
+    cached_master = None
+    cached_history = None
+    cached_briefing = None
+    
+    if redis_client:
+        try:
+            cached_master = redis_client.get(f"stock_master:{symbol}")
+            cached_history = redis_client.get(f"stock_history:{symbol}")
+            cached_briefing = redis_client.get(f"stock_briefing:{symbol}")
+        except Exception as e:
+            logger.error(f"Redis get split detail failed: {e}")
+            
+    # Reconstruct from cache if all exist and briefing is not generating placeholder
+    if cached_master and cached_history and cached_briefing:
+        master_dict = json.loads(cached_master)
+        briefing_val = cached_briefing
+        master_dict["ai_summary"] = briefing_val
+        
+        if briefing_val != "Generating Equity Intelligence Briefing in the background...":
+            logger.info(f"Returning fully split cached stock details for {symbol}")
+            return {
+                "stock": master_dict,
+                "price_history": json.loads(cached_history),
+                "alpha_score_breakdown": get_alpha_breakdown(MockStock(master_dict))
+            }
+
+    # Fetch stock metadata from DB
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock with symbol {symbol} not found in database."
+        )
+        
+    # Trigger background AI briefing if missing
+    trigger_background = False
+    if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
+        stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
+        await db.commit()
+        trigger_background = True
+        
+    prices = []
+    if cached_history:
+        prices = json.loads(cached_history)
+    else:
+        # Fetch historical daily prices (sorted descending)
+        prices_q = await db.execute(
+            select(StockPriceHistory.date, StockPriceHistory.close)
+            .where(StockPriceHistory.symbol == symbol)
+            .order_by(StockPriceHistory.date.desc())
+        )
+        prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
+        if redis_client:
+            try:
+                # Cache history for 24h
+                redis_client.setex(f"stock_history:{symbol}", 86400, json.dumps(prices))
+            except Exception as e:
+                logger.error(f"Redis set history failed: {e}")
+                
+    master_dict = {
+        "symbol": stock.symbol,
+        "company_name": stock.company_name,
+        "isin": stock.isin,
+        "sector": stock.sector,
+        "industry": stock.industry,
+        "market_cap": stock.market_cap,
+        "pe_ratio": stock.pe_ratio,
+        "pb_ratio": stock.pb_ratio,
+        "roe": stock.roe,
+        "debt_equity": stock.debt_equity,
+        "dividend_yield": stock.dividend_yield,
+        "beta": stock.beta,
+        "cagr_1y": stock.cagr_1y,
+        "cagr_3y": stock.cagr_3y,
+        "cagr_5y": stock.cagr_5y,
+        "alpha_score": stock.alpha_score,
+        "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+    }
+    
+    if trigger_background:
+        # Delete briefing and master cache to reflect "Generating..." state
+        if redis_client:
+            try:
+                redis_client.delete(f"stock_master:{symbol}", f"stock_briefing:{symbol}")
+            except Exception as e:
+                logger.error(f"Failed to clear Redis keys for briefing status: {e}")
+        background_tasks.add_task(generate_briefing_background, symbol)
+        
+    # Set cache for master (without AI summary, TTL 6h)
+    if redis_client:
+        try:
+            redis_client.setex(f"stock_master:{symbol}", 21600, json.dumps(master_dict))
+            # Cache briefing (TTL 24h if real, 5s if generating)
+            briefing_ttl = 5 if trigger_background else 86400
+            redis_client.setex(f"stock_briefing:{symbol}", briefing_ttl, stock.ai_summary)
+        except Exception as e:
+            logger.error(f"Redis set split cache failed: {e}")
+            
+    # Return response including ai_summary
+    master_response = dict(master_dict)
+    master_response["ai_summary"] = stock.ai_summary
+    
+    return {
+        "stock": master_response,
+        "price_history": prices,
+        "alpha_score_breakdown": get_alpha_breakdown(stock)
+    }
+
+@router.post("/chat", response_model=AIChatResponse, dependencies=[Depends(check_rate_limit)])
+async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Chat with the AI Analyst specifically configured for equities and stocks.
+    """
+    stock_dict = None
+    sources = []
+    
+    if payload.scheme_code: # We will use scheme_code field in the request payload to pass stock ID/symbol for convenience
+        symbol = str(payload.scheme_code).upper().strip() # Or pass symbol
+    else:
+        symbol = None
+        
+    # Let's inspect the message query to see if a symbol is mentioned
+    if not symbol:
+        for word in payload.message.split():
+            clean_word = word.replace("$", "").upper().strip()
+            # Check if this matches a seeded symbol
+            q = await db.execute(select(StockMaster.symbol).where(StockMaster.symbol == clean_word))
+            if q.scalar_one_or_none():
+                symbol = clean_word
+                break
+
+    if symbol:
+        stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+        stock = stock_q.scalar_one_or_none()
+        if stock:
+            stock_dict = {
+                "symbol": stock.symbol,
+                "company_name": stock.company_name,
+                "sector": stock.sector,
+                "market_cap": stock.market_cap,
+                "pe_ratio": stock.pe_ratio,
+                "pb_ratio": stock.pb_ratio,
+                "roe": stock.roe,
+                "debt_equity": stock.debt_equity,
+                "dividend_yield": stock.dividend_yield,
+                "beta": stock.beta,
+                "alpha_score": stock.alpha_score,
+                "cagr_1y": stock.cagr_1y,
+                "cagr_3y": stock.cagr_3y,
+                "cagr_5y": stock.cagr_5y
+            }
+            sources.append(stock.company_name)
+            
+    try:
+        from app.services.ai_agent import run_stock_chat
+        ai_response = await run_stock_chat(payload.message, payload.history, stock_dict)
+        return {
+            "response": ai_response,
+            "scheme_code": 0, # Return placeholder integer
+            "sources": sources
+        }
+    except Exception as e:
+        logger.error(f"Stock AI Chat failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stock chat analysis failed: {str(e)}"
+        )
+
+# Watchlist Management Endpoints
+
+@router.get("/watchlist", response_model=List[StockGridItem])
+async def get_watchlist(email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+    """
+    Get user saved watchlisted stocks.
+    """
+    query = (
+        select(StockMaster)
+        .join(WatchlistItem, WatchlistItem.symbol == StockMaster.symbol)
+        .where(WatchlistItem.email == email)
+    )
+    result = await db.execute(query)
+    return result.scalars().all()
+
+@router.post("/watchlist")
+async def add_to_watchlist(symbol: str, email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+    """
+    Add a stock symbol to user's watchlist.
+    """
+    symbol = symbol.upper().strip()
+    # Check if stock exists
+    check_stock = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    if not check_stock.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock {symbol} does not exist in our index."
+        )
+        
+    # Check if already added
+    check_item = await db.execute(
+        select(WatchlistItem)
+        .where(WatchlistItem.email == email)
+        .where(WatchlistItem.symbol == symbol)
+    )
+    if check_item.scalar_one_or_none():
+        return {"status": "already_added", "message": f"{symbol} is already in your watchlist."}
+        
+    new_item = WatchlistItem(email=email, symbol=symbol)
+    db.add(new_item)
+    await db.commit()
+    
+    # Invalidate watchlist analytics cache
+    if redis_client:
+        try:
+            redis_client.delete(f"watchlist_analytics:{email}")
+        except Exception as e:
+            logger.error(f"Failed to clear watchlist cache: {e}")
+            
+    return {"status": "success", "message": f"Successfully added {symbol} to watchlist."}
+
+@router.delete("/watchlist/{symbol}")
+async def remove_from_watchlist(symbol: str, email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+    """
+    Remove stock symbol from user's watchlist.
+    """
+    symbol = symbol.upper().strip()
+    
+    # Check if item exists
+    check_item = await db.execute(
+        select(WatchlistItem)
+        .where(WatchlistItem.email == email)
+        .where(WatchlistItem.symbol == symbol)
+    )
+    item = check_item.scalar_one_or_none()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Symbol {symbol} is not present in your watchlist."
+        )
+        
+    await db.delete(item)
+    await db.commit()
+    
+    # Invalidate cache
+    if redis_client:
+        try:
+            redis_client.delete(f"watchlist_analytics:{email}")
+        except Exception as e:
+            logger.error(f"Failed to clear watchlist cache: {e}")
+            
+    return {"status": "success", "message": f"Successfully removed {symbol} from watchlist."}
+
+@router.get("/watchlist/analytics", response_model=WatchlistAnalyticsResponse, dependencies=[Depends(check_rate_limit)])
+async def get_watchlist_diagnostics(email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+    """
+    Analyze watchlist stocks and return portfolio diagnostics.
+    """
+    cache_key = f"watchlist_analytics:{email}"
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.error(f"Redis get diagnostics failed: {e}")
+
+    # Fetch all stocks in watchlist
+    query = (
+        select(StockMaster)
+        .join(WatchlistItem, WatchlistItem.symbol == StockMaster.symbol)
+        .where(WatchlistItem.email == email)
+    )
+    result = await db.execute(query)
+    stocks = result.scalars().all()
+    
+    if not stocks:
+        return {
+            "health_score": 0.0,
+            "ai_summary": "Your watchlist is empty. Add stocks to compile diagnostics.",
+            "biggest_opportunity": "None",
+            "biggest_risk": "None",
+            "most_volatile_position": "None",
+            "best_performing_position": "None"
+        }
+        
+    # Serialize stocks for AI consumption
+    stocks_list = []
+    for s in stocks:
+        stocks_list.append({
+            "symbol": s.symbol,
+            "company_name": s.company_name,
+            "sector": s.sector,
+            "pe_ratio": s.pe_ratio,
+            "roe": s.roe,
+            "debt_equity": s.debt_equity,
+            "beta": s.beta,
+            "alpha_score": s.alpha_score,
+            "cagr_1y": s.cagr_1y,
+            "cagr_3y": s.cagr_3y
+        })
+        
+    from app.services.ai_agent import generate_watchlist_analytics
+    diagnostics = await generate_watchlist_analytics(stocks_list)
+    
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 1800, json.dumps(diagnostics)) # Cache diagnostics for 30 mins
+        except Exception as e:
+            logger.error(f"Redis set diagnostics failed: {e}")
+            
+    return diagnostics
+
+# Sector Lab Outlook Endpoints
+
+@router.get("/sector/{sector}", response_model=SectorDetailsResponse, dependencies=[Depends(check_rate_limit)])
+async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
+    """
+    Get sector details, score, drivers, risks, top companies, and AI sector outlook.
+    """
+    cache_key = f"sector_details:{sector.lower()}"
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.error(f"Redis get sector failed: {e}")
+
+    # Query all seeded stocks in this sector
+    result = await db.execute(
+        select(StockMaster)
+        .where(StockMaster.sector.ilike(sector))
+        .order_by(StockMaster.alpha_score.desc())
+    )
+    stocks = result.scalars().all()
+    
+    if not stocks:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sector '{sector}' has no seeded companies in our store."
+        )
+        
+    stocks_list = []
+    for s in stocks:
+        stocks_list.append({
+            "symbol": s.symbol,
+            "company_name": s.company_name,
+            "pe_ratio": s.pe_ratio,
+            "roe": s.roe,
+            "debt_equity": s.debt_equity,
+            "alpha_score": s.alpha_score,
+            "cagr_1y": s.cagr_1y,
+            "cagr_3y": s.cagr_3y
+        })
+        
+    from app.services.ai_agent import generate_sector_outlook
+    outlook = await generate_sector_outlook(sector, stocks_list)
+    
+    # Format response mapping top stocks
+    response_data = {
+        "sector": outlook.get("sector", sector),
+        "sector_score": outlook.get("sector_score", 70.0),
+        "growth_drivers": outlook.get("growth_drivers", []),
+        "major_risks": outlook.get("major_risks", []),
+        "top_stocks": stocks, # Return SQLAlchemy models matching StockGridItem
+        "ai_outlook": outlook.get("ai_outlook", "")
+    }
+    
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 86400, json.dumps(response_data, default=str)) # Cache for 24 hours
+        except Exception as e:
+            logger.error(f"Redis set sector failed: {e}")
+            
+    return response_data
+
+@router.get("/compare", response_model=StockComparisonResponse, dependencies=[Depends(check_rate_limit)])
+async def compare_stocks(s1: str, s2: str, db: AsyncSession = Depends(get_db)):
+    """
+    Compare side-by-side returns, valuation, risk metrics, and AI verdict for two equities.
+    """
+    s1 = s1.upper().strip()
+    s2 = s2.upper().strip()
+    
+    # Fetch stocks
+    s1_q = await db.execute(select(StockMaster).where(StockMaster.symbol == s1))
+    stock1 = s1_q.scalar_one_or_none()
+    
+    s2_q = await db.execute(select(StockMaster).where(StockMaster.symbol == s2))
+    stock2 = s2_q.scalar_one_or_none()
+    
+    if not stock1 or not stock2:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"One or both symbols ({s1}, {s2}) not found in database."
+        )
+        
+    # Fetch price histories
+    p1_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == s1)
+        .order_by(StockPriceHistory.date.desc())
+    )
+    prices1 = [{"date": row.date.isoformat(), "close": row.close} for row in p1_q.all()]
+    
+    p2_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == s2)
+        .order_by(StockPriceHistory.date.desc())
+    )
+    prices2 = [{"date": row.date.isoformat(), "close": row.close} for row in p2_q.all()]
+    
+    # Check cache for comparison verdict
+    cache_key = f"stock_compare_verdict:{s1}:{s2}"
+    comparison_verdict = None
+    if redis_client:
+        try:
+            comparison_verdict = redis_client.get(cache_key)
+        except Exception as e:
+            logger.error(f"Redis get comparison verdict failed: {e}")
+            
+    if not comparison_verdict:
+        s1_dict = {
+            "symbol": stock1.symbol,
+            "company_name": stock1.company_name,
+            "sector": stock1.sector,
+            "market_cap": stock1.market_cap,
+            "pe_ratio": stock1.pe_ratio,
+            "pb_ratio": stock1.pb_ratio,
+            "roe": stock1.roe,
+            "debt_equity": stock1.debt_equity,
+            "beta": stock1.beta,
+            "alpha_score": stock1.alpha_score,
+            "cagr_1y": stock1.cagr_1y,
+            "cagr_3y": stock1.cagr_3y
+        }
+        s2_dict = {
+            "symbol": stock2.symbol,
+            "company_name": stock2.company_name,
+            "sector": stock2.sector,
+            "market_cap": stock2.market_cap,
+            "pe_ratio": stock2.pe_ratio,
+            "pb_ratio": stock2.pb_ratio,
+            "roe": stock2.roe,
+            "debt_equity": stock2.debt_equity,
+            "beta": stock2.beta,
+            "alpha_score": stock2.alpha_score,
+            "cagr_1y": stock2.cagr_1y,
+            "cagr_3y": stock2.cagr_3y
+        }
+        from app.services.ai_agent import generate_stock_comparison
+        comparison_verdict = await generate_stock_comparison(s1_dict, s2_dict)
+        if redis_client:
+            try:
+                redis_client.setex(cache_key, 86400, comparison_verdict)
+            except Exception as e:
+                logger.error(f"Redis set comparison verdict failed: {e}")
+                
+    return {
+        "stock1": stock1,
+        "stock2": stock2,
+        "comparison_verdict": comparison_verdict,
+        "price_history1": prices1,
+        "price_history2": prices2,
+        "alpha_score_breakdown1": get_alpha_breakdown(stock1),
+        "alpha_score_breakdown2": get_alpha_breakdown(stock2)
+    }
+
+from pydantic import BaseModel
+
+class MarketRegimeResponse(BaseModel):
+    regime: str
+    confidence: float
+    explanation: str
+
+@router.get("/market-regime", response_model=MarketRegimeResponse, dependencies=[Depends(check_rate_limit)])
+async def get_market_regime():
+    """
+    Retrieves the macro AI market regime diagnosis, cached for 24 hours.
+    """
+    cache_key = "market_regime_analytics"
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                logger.info("Returning cached market regime diagnostics")
+                return json.loads(cached)
+           
+        except Exception as e:
+            logger.error(f"Redis get market regime failed: {e}")
+
+    from app.services.ai_agent import get_market_regime_diagnostics
+    diagnostics = await get_market_regime_diagnostics()
+
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 86400, json.dumps(diagnostics))
+        except Exception as e:
+            logger.error(f"Redis set market regime failed: {e}")
+
+    return diagnostics
+
