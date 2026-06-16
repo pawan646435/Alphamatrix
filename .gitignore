@@ -46,3 +46,4 @@ out/
 *.sw?
 .DS_Store
 Thumbs.db
+.history/

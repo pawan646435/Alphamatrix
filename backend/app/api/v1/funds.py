@@ -18,8 +18,21 @@ from app.schemas.fund_schema import (
 from app.workers.ingestion import ingest_fund
 from app.workers.cron_jobs import run_overnight_sync
 
+import redis
+from app.core.config import settings
+
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.funds")
+
+# Initialize Redis client if REDIS_URL is configured
+redis_client = None
+if settings.REDIS_URL:
+    try:
+        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        redis_client.ping()
+        logger.info("Connected to Redis successfully for API caching.")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis for API caching: {e}")
 
 # In-memory cache for all Indian mutual funds search
 MF_MASTER_LIST = []
@@ -165,6 +178,16 @@ async def get_fund_detail(
     Retrieve full details of a mutual fund and its NAV history.
     Self-healing: If the fund doesn't exist in DB, triggers on-demand ingestion.
     """
+    cache_key = f"fund_detail:{scheme_code}"
+    if redis_client:
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                logger.info(f"Returning cached fund details for {scheme_code}")
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.error(f"Redis get failed for key {cache_key}: {e}")
+
     # Check if fund exists
     fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
     fund = fund_check.scalar_one_or_none()
@@ -195,21 +218,56 @@ async def get_fund_detail(
         logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
         fund.ai_summary = "Generating AI Analysis in the background..."
         await db.commit()
+        
+        # Invalidate cache so that cached response reflects the loading status
+        if redis_client:
+            try:
+                redis_client.delete(cache_key)
+            except Exception as e:
+                logger.error(f"Failed to clear Redis cache on summary status change: {e}")
+                
         background_tasks.add_task(generate_summary_background, scheme_code)
 
     # Get NAV history sorted descending (latest first)
     nav_check = await db.execute(
-        select(NAVHistory)
+        select(NAVHistory.date, NAVHistory.nav)
         .where(NAVHistory.scheme_code == scheme_code)
         .order_by(NAVHistory.date.desc())
     )
-    navs = nav_check.scalars().all()
+    navs = [{"date": row.date, "nav": row.nav} for row in nav_check.all()]
     
-    # Format and return response
-    return {
-        "fund": fund,
-        "nav_history": [{"date": n.date, "nav": n.nav} for n in navs]
+    response_data = {
+        "fund": {
+            "scheme_code": fund.scheme_code,
+            "isin": fund.isin,
+            "fund_name": fund.fund_name,
+            "category": fund.category,
+            "sub_category": fund.sub_category,
+            "pe_ratio": fund.pe_ratio,
+            "expense_ratio": fund.expense_ratio,
+            "cagr_1y": fund.cagr_1y,
+            "cagr_3y": fund.cagr_3y,
+            "cagr_5y": fund.cagr_5y,
+            "sharpe_ratio": fund.sharpe_ratio,
+            "sortino_ratio": fund.sortino_ratio,
+            "alpha": fund.alpha,
+            "beta": fund.beta,
+            "ai_summary": fund.ai_summary,
+            "last_updated": fund.last_updated.isoformat() if fund.last_updated else None
+        },
+        "nav_history": navs
     }
+    
+    # Store response in Redis cache (1 hour expiry, or 5 seconds if loading)
+    if redis_client:
+        try:
+            ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else 3600
+            redis_client.setex(cache_key, ttl, json.dumps(response_data))
+            logger.info(f"Cached fund details for {scheme_code} in Redis with TTL={ttl}s")
+        except Exception as e:
+            logger.error(f"Redis set failed for key {cache_key}: {e}")
+            
+    return response_data
 
 @router.post("/sync/{scheme_code}", response_model=SyncResponse)
 async def sync_fund_manual(
@@ -220,6 +278,14 @@ async def sync_fund_manual(
     """
     Manually trigger sync and metrics computation for a specific fund.
     """
+    # Invalidate cache
+    if redis_client:
+        try:
+            redis_client.delete(f"fund_detail:{scheme_code}")
+            logger.info(f"Invalidated Redis cache for manual sync of {scheme_code}")
+        except Exception as e:
+            logger.error(f"Failed to delete Redis cache key for {scheme_code}: {e}")
+            
     try:
         res = await ingest_fund(db, scheme_code, force_recompute=True, background_tasks=background_tasks)
         return {
