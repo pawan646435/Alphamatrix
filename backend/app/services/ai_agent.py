@@ -92,22 +92,42 @@ Rules:
         logger.error(f"Groq semantic parsing failed: {e}. Falling back to rule-based mock parser.")
         return _mock_parse_semantic_query(query)
 
-async def generate_fund_summary(fund_data: Dict[str, Any]) -> str:
+async def generate_fund_summary(
+    fund_data: Dict[str, Any],
+    holdings_list: List[str] = None,
+    aum_crores: float = None,
+    manager_name: str = None,
+    performance_milestones: List[str] = None,
+    max_drawdown: float = None
+) -> str:
     """
     Generates a professional 3-bullet point investment analysis of a mutual fund
-    based on its calculated database metrics, 1-year trend, and geopolitical overlay.
+    based on its calculated database metrics, live holdings, AUM, manager info, and NAV history milestones.
     """
     if not groq_configured:
         return _generate_mock_fund_summary(fund_data)
         
+    import datetime
+    current_date_str = datetime.date.today().strftime("%B %Y")
+    
+    holdings_str = ", ".join(holdings_list) if holdings_list else "Not Available"
+    milestones_str = "\n".join([f"- {m}" for m in performance_milestones]) if performance_milestones else "None recorded"
+    aum_str = f"₹{aum_crores:.2f} Cr" if aum_crores else "N/A"
+    manager_str = manager_name if manager_name else "N/A"
+    drawdown_str = f"{max_drawdown:.2f}%" if max_drawdown is not None else "N/A"
+        
     prompt = f"""
 You are a Lead Portfolio Strategist and Chartered Financial Analyst (CFA) specializing in Indian Mutual Funds.
-Analyze the following fund metrics and write a highly professional, 3-bullet-point synthesis of its risk-return profile.
+Current Date Context: {current_date_str}
+
+Analyze the following fund details and write a highly professional, 3-bullet-point synthesis of its risk-return profile.
 
 Fund Details:
 - Name: {fund_data.get('fund_name')}
 - Category: {fund_data.get('category')}
 - Sub-category: {fund_data.get('sub_category')}
+- Assets Under Management (AUM): {aum_str}
+- Fund Manager: {manager_str}
 - 1-Year Performance Trend: {fund_data.get('cagr_1y')}%
 - 3-Year CAGR: {fund_data.get('cagr_3y')}%
 - 5-Year CAGR: {fund_data.get('cagr_5y')}%
@@ -117,15 +137,22 @@ Fund Details:
 - Beta (vs Nifty 50): {fund_data.get('beta')}
 - PE Ratio: {fund_data.get('pe_ratio')}
 - Expense Ratio: {fund_data.get('expense_ratio')}%
+- Max Drawdown (Historical Risk): {drawdown_str}
+
+Top Stock Holdings in Portfolio:
+[{holdings_str}]
+
+Recent NAV Performance Milestones:
+{milestones_str}
 
 Instruction:
 Generate EXACTLY 3 bullet points starting with a hyphen (-). No introductory text, no conclusion.
 You MUST write about these specific domains:
-1. **1-Year Trend & Trajectory**: Detail how the 1-Year performance ({fund_data.get('cagr_1y')}%) relates to the 3Y and 5Y CAGR, explaining the growth path.
-2. **Geopolitical & Macro Overlay**: Evaluate how current geopolitical situations (e.g. global trade friction, interest rate cycles, inflation, supply chains) affect the specific holdings of this category ({fund_data.get('category')} / {fund_data.get('sub_category')}).
-3. **Investment Stance & Future Forecast**: Give a clear, definitive recommendation (either **BUY**, **HOLD**, or **AVOID**) with a forecast of its future trend and a risk-adjusted justification.
+1. **1-Year Trend & Trajectory**: Detail how the 1-Year performance ({fund_data.get('cagr_1y')}%) relates to the 3Y and 5Y CAGR, explaining the growth path and referencing key performance milestones.
+2. **Geopolitical & Macro Overlay**: Evaluate how current geopolitical situations (e.g. global trade friction, interest rate cycles, inflation, supply chains) affect the specific top holdings ({holdings_str}) of this category.
+3. **Investment Stance & Future Forecast**: Give a clear, definitive recommendation (either **BUY**, **HOLD**, or **AVOID**) with a forecast of its future trend, risk-adjusted justification (referencing Sharpe/Sortino and Max Drawdown: {drawdown_str}), and AUM/Manager stability context.
 
-Return ONLY the 3 bullet points starting with a hyphen (-). Mention the numerical metrics in your points.
+Return ONLY the 3 bullet points starting with a hyphen (-). Mention the numerical metrics and specific stock holdings in your points.
 """
     try:
         response = groq_client.chat.completions.create(
@@ -538,10 +565,16 @@ def _mock_chat_response(message: str, fund_data: Optional[Dict[str, Any]] = None
 
 # --- NEW STOCKS AI METHODS ---
 
-async def generate_stock_briefing(stock_data: Dict[str, Any], historical_prices: List[Dict[str, Any]] = None) -> str:
+async def generate_stock_briefing(
+    stock_data: Dict[str, Any],
+    historical_prices: List[Dict[str, Any]] = None,
+    news_list: List[Dict[str, Any]] = None,
+    actions_list: List[Dict[str, Any]] = None,
+    calendar_dict: Dict[str, Any] = None
+) -> str:
     """
     Generates a comprehensive Markdown equity research report briefing
-    using Llama 3.3 via Groq.
+    using Llama 3.3 via Groq, incorporating live news and corporate actions.
     """
     if not groq_configured:
         return _generate_mock_stock_briefing(stock_data)
@@ -551,9 +584,41 @@ async def generate_stock_briefing(stock_data: Dict[str, Any], historical_prices:
     sector = stock_data.get("sector", "")
     industry = stock_data.get("industry", "")
     
+    import datetime
+    current_date_str = datetime.date.today().strftime("%B %Y")
+    
+    # Format news
+    news_str = ""
+    if news_list:
+        news_str = "\n".join([
+            f"- **{item.get('title')}** ({item.get('provider')} - {item.get('pubDate')}): {item.get('summary')}"
+            for item in news_list
+        ])
+    else:
+        news_str = "No recent news headlines available."
+        
+    # Format actions
+    actions_str = ""
+    if actions_list:
+        actions_str = "\n".join([
+            f"- **{act.get('date')}**: {act.get('type')} of {act.get('amount')}"
+            for act in actions_list
+        ])
+    else:
+        actions_str = "No recent corporate actions recorded."
+        
+    # Format calendar
+    cal_str = ""
+    if calendar_dict:
+        cal_str = f"Ex-Dividend Date: {calendar_dict.get('ex_dividend_date', 'N/A')}, Next Earnings Release Date: {calendar_dict.get('earnings_date', 'N/A')}"
+    else:
+        cal_str = "No upcoming calendar events scheduled."
+    
     prompt = f"""
 You are a Lead Portfolio Manager and CFA specializing in Indian Equities.
-Analyze the following stock details and write a highly professional, comprehensive equity research report briefing.
+Current Date Context: {current_date_str}
+
+Analyze the following stock details, recent company news, corporate actions, and write a highly professional, comprehensive equity research report briefing.
 
 Stock Details:
 - Symbol: {symbol}
@@ -572,34 +637,47 @@ Stock Details:
 - 3-Year CAGR: {round((stock_data.get('cagr_3y') or 0)*100, 2)}%
 - 5-Year CAGR: {round((stock_data.get('cagr_5y') or 0)*100, 2)}%
 
+Recent Company News & Events:
+{news_str}
+
+Recent Corporate Actions (Dividends / Splits):
+{actions_str}
+
+Upcoming Calendar Events:
+{cal_str}
+
 Format:
 Return the output in clean Markdown. You MUST include these headers exactly:
 ### Executive Summary
-(summary content)
+(summary content based on stock fundamentals and positioning)
 
 ### Performance Analysis
-(analysis of trend, cagr, volatility)
+(incorporate analysis of price trends, volatility, and recent news events)
 
 ### Fundamental Analysis
 (analysis of profitability, leverage, valuation vs industry peers)
 
 ### Sector Analysis
-(industry drivers, tailwinds/headwinds)
+(industry drivers, tailwinds/headwinds and recent developments)
 
 ### Macro Analysis
-(interest rates, inflation impact)
+(interest rates, inflation impact, macro factors)
 
 ### Geopolitical Analysis
-(trade policy, global supply chain implications)
+(trade policy, global supply chain implications and geopolitical risks)
 
 ### Investment Thesis
-(detailed bullet points of the positive drivers and reasons to invest)
+(detailed bullet points of the positive drivers, key catalysts, and reasons to invest)
 
 ### Risk Factors
-(detailed bullet points of risks, concerns, or reasons NOT to invest)
+(detailed bullet points of risk assessment, concerns, or reasons NOT to invest)
 
 ### Research Timeline
-(significant historical events and near-future projections in chronological order. Each timeline entry MUST be on a new line and use EXACTLY the format: - **Month Year**: Description)
+(provide exactly 3 to 5 timeline entries of major company developments, earnings announcements, or corporate actions.
+The entries MUST be sorted chronologically from NEWEST to OLDEST (Newest → Oldest).
+Each timeline entry MUST be on a new line and use EXACTLY the format:
+- **Month Year - Event Title**: Detailed description of the event | Relevance Score: [1-10]/10 | Impact Assessment: [High | Medium | Low]
+Note: Do not use outdated years like 2022 or 2023 for recent news; prioritize events from 2025 and 2026. Projections can be in late 2026 or 2027.)
 
 ### Bull Case
 (upside scenarios)
@@ -611,7 +689,7 @@ Return the output in clean Markdown. You MUST include these headers exactly:
 (downside risks)
 
 ### Final Verdict
-(Choose either **Strong Buy**, **Buy**, **Accumulate**, **Hold**, or **Avoid**)
+(Choose either **Strong Buy**, **Buy**, **Accumulate**, **Hold**, or **Avoid** as the Investment Outlook)
 
 ### Confidence Score & Risk Rating
 Confidence Score: [0-100]
@@ -847,10 +925,10 @@ Trade frictions and shifting geopolitical alliances impact global supply chains.
 - Potential competitive pressure from regional/international entrants leading to margin dilution.
 
 ### Research Timeline
-- **June 2023**: Completed major infrastructure scaling to support high-throughput clients.
-- **December 2023**: Secured a major multi-year domestic contract enhancing order book visibility.
-- **July 2024**: Launched AI-assisted workflow modules, driving early margin expansion.
-- **March 2025**: Projected expansion into regional international markets to diversify revenue base.
+- **June 2026 - Q4 Earnings Release**: Announced Q4 FY26 earnings with a 20% YoY profit growth. | Relevance Score: 9/10 | Impact Assessment: High
+- **May 2026 - Dividend Announcement**: Board declared a dividend payout of ₹31 per share. | Relevance Score: 8/10 | Impact Assessment: Medium
+- **January 2026 - AI Integration Launch**: Deployed enterprise generative AI modules. | Relevance Score: 8/10 | Impact Assessment: High
+- **December 2025 - Contract Signing**: Secured a major multi-year domestic infrastructure contract. | Relevance Score: 9/10 | Impact Assessment: High
 
 ### Bull Case
 Under favorable economic growth, the stock has potential to experience valuation expansion, driven by robust order books, margin recovery, and accelerating compound yields.

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { useGetStockDetail, useStockAIChat, useWatchlist } from '../hooks/useStocks';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -301,6 +301,34 @@ export default function StockDetail() {
 
   const isBriefingLoading = stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
 
+  // ── Verdict parsing (mirrors Detail.jsx pattern) ──────────────────────────
+  let stockStanceType = 'HOLD';
+  let stockStanceText = '';
+  let stockConfidence = '';
+
+  if (!isBriefingLoading && stock.ai_summary) {
+    // Parse Final Verdict section
+    const verdictParts = stock.ai_summary.split('### Final Verdict');
+    if (verdictParts.length >= 2) {
+      const verdictContent = verdictParts[1].split('###')[0].trim();
+      stockStanceText = verdictContent
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^-\s*(.*)$/gm, '• $1<br/>')
+        .split('\n').filter(l => l.trim()).join('<br/>');
+      const lower = verdictContent.toLowerCase();
+      if (/\bstrong buy\b|\baccumulate\b|\boutperform\b|\bbuy\b/.test(lower)) stockStanceType = 'BUY';
+      else if (/\bavoid\b|\bsell\b|\bunderperform\b|\bhigh risk\b|\breduce\b/.test(lower)) stockStanceType = 'AVOID';
+      else stockStanceType = 'HOLD';
+    }
+    // Parse Confidence Score section for a percentage
+    const confParts = stock.ai_summary.split('### Confidence Score');
+    if (confParts.length >= 2) {
+      const confContent = confParts[1].split('###')[0];
+      const confMatch = confContent.match(/(\d{1,3})%/);
+      if (confMatch) stockConfidence = confMatch[1] + '%';
+    }
+  }
+
   return (
     <div className="space-y-8 pb-16">
       {/* Back navigation & Watchlist Trigger */}
@@ -467,32 +495,34 @@ export default function StockDetail() {
         </div>
       )}
 
-      {/* Bottom Layout: AI Briefing and Equities Chat */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Llama 3.3 AI Briefing Panel */}
-        <div 
-          className="lg:col-span-7 border border-brand-border bg-brand-surface shadow-xl p-6 min-h-[480px] animate-fade-in-up space-y-6 flex flex-col justify-between"
+      {/* Bottom Layout: AI Briefing → Verdict Card → Chat (all full-width stacked) */}
+      <div className="flex flex-col gap-8">
+
+        {/* AI Equity Briefing Panel — full width */}
+        <div
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col justify-between animate-fade-in-up"
           style={{ animationDelay: '200ms' }}
         >
-          <div>
-            <div className="flex justify-between items-center border-b border-brand-border pb-3">
-              <div className="flex items-center gap-2 text-brand-primary">
-                <Cpu className="h-4 w-4 animate-pulse-subtle" />
-                <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">AI EQUITY BRIEFING REPORT</h3>
-              </div>
-              <span className="font-mono text-[9px] text-brand-textMuted uppercase">[RAG_TELEMETRY: aligned]</span>
+          {/* Panel header */}
+          <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex justify-between items-center text-xs">
+            <div className="flex items-center gap-2 text-brand-primary">
+              <Cpu className="h-4 w-4 animate-pulse-subtle" />
+              <h3 className="font-bold text-black dark:text-white uppercase tracking-wider font-display">AI EQUITY BRIEFING REPORT</h3>
             </div>
+            <span className="font-mono text-[9px] text-brand-textMuted uppercase">[RAG_TELEMETRY: aligned]</span>
+          </div>
 
+          <div className="p-6 md:p-8">
             {isBriefingLoading ? (
               <div className="py-20 text-center space-y-3 font-mono text-brand-textMuted">
                 <RefreshCw className="h-6 w-6 mx-auto animate-spin text-brand-primary" />
                 <p className="text-[9px] uppercase tracking-wider animate-pulse">Running cognitive analytics models on stock multiples...</p>
               </div>
             ) : (
-              <div className="space-y-6 pt-4 max-h-[520px] overflow-y-auto scrollbar">
+              <div className="space-y-6">
                 {renderBriefingSection('Executive Summary')}
 
-                {/* Investment Thesis Section - Styled as a dedicated premium card block */}
+                {/* Investment Thesis — dedicated premium card */}
                 {stock.ai_summary && stock.ai_summary.includes('### Investment Thesis') && (
                   <div className="p-4 border border-brand-primary/20 bg-brand-primary/5 space-y-2">
                     <div className="flex items-center gap-1.5 text-brand-primary">
@@ -508,98 +538,157 @@ export default function StockDetail() {
                 {renderBriefingSection('Sector Analysis')}
                 {renderBriefingSection('Macro Analysis')}
                 {renderBriefingSection('Geopolitical Analysis')}
-                
-                <div className="grid grid-cols-3 gap-4 border-t border-brand-border/40 pt-4">
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-brand-border/40 pt-4">
                   {renderBriefingSection('Bull Case')}
                   {renderBriefingSection('Base Case')}
                   {renderBriefingSection('Bear Case')}
                 </div>
-                
-                {/* Risk Factors rendered next to the Final Verdict at the bottom */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-brand-border/40 pt-4 font-mono text-[11px]">
-                  <div className="md:col-span-1 border-r border-brand-border/20 pr-4 space-y-4">
-                    {renderBriefingSection('Final Verdict')}
-                    <div>
-                      {renderBriefingSection('Confidence Score & Risk Rating')}
+
+                {/* Risk Factors */}
+                {stock.ai_summary && stock.ai_summary.includes('### Risk Factors') && (
+                  <div className="border-t border-brand-border/40 pt-4 space-y-1">
+                    <h4 className="text-[10px] font-bold text-brand-warning uppercase tracking-wider font-display flex items-center gap-1.5">
+                      ⚠️ Key Risk Factors
+                    </h4>
+                    {renderBriefingSectionContentOnly('Risk Factors')}
+                  </div>
+                )}
+
+                {/* ── Professional Investment Verdict Card ──────────────────── */}
+                {stockStanceText && (
+                  <div className={`mt-2 border p-5 relative overflow-hidden transition-all duration-300 ${
+                    stockStanceType === 'BUY'
+                      ? 'bg-green-500/5 border-brand-success/40 shadow-[0_0_18px_rgba(34,197,94,0.06)] animate-fade-in'
+                      : stockStanceType === 'AVOID'
+                      ? 'bg-red-500/5 border-brand-danger/40 shadow-[0_0_18px_rgba(239,68,68,0.06)] animate-fade-in'
+                      : 'bg-yellow-500/5 border-brand-warning/40 shadow-[0_0_18px_rgba(234,179,8,0.06)] animate-fade-in'
+                  }`}>
+                    {/* Left accent bar */}
+                    <div className={`absolute top-0 bottom-0 left-0 w-1 ${
+                      stockStanceType === 'BUY' ? 'bg-brand-success' :
+                      stockStanceType === 'AVOID' ? 'bg-brand-danger' : 'bg-brand-warning'
+                    }`} />
+
+                    <div className="space-y-3 pl-3">
+                      {/* Header row */}
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          {stockStanceType === 'BUY'
+                            ? <ShieldCheck className="h-5 w-5 text-brand-success" />
+                            : stockStanceType === 'AVOID'
+                            ? <ShieldAlert className="h-5 w-5 text-brand-danger" />
+                            : <AlertTriangle className="h-5 w-5 text-brand-warning" />}
+                          <span className={`font-mono text-xs uppercase font-extrabold tracking-wider ${
+                            stockStanceType === 'BUY' ? 'text-brand-success' :
+                            stockStanceType === 'AVOID' ? 'text-brand-danger' : 'text-brand-warning'
+                          }`}>
+                            System Investment Verdict: {stockStanceType}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {stockConfidence && (
+                            <span className={`text-[9px] font-mono px-2 py-0.5 border ${
+                              stockStanceType === 'BUY' ? 'text-brand-success border-brand-success/30 bg-brand-success/10' :
+                              stockStanceType === 'AVOID' ? 'text-brand-danger border-brand-danger/30 bg-brand-danger/10' :
+                              'text-brand-warning border-brand-warning/30 bg-brand-warning/10'
+                            }`}>
+                              CONFIDENCE: {stockConfidence}
+                            </span>
+                          )}
+                          <span className={`text-[9px] font-mono px-2 py-0.5 border font-bold ${
+                            stockStanceType === 'BUY' ? 'text-brand-success border-brand-success/30 bg-brand-success/10' :
+                            stockStanceType === 'AVOID' ? 'text-brand-danger border-brand-danger/30 bg-brand-danger/10' :
+                            'text-brand-warning border-brand-warning/30 bg-brand-warning/10'
+                          }`}>
+                            {stockStanceType}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Verdict body */}
+                      <p
+                        className="text-xs text-black dark:text-white leading-relaxed font-sans"
+                        dangerouslySetInnerHTML={{ __html: stockStanceText }}
+                      />
                     </div>
                   </div>
-                  <div className="md:col-span-2">
-                    <div className="space-y-1">
-                      <h4 className="text-[10px] font-bold text-brand-warning uppercase tracking-wider font-display flex items-center gap-1.5">
-                        ⚠️ Key Risk Factors
-                      </h4>
-                      {renderBriefingSectionContentOnly('Risk Factors')}
-                    </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer disclaimer */}
+          <div className="bg-brand-bg border-t border-brand-border px-5 py-3.5 flex items-center gap-3 font-mono text-[9px] text-brand-textMuted leading-relaxed">
+            <ShieldCheck className="h-4 w-4 text-brand-primary shrink-0" />
+            <p>* WARNING: STATISTICAL VALUATIONS REPRESENT PROBABILISTIC FORECASTS, NOT GUARANTEES. NOT FINANCIAL ADVICE.</p>
+          </div>
+        </div>
+
+        {/* Interactive Analyst Terminal — full width, below research */}
+        <div
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[500px] font-mono animate-fade-in-up"
+          style={{ animationDelay: '250ms' }}
+        >
+          {/* Panel header */}
+          <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex items-center gap-2 text-xs">
+            <MessageSquare className="h-4 w-4 text-brand-primary" />
+            <div>
+              <h3 className="font-bold text-black dark:text-white uppercase font-display">Interactive Analyst Terminal</h3>
+              <p className="text-[9px] text-brand-textMuted mt-0.5 font-mono">Pre-contextualized session for {stock.symbol}</p>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed">
+            {messages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted space-y-2">
+                <Cpu className="h-6 w-6 opacity-30 text-brand-primary" />
+                <p className="text-[9px]">Ready to process equities queries. Ask things like: "Is {stock.symbol} a buy?" or "Explain its high P/E ratio."</p>
+              </div>
+            ) : (
+              messages.map((m, idx) => (
+                <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] border px-3 py-2 ${
+                    m.role === 'user'
+                      ? 'bg-brand-primary/10 border-brand-primary text-black dark:text-white'
+                      : 'bg-brand-bg border-brand-border text-black dark:text-white'
+                  }`}>
+                    {m.content}
                   </div>
+                </div>
+              ))
+            )}
+            {chatLoading && (
+              <div className="flex justify-start">
+                <div className="bg-brand-bg border border-brand-border px-3 py-2 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce" />
+                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]" />
+                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]" />
                 </div>
               </div>
             )}
           </div>
-          
-          <div className="border-t border-brand-border/40 pt-3 flex items-center justify-between text-[8px] font-mono text-brand-textMuted">
-            <p>* WARNING: STATISTICAL VALUATIONS REPRESENT PROBABILISTIC FORECASTS, NOT GUARANTEES.</p>
-          </div>
-        </div>
 
-        {/* Equities Chat Panel */}
-        <div 
-          className="lg:col-span-5 border border-brand-border bg-brand-surface shadow-xl p-6 min-h-[480px] animate-fade-in-up flex flex-col justify-between"
-          style={{ animationDelay: '250ms' }}
-        >
-          <div>
-            <div className="flex items-center gap-2 border-b border-brand-border pb-3">
-              <MessageSquare className="h-4 w-4 text-brand-primary" />
-              <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">COGNITIVE EQUITY RESEARCH CHAT</h3>
-            </div>
-            
-            <div className="h-[280px] overflow-y-auto space-y-4 scrollbar pr-1 text-[11px] leading-relaxed pt-4 font-mono">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted px-4 space-y-2">
-                  <Cpu className="h-6 w-6 opacity-30 text-brand-primary" />
-                  <p className="text-[10px]">Ready to process equities queries. Ask things like: "Is {stock.symbol} a buy?" or "Explain its high P/E ratio."</p>
-                </div>
-              ) : (
-                messages.map((m, idx) => (
-                  <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] border px-3 py-2 ${
-                      m.role === 'user'
-                        ? 'bg-brand-primary/10 border-brand-primary text-black dark:text-white'
-                        : 'bg-brand-bg border-brand-border text-black dark:text-white'
-                    }`}>
-                      {m.content}
-                    </div>
-                  </div>
-                ))
-              )}
-              {chatLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-brand-bg border border-brand-border px-3 py-2 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce" />
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]" />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <form onSubmit={handleSendChat} className="mt-4 pt-3 border-t border-brand-border/40 flex gap-2 font-mono">
+          {/* Input form */}
+          <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
             <input
               type="text"
               placeholder={`Query analyst about ${stock.symbol}...`}
               value={chatMessage}
               onChange={(e) => setChatMessage(e.target.value)}
-              className="flex-1 bg-brand-bg border border-brand-border px-3 py-2 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
             />
             <button
               type="submit"
               disabled={chatLoading}
-              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-4 py-2 transition-colors border border-brand-primary"
+              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-4 transition-colors border border-brand-primary"
             >
               EXEC
             </button>
           </form>
         </div>
+
       </div>
     </div>
   );

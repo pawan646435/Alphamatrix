@@ -137,9 +137,70 @@ async def generate_briefing_background(symbol: str):
             "cagr_5y": stock.cagr_5y
         }
         
+        # Fetch live data from yfinance for prompt context
+        import yfinance as yf
+        news_list = []
+        actions_list = []
+        calendar_dict = {}
+        
+        try:
+            yf_symbol = f"{symbol}.NS"
+            logger.info(f"Fetching news/actions from yfinance for briefing: {yf_symbol}")
+            ticker = yf.Ticker(yf_symbol)
+            
+            # News extraction
+            raw_news = ticker.news
+            if raw_news:
+                for item in raw_news[:5]:
+                    content = item.get("content", {})
+                    if content:
+                        news_list.append({
+                            "title": content.get("title"),
+                            "summary": content.get("summary") or "",
+                            "pubDate": content.get("pubDate") or content.get("displayTime") or "",
+                            "provider": content.get("provider", {}).get("displayName") or "Unknown"
+                        })
+            
+            # Actions extraction (dividends and splits)
+            actions_df = ticker.actions
+            if actions_df is not None and not actions_df.empty:
+                # Get the last 5 corporate actions
+                tail_actions = actions_df.tail(5)
+                for date_val, row in tail_actions.iterrows():
+                    date_str = date_val.strftime("%Y-%m-%d") if hasattr(date_val, "strftime") else str(date_val)
+                    if row.get("Dividends") and row["Dividends"] > 0:
+                        actions_list.append({
+                            "date": date_str,
+                            "type": "Dividend payment",
+                            "amount": f"₹{row['Dividends']}"
+                        })
+                    if row.get("Stock Splits") and row["Stock Splits"] > 0:
+                        actions_list.append({
+                            "date": date_str,
+                            "type": "Stock Split",
+                            "amount": f"{row['Stock Splits']}:1 ratio"
+                        })
+            
+            # Calendar extraction
+            calendar = ticker.calendar
+            if calendar and isinstance(calendar, dict):
+                ex_div = calendar.get("Ex-Dividend Date")
+                earn_date = calendar.get("Earnings Date")
+                calendar_dict = {
+                    "ex_dividend_date": ex_div.strftime("%Y-%m-%d") if hasattr(ex_div, "strftime") else str(ex_div or "N/A"),
+                    "earnings_date": earn_date[0].strftime("%Y-%m-%d") if (isinstance(earn_date, list) and len(earn_date) > 0 and hasattr(earn_date[0], "strftime")) else str(earn_date or "N/A")
+                }
+        except Exception as yf_err:
+            logger.warning(f"Failed to fetch live yfinance data for briefing {symbol}: {yf_err}")
+        
         try:
             from app.services.ai_agent import generate_stock_briefing
-            briefing = await generate_stock_briefing(stock_dict)
+            briefing = await generate_stock_briefing(
+                stock_dict,
+                news_list=news_list,
+                actions_list=actions_list,
+                calendar_dict=calendar_dict
+            )
             stock.ai_summary = briefing
             await session.commit()
             
