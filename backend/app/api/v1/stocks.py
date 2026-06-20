@@ -63,7 +63,10 @@ def get_alpha_breakdown(stock_obj) -> dict:
         risk_score = max(20.0, 100.0 - (beta - 1.2) * 150.0)
 
     # 5. Sentiment score
-    sentiment_score = 85.0 if getattr(stock_obj, "alpha_score", 50.0) >= 70.0 else 70.0 if getattr(stock_obj, "alpha_score", 50.0) >= 50.0 else 45.0
+    score = getattr(stock_obj, "alpha_score", 50.0)
+    if score is None:
+        score = 50.0
+    sentiment_score = 85.0 if score >= 70.0 else 70.0 if score >= 50.0 else 45.0
 
     # 6. Macro score
     macro_score = 80.0 if beta <= 0.9 else 55.0 if beta > 1.2 else 70.0
@@ -284,7 +287,13 @@ async def get_stock_detail(
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
 
-    if not stock:
+    if stock and stock.sector == "Invalid":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+        )
+
+    if not stock or (stock.alpha_score is None and stock.sector == "Unknown"):
         # Trigger dynamic ingestion for any NSE-listed stock not yet in DB
         logger.info(f"Stock {symbol} not in DB — triggering dynamic ingestion via BackgroundTask")
         async def _ingest_and_brief(sym: str):
@@ -787,6 +796,11 @@ async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
     stock = stock_q.scalar_one_or_none()
 
     if stock:
+        if stock.sector == "Invalid":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+            )
         return {
             "status": "ready",
             "symbol": symbol,

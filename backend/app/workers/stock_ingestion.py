@@ -326,6 +326,23 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
 
     if hist is None or hist.empty:
         logger.warning(f"[DynamicIngest] No market data found for symbol {symbol} on NSE or BSE.")
+        # Persist as invalid so that future requests return 404 instead of infinite discovery loops
+        if existing:
+            existing.sector = "Invalid"
+            existing.company_name = f"Invalid Stock ({symbol})"
+            existing.ai_summary = "This symbol could not be found on NSE or BSE exchanges."
+            await db.commit()
+        else:
+            invalid_stock = StockMaster(
+                symbol=symbol,
+                company_name=f"Invalid Stock ({symbol})",
+                isin="",
+                sector="Invalid",
+                industry="Unknown",
+                ai_summary="This symbol could not be found on NSE or BSE exchanges."
+            )
+            db.add(invalid_stock)
+            await db.commit()
         return {"status": "not_found", "symbol": symbol}
 
     # 3. Extract metadata from yfinance info

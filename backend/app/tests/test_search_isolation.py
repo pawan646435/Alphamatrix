@@ -55,3 +55,33 @@ async def test_search_isolation_stocks():
         # Should return no results or only stock results
         assert len(res_stock_parag) == 0 or all(r["type"] == "stock" for r in res_stock_parag)
         assert not any(r["type"] == "fund" for r in res_stock_parag)
+
+from fastapi import HTTPException
+from app.api.v1.stocks import get_stock_detail, get_stock_status
+
+@pytest.mark.asyncio
+async def test_invalid_stock_returns_404():
+    await init_db()
+    async with async_session_maker() as session:
+        # Clear existing stock master
+        await session.execute(text("DELETE FROM stock_masters"))
+        # Insert an invalid stock skeleton
+        await session.execute(text("""
+            INSERT INTO stock_masters (symbol, company_name, sector, industry)
+            VALUES ('INVALIDSYM', 'Invalid Stock (INVALIDSYM)', 'Invalid', 'Unknown')
+        """))
+        await session.commit()
+        
+        # Test get_stock_detail raises 404 HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            from fastapi import BackgroundTasks
+            bg = BackgroundTasks()
+            await get_stock_detail(symbol="INVALIDSYM", background_tasks=bg, db=session)
+        assert exc_info.value.status_code == 404
+        assert "not found" in exc_info.value.detail
+
+        # Test get_stock_status raises 404 HTTPException
+        with pytest.raises(HTTPException) as exc_info_status:
+            await get_stock_status(symbol="INVALIDSYM", db=session)
+        assert exc_info_status.value.status_code == 404
+        assert "not found" in exc_info_status.value.detail
