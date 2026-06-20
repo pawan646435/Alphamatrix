@@ -44,7 +44,7 @@ A unified interface structure where Mutual Funds and Equities share a single des
 * **FastAPI**: Asynchronous high-performance API server.
 * **SQLAlchemy & SQLite**: Modern ORM layer and local relational database for indexing stock master data, historical price series, and fund data.
 * **Yahoo Finance API & MFAPI**: Ingestion pipelines for stock prices, fund NAVs, and metadata.
-* **Google Gemini API**: Dynamic AI summarization and semantic query parsing using the latest Gemini models.
+* **Groq DeepSeek R1**: Dynamic AI summarization, investment briefings, semantic query parsing, and conversational stock/fund chatbots targeting the `deepseek-r1-distill-llama-70b` model.
 * **Redis**: (Optional) Cache manager for speed-up of global search queries and fund calculations.
 
 ### Frontend
@@ -108,7 +108,7 @@ A unified interface structure where Mutual Funds and Equities share a single des
 ### 1. Environment Configuration
 Create a `.env` file inside the `backend/` directory:
 ```env
-GEMINI_API_KEY=your_google_gemini_api_key
+GROQ_API_KEY=your_groq_api_key
 DATABASE_URL=sqlite:///./alphamatrix.db
 REDIS_URL=redis://localhost:6379  # Optional
 ```

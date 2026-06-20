@@ -1,21 +1,34 @@
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional
-import google.generativeai as genai
+from groq import Groq
 from app.core.config import settings
 from app.schemas.ai_schema import ParsedFilters, ChatMessage
 
 logger = logging.getLogger("app.services.ai_agent")
 
-# Configure Gemini if API Key is available
-gemini_configured = False
-if settings.GEMINI_API_KEY:
+# Configure Groq if API Key is available
+groq_configured = False
+groq_client = None
+if settings.GROQ_API_KEY:
     try:
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        gemini_configured = True
-        logger.info("Gemini API configured successfully.")
+        groq_client = Groq(api_key=settings.GROQ_API_KEY)
+        groq_configured = True
+        logger.info("Groq API configured successfully.")
     except Exception as e:
-        logger.error(f"Error configuring Gemini API: {e}")
+        logger.error(f"Error configuring Groq API: {e}")
+
+def clean_r1_response(text: str) -> str:
+    """
+    Strips <think>...</think> tags and their contents from DeepSeek R1 output
+    to avoid cluttering the frontend or breaking JSON parse.
+    """
+    if not text:
+        return ""
+    # Strip any content between <think> and </think> tags (case-insensitive, multi-line)
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    return cleaned.strip()
 
 async def parse_semantic_query(query: str) -> Dict[str, Any]:
     """
@@ -23,7 +36,7 @@ async def parse_semantic_query(query: str) -> Dict[str, Any]:
     "Show me high-yield mid-caps with low risk"
     and maps it to structured database filters.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _mock_parse_semantic_query(query)
         
     prompt = f"""
@@ -60,19 +73,21 @@ Rules:
 6. If no sort order is implied, default to "desc" for performance metrics and "asc" for risk or expense ratio.
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=30.0
         )
-        
-        parsed_json = json.loads(response.text.strip())
+        raw_content = response.choices[0].message.content
+        cleaned_content = clean_r1_response(raw_content)
+        parsed_json = json.loads(cleaned_content)
         # Ensure default fields are present
         if "sort_order" not in parsed_json:
             parsed_json["sort_order"] = "desc"
         return parsed_json
     except Exception as e:
-        logger.error(f"Gemini semantic parsing failed: {e}. Falling back to rule-based mock parser.")
+        logger.error(f"Groq semantic parsing failed: {e}. Falling back to rule-based mock parser.")
         return _mock_parse_semantic_query(query)
 
 async def generate_fund_summary(fund_data: Dict[str, Any]) -> str:
@@ -80,7 +95,7 @@ async def generate_fund_summary(fund_data: Dict[str, Any]) -> str:
     Generates a professional 3-bullet point investment analysis of a mutual fund
     based on its calculated database metrics, 1-year trend, and geopolitical overlay.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_fund_summary(fund_data)
         
     prompt = f"""
@@ -111,21 +126,25 @@ You MUST write about these specific domains:
 Return ONLY the 3 bullet points starting with a hyphen (-). Mention the numerical metrics in your points.
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(prompt)
-        summary = response.text.strip()
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            timeout=30.0
+        )
+        raw_content = response.choices[0].message.content
+        summary = clean_r1_response(raw_content)
         if not summary:
             return _generate_mock_fund_summary(fund_data)
         return summary
     except Exception as e:
-        logger.error(f"Gemini summary generation failed: {e}. Falling back to mock generator.")
+        logger.error(f"Groq summary generation failed: {e}. Falling back to mock generator.")
         return _generate_mock_fund_summary(fund_data)
 
 async def run_ai_chat(message: str, history: List[ChatMessage], fund_data: Optional[Dict[str, Any]] = None) -> str:
     """
     Conversational chatbot for mutual funds with optional context injection.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _mock_chat_response(message, fund_data)
         
     system_instruction = (
@@ -152,21 +171,26 @@ Metrics:
 Use these details to answer user queries about this fund.
 """
     
-    # Format chat history
-    contents = []
-    for msg in history:
-        contents.append({"role": "user" if msg.role == "user" else "model", "parts": [msg.content]})
+    messages = [{"role": "system", "content": system_instruction}]
+    if context:
+        messages.append({"role": "system", "content": context})
         
-    # Append latest message with context
-    latest_parts = [f"{context}\nUser Question: {message}"]
-    contents.append({"role": "user", "parts": latest_parts})
+    for msg in history:
+        role = "user" if msg.role == "user" else "assistant"
+        messages.append({"role": role, "content": msg.content})
+        
+    messages.append({"role": "user", "content": message})
     
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
-        response = model.generate_content(contents)
-        return response.text.strip()
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=messages,
+            timeout=30.0
+        )
+        raw_content = response.choices[0].message.content
+        return clean_r1_response(raw_content)
     except Exception as e:
-        logger.error(f"Gemini chat failed: {e}")
+        logger.error(f"Groq chat failed: {e}")
         return f"I apologize, I encountered an issue interacting with the AI endpoint. Here is a baseline response based on fund context:\n{_mock_chat_response(message, fund_data)}"
 
 # --- MOCK FALLBACKS ---
@@ -515,9 +539,9 @@ def _mock_chat_response(message: str, fund_data: Optional[Dict[str, Any]] = None
 async def generate_stock_briefing(stock_data: Dict[str, Any], historical_prices: List[Dict[str, Any]] = None) -> str:
     """
     Generates a comprehensive Markdown equity research report briefing
-    using Gemini-3.1-flash-lite.
+    using DeepSeek R1 via Groq.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_stock_briefing(stock_data)
         
     symbol = stock_data.get("symbol", "")
@@ -594,21 +618,25 @@ Risk Rating: [Low | Medium | High]
 Safety Constraint: Do NOT state anything with absolute certainty. Always write using probability-based language (e.g., 'represents a likely possibility', 'potential risk factor under interest rate pressure', 'probable trend').
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(prompt)
-        briefing = response.text.strip()
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            timeout=30.0
+        )
+        raw_content = response.choices[0].message.content
+        briefing = clean_r1_response(raw_content)
         if not briefing:
             return _generate_mock_stock_briefing(stock_data)
         return briefing
     except Exception as e:
-        logger.error(f"Gemini stock briefing generation failed: {e}. Falling back to mock.")
+        logger.error(f"Groq stock briefing generation failed: {e}. Falling back to mock.")
         return _generate_mock_stock_briefing(stock_data)
 
 async def run_stock_chat(message: str, history: List[ChatMessage], stock_data: Optional[Dict[str, Any]] = None) -> str:
     """
     Conversational chatbot for stocks with context injection.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _mock_stock_chat_response(message, stock_data)
         
     system_instruction = (
@@ -637,19 +665,26 @@ Metrics:
 Use these details to answer user queries about this stock.
 """
     
-    contents = []
-    for msg in history:
-        contents.append({"role": "user" if msg.role == "user" else "model", "parts": [msg.content]})
+    messages = [{"role": "system", "content": system_instruction}]
+    if context:
+        messages.append({"role": "system", "content": context})
         
-    latest_parts = [f"{context}\nUser Question: {message}"]
-    contents.append({"role": "user", "parts": latest_parts})
+    for msg in history:
+        role = "user" if msg.role == "user" else "assistant"
+        messages.append({"role": role, "content": msg.content})
+        
+    messages.append({"role": "user", "content": message})
     
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
-        response = model.generate_content(contents)
-        return response.text.strip()
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=messages,
+            timeout=30.0
+        )
+        raw_content = response.choices[0].message.content
+        return clean_r1_response(raw_content)
     except Exception as e:
-        logger.error(f"Gemini stock chat failed: {e}")
+        logger.error(f"Groq stock chat failed: {e}")
         return f"I apologize, I encountered an issue interacting with the AI endpoint. Here is a baseline response based on stock context:\n{_mock_stock_chat_response(message, stock_data)}"
 
 async def generate_watchlist_analytics(stocks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -666,7 +701,7 @@ async def generate_watchlist_analytics(stocks: List[Dict[str, Any]]) -> Dict[str
             "best_performing_position": "N/A"
         }
         
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_watchlist_analytics(stocks)
         
     stocks_summary = []
@@ -695,21 +730,24 @@ Return ONLY a JSON object with this exact schema:
 }}
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=30.0
         )
-        return json.loads(response.text.strip())
+        raw_content = response.choices[0].message.content
+        cleaned_content = clean_r1_response(raw_content)
+        return json.loads(cleaned_content)
     except Exception as e:
-        logger.error(f"Gemini watchlist diagnostics failed: {e}")
+        logger.error(f"Groq watchlist diagnostics failed: {e}")
         return _generate_mock_watchlist_analytics(stocks)
 
 async def generate_sector_outlook(sector: str, stocks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Generates a sectoral health score, growth drivers, risks, and AI outlook using Gemini.
+    Generates a sectoral health score, growth drivers, risks, and AI outlook using DeepSeek R1 via Groq.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_sector_outlook(sector, stocks)
         
     stocks_summary = []
@@ -742,14 +780,17 @@ Return ONLY a JSON object with this exact schema:
 }}
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=30.0
         )
-        return json.loads(response.text.strip())
+        raw_content = response.choices[0].message.content
+        cleaned_content = clean_r1_response(raw_content)
+        return json.loads(cleaned_content)
     except Exception as e:
-        logger.error(f"Gemini sector outlook generation failed: {e}")
+        logger.error(f"Groq sector outlook generation failed: {e}")
         return _generate_mock_sector_outlook(sector, stocks)
 
 
@@ -916,7 +957,7 @@ async def get_market_regime_diagnostics() -> Dict[str, Any]:
     to determine the current Market Regime (RISK ON, RISK OFF, or NEUTRAL).
     Returns a dictionary with 'regime', 'confidence', and 'explanation'.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_market_regime()
         
     prompt = """
@@ -940,14 +981,17 @@ Return ONLY a JSON object with this exact schema:
 }
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=30.0
         )
-        return json.loads(response.text.strip())
+        raw_content = response.choices[0].message.content
+        cleaned_content = clean_r1_response(raw_content)
+        return json.loads(cleaned_content)
     except Exception as e:
-        logger.error(f"Gemini market regime diagnostics failed: {e}")
+        logger.error(f"Groq market regime diagnostics failed: {e}")
         return _generate_mock_market_regime()
 
 def _generate_mock_market_regime() -> Dict[str, Any]:
@@ -959,9 +1003,9 @@ def _generate_mock_market_regime() -> Dict[str, Any]:
 
 async def generate_stock_comparison(s1_data: Dict[str, Any], s2_data: Dict[str, Any]) -> str:
     """
-    Generates a comparative research analysis between two equities using gemini-2.5-flash.
+    Generates a comparative research analysis between two equities using DeepSeek R1 via Groq.
     """
-    if not gemini_configured:
+    if not groq_configured:
         return _generate_mock_stock_comparison(s1_data, s2_data)
         
     prompt = f"""
@@ -1000,11 +1044,18 @@ Provide a clean markdown output containing:
 Safety Constraint: Use probability-based language. Avoid absolute statements.
 """
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        response = groq_client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": prompt}],
+            timeout=30.0
+        )
+        raw_content = response.choices[0].message.content
+        comparison = clean_r1_response(raw_content)
+        if not comparison:
+            return _generate_mock_stock_comparison(s1_data, s2_data)
+        return comparison
     except Exception as e:
-        logger.error(f"Gemini comparison failed: {e}")
+        logger.error(f"Groq comparison failed: {e}")
         return _generate_mock_stock_comparison(s1_data, s2_data)
 
 def _generate_mock_stock_comparison(s1: Dict[str, Any], s2: Dict[str, Any]) -> str:

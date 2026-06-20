@@ -1,5 +1,6 @@
 import pytest
-from app.services.ai_agent import _mock_parse_semantic_query
+from app.services.ai_agent import _mock_parse_semantic_query, clean_r1_response
+
 
 def test_mock_parser_lost_money_sharpe():
     query = "Which funds lost money over the last year but still maintain a Sharpe ratio above 1"
@@ -69,3 +70,46 @@ def test_mock_parser_fresh_state_leakage():
     # Verify no pe_ratio constraint has bled in
     assert filters["min_pe_ratio"] is None
     assert filters["max_pe_ratio"] is None
+
+def test_clean_r1_response_no_thinking():
+    assert clean_r1_response("Here is the clean response.") == "Here is the clean response."
+
+def test_clean_r1_response_with_thinking():
+    text = "<think>\nThinking process here...\n</think>\nActual response output."
+    assert clean_r1_response(text) == "Actual response output."
+
+def test_clean_r1_response_case_insensitive_and_multiline():
+    text = "<THINK>first step\nsecond step</THINK>Response with different casing."
+    assert clean_r1_response(text) == "Response with different casing."
+
+def test_clean_r1_response_multiple_thinking_blocks():
+    text = "<think>first block</think>Middle part<think>second block</think>Final response."
+    assert clean_r1_response(text) == "Middle partFinal response."
+
+def test_clean_r1_response_empty_or_none():
+    assert clean_r1_response("") == ""
+    assert clean_r1_response(None) == ""
+
+from unittest.mock import MagicMock, patch
+
+@pytest.mark.asyncio
+async def test_parse_semantic_query_with_groq():
+    mock_client = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = "<think>reasoning</think>{\n  \"category\": \"MID_CAP\",\n  \"min_cagr_1y\": 10.0,\n  \"sql_explanation\": \"mapped mid cap\"\n}"
+    
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_client.chat.completions.create.return_value = mock_response
+    
+    with patch("app.services.ai_agent.groq_client", mock_client), \
+         patch("app.services.ai_agent.groq_configured", True):
+        from app.services.ai_agent import parse_semantic_query
+        result = await parse_semantic_query("mid cap funds with cagr > 10%")
+        
+        # Verify result is parsed correctly and <think> is stripped
+        assert result["category"] == "MID_CAP"
+        assert result["min_cagr_1y"] == 10.0
+        assert result["sort_order"] == "desc"  # Default fallback
+        mock_client.chat.completions.create.assert_called_once()
+

@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     )
     
     # AI models
-    GEMINI_API_KEY: Optional[str] = Field(
+    GROQ_API_KEY: Optional[str] = Field(
         default=None,
-        validation_alias="GEMINI_API_KEY"
+        validation_alias="GROQ_API_KEY"
     )
     OPENAI_API_KEY: Optional[str] = Field(
         default=None,
