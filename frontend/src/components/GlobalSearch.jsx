@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, RefreshCw, Cpu, Layers, Zap } from 'lucide-react';
 import apiClient from '../services/api';
 
 export default function GlobalSearch() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
@@ -63,7 +64,8 @@ export default function GlobalSearch() {
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await apiClient.get('/search', { params: { query: query.trim() } });
+        const type = location.pathname.startsWith('/stocks') ? 'stock' : 'fund';
+        const response = await apiClient.get('/search', { params: { query: query.trim(), type } });
         setResults(response.data);
       } catch (err) {
         console.error('Failed to search:', err);
@@ -73,7 +75,7 @@ export default function GlobalSearch() {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, location.pathname]);
 
   const handleSelect = (item) => {
     setShowDropdown(false);
@@ -159,7 +161,7 @@ export default function GlobalSearch() {
       )}
 
       {/* Dynamic Discovery suggestion */}
-      {noResults && looksLikeTicker && (
+      {noResults && looksLikeTicker && location.pathname.startsWith('/stocks') && (
         <div className="px-4 py-3 space-y-2">
           <p className="text-brand-textMuted text-[10px]">
             No indexed results for <span className="text-white font-bold">"{query}"</span>
@@ -179,7 +181,7 @@ export default function GlobalSearch() {
         </div>
       )}
 
-      {noResults && !looksLikeTicker && (
+      {noResults && (!looksLikeTicker || !location.pathname.startsWith('/stocks')) && (
         <div className="px-4 py-4 text-center text-brand-textMuted">
           No matching assets found.
         </div>
