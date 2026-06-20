@@ -743,10 +743,12 @@ async def populate_search_indices(db: AsyncSession):
     import csv
     import httpx
     
-    # 1. Populate Mutual Funds FTS5 Index if empty
-    check_funds = await db.execute(text("SELECT 1 FROM fund_search_index LIMIT 1"))
-    if not check_funds.scalar():
-        logger.info("Seeding fund_search_index FTS5 table...")
+    # 1. Populate Mutual Funds FTS5 Index if below threshold
+    check_funds = await db.execute(text("SELECT COUNT(*) FROM fund_search_index"))
+    funds_count = check_funds.scalar() or 0
+    if funds_count < 30000:
+        logger.info(f"Fund search index has only {funds_count} records. Seeding fund_search_index FTS5 table...")
+        await db.execute(text("DELETE FROM fund_search_index"))
         CACHE_FILE = "mf_master_list.json"
         mf_list = []
         if os.path.exists(CACHE_FILE):
@@ -778,10 +780,12 @@ async def populate_search_indices(db: AsyncSession):
             await db.commit()
             logger.info("Fund search index successfully seeded.")
 
-    # 2. Populate Stocks FTS5 Index and stock_masters skeleton records if empty
-    check_stocks = await db.execute(text("SELECT 1 FROM stock_search_index LIMIT 1"))
-    if not check_stocks.scalar():
-        logger.info("Seeding stock_search_index and stock_masters from NSE...")
+    # 2. Populate Stocks FTS5 Index and stock_masters skeleton records if below threshold
+    check_stocks = await db.execute(text("SELECT COUNT(*) FROM stock_search_index"))
+    stocks_count = check_stocks.scalar() or 0
+    if stocks_count < 2000:
+        logger.info(f"Stock search index has only {stocks_count} records. Seeding stock_search_index and stock_masters from NSE...")
+        await db.execute(text("DELETE FROM stock_search_index"))
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         try:
             async with httpx.AsyncClient() as client:
