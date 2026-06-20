@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+import difflib
 from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,59 @@ if settings.REDIS_URL:
     except Exception as e:
         logger.error(f"Failed to connect to Redis for Search caching: {e}")
 
+
+def calculate_relevance_score(query_clean: str, item_type: str, item: dict) -> float:
+    """
+    Computes a relevance score where:
+    Exact Symbol Match (1000) > Exact Name Match (900) > Starts-With Symbol (800)
+    > Starts-With Name (700) > Word Starts-With (600) > Substring Symbol (500)
+    > Substring Name (400) > Fuzzy similarity ratio (up to 200).
+    """
+    # Extract symbol and name
+    symbol = item.get("symbol", "").strip().lower() if item_type == "stock" else ""
+    name = item.get("name", "").strip().lower()
+    scheme_code = str(item.get("scheme_code", "")).strip().lower()
+
+    # Rule 1: Exact Symbol / Scheme Code Match
+    if item_type == "stock" and query_clean == symbol:
+        return 1000.0
+    if item_type == "fund" and query_clean == scheme_code:
+        return 1000.0
+
+    # Rule 2: Exact Name Match
+    if query_clean == name:
+        return 900.0
+
+    # Rule 3: Symbol / Scheme Code Starts With Match
+    if item_type == "stock" and symbol.startswith(query_clean):
+        # Shorter symbols matching query should be ranked higher (e.g. TCS before TCS_SPECIAL)
+        return 800.0 + (1.0 / (len(symbol) or 1))
+    if item_type == "fund" and scheme_code.startswith(query_clean):
+        return 800.0 + (1.0 / (len(scheme_code) or 1))
+
+    # Rule 4: Name Starts With Match
+    if name.startswith(query_clean):
+        return 700.0 + (1.0 / len(name))
+
+    # Rule 5: Partial Word-Start Match inside Name (e.g., query is "consultancy" in "tata consultancy services")
+    words = name.split()
+    if any(w.startswith(query_clean) for w in words):
+        return 600.0 + (1.0 / len(name))
+
+    # Rule 6: General Substring Match
+    if item_type == "stock" and query_clean in symbol:
+        return 500.0
+    if query_clean in name:
+        return 400.0
+
+    # Rule 7: Fuzzy Similarity using difflib
+    r_name = difflib.SequenceMatcher(None, query_clean, name).ratio()
+    r_symbol = difflib.SequenceMatcher(None, query_clean, symbol).ratio() if item_type == "stock" else 0.0
+    
+    # Scale fuzzy score between 0 and 200
+    return max(r_name, r_symbol) * 200.0
+
+
 @router.get("", dependencies=[Depends(check_rate_limit)])
 async def global_search(query: str, type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
@@ -45,7 +99,8 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
         except Exception as e:
             logger.error(f"Redis get global search failed: {e}")
 
-    results = []
+    stock_results = []
+    fund_results = []
     
     # Construct prefix FTS5 search query
     escaped_query = query_clean.replace('"', '""')
@@ -65,13 +120,13 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
                     FROM stock_search_index s
                     JOIN stock_masters m ON s.symbol = m.symbol
                     WHERE s.stock_search_index MATCH :q
-                    LIMIT 10
+                    LIMIT 100
                 """),
                 {"q": fts_query}
             )
             stocks = stock_q.all()
             for s in stocks:
-                results.append({
+                stock_results.append({
                     "type": "stock",
                     "symbol": s.symbol,
                     "name": s.company_name,
@@ -88,10 +143,10 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
                         (StockMaster.symbol.ilike(q_wild)) |
                         (StockMaster.company_name.ilike(q_wild))
                     )
-                    .limit(10)
+                    .limit(100)
                 )
                 for s in stock_q.all():
-                    results.append({
+                    stock_results.append({
                         "type": "stock",
                         "symbol": s.symbol,
                         "name": s.company_name,
@@ -109,13 +164,13 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
                     SELECT scheme_code, scheme_name 
                     FROM fund_search_index 
                     WHERE fund_search_index MATCH :q
-                    LIMIT 15
+                    LIMIT 100
                 """),
                 {"q": fts_query}
             )
             funds_res = fund_q.all()
             for f in funds_res:
-                results.append({
+                fund_results.append({
                     "type": "fund",
                     "scheme_code": int(f.scheme_code),
                     "name": f.scheme_name
@@ -131,20 +186,39 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
                         name = item.get("schemeName", "")
                         code = str(item.get("schemeCode", ""))
                         if query_clean in name.lower() or query_clean in code:
-                            results.append({
+                            fund_results.append({
                                 "type": "fund",
                                 "scheme_code": item.get("schemeCode"),
                                 "name": name
                             })
                             count += 1
-                            if count >= 15:
+                            if count >= 100:
                                 break
             except Exception as fallback_err:
                 logger.error(f"Fund search fallback failed: {fallback_err}")
 
+    # Compute relevance scores and sort
+    for s in stock_results:
+        s["score"] = calculate_relevance_score(query_clean, "stock", s)
+    stock_results.sort(key=lambda x: x["score"], reverse=True)
+    stock_results_sliced = stock_results[:10]
+
+    for f in fund_results:
+        f["score"] = calculate_relevance_score(query_clean, "fund", f)
+    fund_results.sort(key=lambda x: x["score"], reverse=True)
+    fund_results_sliced = fund_results[:15]
+
+    # Clean score property from final response
+    for s in stock_results_sliced:
+        s.pop("score", None)
+    for f in fund_results_sliced:
+        f.pop("score", None)
+
+    results = stock_results_sliced + fund_results_sliced
+
     # 3. Dynamic ticker suggestion for stocks context
     #    Only run if we are in stock/all search context, have no stock matches, and query looks like a symbol
-    no_stocks = not any(r["type"] == "stock" for r in results)
+    no_stocks = not stock_results_sliced
     looks_like_ticker = len(query_clean) <= 15 and " " not in query_clean
 
     if search_stocks and no_stocks and looks_like_ticker:
@@ -188,3 +262,4 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
             logger.error(f"Redis set global search failed: {e}")
 
     return results
+
