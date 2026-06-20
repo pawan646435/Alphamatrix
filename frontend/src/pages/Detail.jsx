@@ -244,7 +244,7 @@ export default function Detail() {
 
       {/* Bottom Layout: AI Synthesis and Contextual Chat stacked vertically */}
       <div className="flex flex-col gap-8">
-        {/* DeepSeek R1 RAG Bullet summary */}
+        {/* Llama 3.3 RAG Bullet summary */}
         <div 
           className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col justify-between min-h-[420px] animate-fade-in-up"
           style={{ animationDelay: '200ms' }}
@@ -256,7 +256,7 @@ export default function Detail() {
               <h2 className="font-bold text-black dark:text-white uppercase tracking-wider font-display">Quantitative Intelligence Briefing</h2>
             </div>
             <span className="text-[9px] font-mono text-brand-textMuted bg-brand-bg border border-brand-border px-2 py-0.5 uppercase">
-              MODEL: DEEPSEEK_R1_DISTILL_LLAMA_70B
+              MODEL: LLAMA_3.3_70B_VERSATILE
             </span>
           </div>
 
@@ -360,7 +360,7 @@ export default function Detail() {
               <div className="py-16 text-center text-brand-textMuted text-[10px] font-mono flex flex-col items-center justify-center gap-3 flex-grow">
                 <RefreshCw className="h-7 w-7 text-brand-primary animate-spin" />
                 <p className="tracking-wider text-black dark:text-white uppercase">Synthesizing macroeconomic & geopolitical parameters...</p>
-                <p className="text-[9px] text-brand-textMuted">Connecting DeepSeek R1 RAG Pipeline. Estimated wait: 3-5 seconds.</p>
+                <p className="text-[9px] text-brand-textMuted">Connecting Llama 3.3 RAG Pipeline. Estimated wait: 3-5 seconds.</p>
               </div>
             ) : (
               <div className="py-16 text-center text-brand-textMuted text-[10px] font-mono flex flex-col items-center justify-center gap-2 flex-grow">

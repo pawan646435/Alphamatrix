@@ -197,7 +197,7 @@ export default function StockWatchlist() {
             </div>
 
             <div className="text-[8px] font-mono text-brand-textMuted pt-4 border-t border-brand-border/40">
-              [GENERATOR: DeepSeek-R1-distill-llama-70b // COMPILED: RAG_DIAGNOSTICS]
+              [GENERATOR: Llama-3.3-70b-versatile // COMPILED: RAG_DIAGNOSTICS]
             </div>
           </div>
         </div>

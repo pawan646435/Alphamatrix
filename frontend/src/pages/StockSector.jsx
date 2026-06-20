@@ -135,7 +135,7 @@ export default function StockSector() {
             </p>
           </div>
           <div className="text-[8px] font-mono text-brand-textMuted pt-4 border-t border-brand-border/40">
-            [GENERATOR: DeepSeek-R1-distill-llama-70b // COMPILED: on-demand]
+            [GENERATOR: Llama-3.3-70b-versatile // COMPILED: on-demand]
           </div>
         </div>
 

@@ -44,7 +44,7 @@ A unified interface structure where Mutual Funds and Equities share a single des
 * **FastAPI**: Asynchronous high-performance API server.
 * **SQLAlchemy & SQLite**: Modern ORM layer and local relational database for indexing stock master data, historical price series, and fund data.
 * **Yahoo Finance API & MFAPI**: Ingestion pipelines for stock prices, fund NAVs, and metadata.
-* **Groq DeepSeek R1**: Dynamic AI summarization, investment briefings, semantic query parsing, and conversational stock/fund chatbots targeting the `deepseek-r1-distill-llama-70b` model.
+* **Groq Llama 3.3**: Dynamic AI summarization, investment briefings, semantic query parsing, and conversational stock/fund chatbots targeting the `llama-3.3-70b-versatile` model.
 * **Redis**: (Optional) Cache manager for speed-up of global search queries and fund calculations.
 
 ### Frontend

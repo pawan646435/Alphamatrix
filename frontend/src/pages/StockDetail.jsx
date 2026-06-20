@@ -469,7 +469,7 @@ export default function StockDetail() {
 
       {/* Bottom Layout: AI Briefing and Equities Chat */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* DeepSeek R1 AI Briefing Panel */}
+        {/* Llama 3.3 AI Briefing Panel */}
         <div 
           className="lg:col-span-7 border border-brand-border bg-brand-surface shadow-xl p-6 min-h-[480px] animate-fade-in-up space-y-6 flex flex-col justify-between"
           style={{ animationDelay: '200ms' }}

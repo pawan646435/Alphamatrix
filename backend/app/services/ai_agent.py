@@ -8,6 +8,8 @@ from app.schemas.ai_schema import ParsedFilters, ChatMessage
 
 logger = logging.getLogger("app.services.ai_agent")
 
+AI_MODEL = "llama-3.3-70b-versatile"
+
 # Configure Groq if API Key is available
 groq_configured = False
 groq_client = None
@@ -21,7 +23,7 @@ if settings.GROQ_API_KEY:
 
 def clean_r1_response(text: str) -> str:
     """
-    Strips <think>...</think> tags and their contents from DeepSeek R1 output
+    Strips <think>...</think> tags and their contents from reasoning model output
     to avoid cluttering the frontend or breaking JSON parse.
     """
     if not text:
@@ -74,7 +76,7 @@ Rules:
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             timeout=30.0
@@ -127,7 +129,7 @@ Return ONLY the 3 bullet points starting with a hyphen (-). Mention the numerica
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             timeout=30.0
         )
@@ -183,7 +185,7 @@ Use these details to answer user queries about this fund.
     
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=messages,
             timeout=30.0
         )
@@ -539,7 +541,7 @@ def _mock_chat_response(message: str, fund_data: Optional[Dict[str, Any]] = None
 async def generate_stock_briefing(stock_data: Dict[str, Any], historical_prices: List[Dict[str, Any]] = None) -> str:
     """
     Generates a comprehensive Markdown equity research report briefing
-    using DeepSeek R1 via Groq.
+    using Llama 3.3 via Groq.
     """
     if not groq_configured:
         return _generate_mock_stock_briefing(stock_data)
@@ -619,7 +621,7 @@ Safety Constraint: Do NOT state anything with absolute certainty. Always write u
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             timeout=30.0
         )
@@ -677,7 +679,7 @@ Use these details to answer user queries about this stock.
     
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=messages,
             timeout=30.0
         )
@@ -731,7 +733,7 @@ Return ONLY a JSON object with this exact schema:
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             timeout=30.0
@@ -745,7 +747,7 @@ Return ONLY a JSON object with this exact schema:
 
 async def generate_sector_outlook(sector: str, stocks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Generates a sectoral health score, growth drivers, risks, and AI outlook using DeepSeek R1 via Groq.
+    Generates a sectoral health score, growth drivers, risks, and AI outlook using Llama 3.3 via Groq.
     """
     if not groq_configured:
         return _generate_mock_sector_outlook(sector, stocks)
@@ -781,7 +783,7 @@ Return ONLY a JSON object with this exact schema:
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             timeout=30.0
@@ -982,7 +984,7 @@ Return ONLY a JSON object with this exact schema:
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             timeout=30.0
@@ -1003,7 +1005,7 @@ def _generate_mock_market_regime() -> Dict[str, Any]:
 
 async def generate_stock_comparison(s1_data: Dict[str, Any], s2_data: Dict[str, Any]) -> str:
     """
-    Generates a comparative research analysis between two equities using DeepSeek R1 via Groq.
+    Generates a comparative research analysis between two equities using Llama 3.3 via Groq.
     """
     if not groq_configured:
         return _generate_mock_stock_comparison(s1_data, s2_data)
@@ -1045,7 +1047,7 @@ Safety Constraint: Use probability-based language. Avoid absolute statements.
 """
     try:
         response = groq_client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             timeout=30.0
         )
