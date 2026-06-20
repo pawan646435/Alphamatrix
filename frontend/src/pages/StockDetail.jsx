@@ -4,6 +4,7 @@ import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activ
 import { useGetStockDetail, useStockAIChat, useWatchlist } from '../hooks/useStocks';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
+import AnalystResponseCard from '../components/AnalystResponseCard';
 
 export default function StockDetail() {
   const { symbol } = useParams();
@@ -627,7 +628,7 @@ export default function StockDetail() {
 
         {/* Interactive Analyst Terminal — full width, below research */}
         <div
-          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[500px] font-mono animate-fade-in-up"
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[640px] font-mono animate-fade-in-up"
           style={{ animationDelay: '250ms' }}
         >
           {/* Panel header */}
@@ -648,15 +649,7 @@ export default function StockDetail() {
               </div>
             ) : (
               messages.map((m, idx) => (
-                <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] border px-3 py-2 ${
-                    m.role === 'user'
-                      ? 'bg-brand-primary/10 border-brand-primary text-black dark:text-white'
-                      : 'bg-brand-bg border-brand-border text-black dark:text-white'
-                  }`}>
-                    {m.content}
-                  </div>
-                </div>
+                <AnalystResponseCard key={idx} message={m} />
               ))
             )}
             {chatLoading && (

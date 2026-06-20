@@ -4,6 +4,7 @@ import { ArrowLeft, RefreshCw, Sparkles, MessageSquare, TrendingUp, AlertTriangl
 import { useGetFundDetail, useSyncFund, useAIChat } from '../hooks/useFunds';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import FundLogo from '../components/FundLogo';
+import AnalystResponseCard from '../components/AnalystResponseCard';
 
 export default function Detail() {
   const { schemeCode } = useParams();
@@ -386,7 +387,7 @@ export default function Detail() {
 
         {/* Contextual chat panel - moved below and expanded */}
         <div 
-          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[500px] font-mono animate-fade-in-up"
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[640px] font-mono animate-fade-in-up"
           style={{ animationDelay: '250ms' }}
         >
           <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex items-center gap-2 text-xs">
@@ -406,20 +407,7 @@ export default function Detail() {
               </div>
             ) : (
               messages.map((m, idx) => (
-                <div
-                  key={idx}
-                  className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] border px-3 py-2 ${
-                      m.role === 'user'
-                        ? 'bg-brand-primary/10 border-brand-primary text-black dark:text-white'
-                        : 'bg-brand-bg border-brand-border text-black dark:text-white'
-                    }`}
-                  >
-                    {m.content}
-                  </div>
-                </div>
+                <AnalystResponseCard key={idx} message={m} />
               ))
             )}
             {chatLoading && (
