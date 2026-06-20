@@ -10,7 +10,7 @@ from app.core.database import init_db, async_session_maker
 from app.api.api import api_router
 from app.workers.ingestion import ingest_fund
 
-from app.workers.stock_ingestion import seed_stocks_data
+from app.workers.stock_ingestion import seed_stocks_data, populate_search_indices
 
 # Setup logging
 logging.basicConfig(
@@ -58,12 +58,14 @@ async def seed_data_background():
     """
     logger.info("Starting background database seeding...")
     
-    # 1. Ensure tables are created
+    # 1. Ensure tables are created and search indices populated
     try:
         await init_db()
         logger.info("Database tables initialized.")
+        async with async_session_maker() as session:
+            await populate_search_indices(session)
     except Exception as e:
-        logger.error(f"Failed to initialize database tables: {e}")
+        logger.error(f"Failed to initialize database and populate search indices: {e}")
         return
         
     # 2. Seed popular funds (including Benchmark fund 120687)

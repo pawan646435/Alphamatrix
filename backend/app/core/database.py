@@ -48,3 +48,26 @@ async def init_db():
         from app.models.user import User
         from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
         await conn.run_sync(Base.metadata.create_all)
+        
+    # Initialize SQLite FTS5 search index virtual tables
+    from sqlalchemy import text
+    async with async_session_maker() as session:
+        try:
+            await session.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS stock_search_index USING fts5(
+                    symbol,
+                    company_name,
+                    exchange UNINDEXED
+                );
+            """))
+            await session.execute(text("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS fund_search_index USING fts5(
+                    scheme_code,
+                    scheme_name
+                );
+            """))
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            raise e
+

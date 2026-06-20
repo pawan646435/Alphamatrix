@@ -275,10 +275,22 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     symbol = symbol.upper().strip()
     logger.info(f"[DynamicIngest] Starting dynamic ingestion for symbol: {symbol}")
 
-    # 1. Check if already exists (safety check — should not be called if exists)
+    # 1. Check if already exists with history (safety check — if fully ingested, skip)
     check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
-    if check_q.scalar_one_or_none():
-        logger.info(f"[DynamicIngest] {symbol} already exists in DB. Skipping ingestion.")
+    existing = check_q.scalar_one_or_none()
+    
+    has_history = False
+    if existing:
+        prices_check = await db.execute(
+            select(StockPriceHistory.id)
+            .where(StockPriceHistory.symbol == symbol)
+            .limit(1)
+        )
+        if prices_check.scalar():
+            has_history = True
+
+    if existing and has_history:
+        logger.info(f"[DynamicIngest] {symbol} already exists in DB with history. Skipping ingestion.")
         return {"status": "already_exists", "symbol": symbol}
 
     # 2. Fetch data from Yahoo Finance (blocking IO in thread to avoid blocking event loop)
@@ -409,27 +421,53 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     }
     alpha_score = calculate_alpha_score(stock_meta, cagr_1y or 0.0, cagr_3y or 0.0)
 
-    # 7. Insert StockMaster record
-    stock_master = StockMaster(
-        symbol=symbol,
-        company_name=company_name,
-        isin=isin,
-        sector=sector,
-        industry=industry,
-        market_cap=market_cap,
-        pe_ratio=pe_ratio,
-        pb_ratio=pb_ratio,
-        roe=roe,
-        debt_equity=debt_equity,
-        dividend_yield=dividend_yield,
-        beta=round(computed_beta, 2),
-        cagr_1y=cagr_1y,
-        cagr_3y=cagr_3y,
-        cagr_5y=cagr_5y,
-        alpha_score=alpha_score,
-        ai_summary="Generating Equity Intelligence Briefing in the background..."
+    # 7. Insert or Update StockMaster record
+    if existing:
+        existing.company_name = company_name
+        existing.isin = isin
+        existing.sector = sector
+        existing.industry = industry
+        existing.market_cap = market_cap
+        existing.pe_ratio = pe_ratio
+        existing.pb_ratio = pb_ratio
+        existing.roe = roe
+        existing.debt_equity = debt_equity
+        existing.dividend_yield = dividend_yield
+        existing.beta = round(computed_beta, 2)
+        existing.cagr_1y = cagr_1y
+        existing.cagr_3y = cagr_3y
+        existing.cagr_5y = cagr_5y
+        existing.alpha_score = alpha_score
+        existing.ai_summary = "Generating Equity Intelligence Briefing in the background..."
+    else:
+        stock_master = StockMaster(
+            symbol=symbol,
+            company_name=company_name,
+            isin=isin,
+            sector=sector,
+            industry=industry,
+            market_cap=market_cap,
+            pe_ratio=pe_ratio,
+            pb_ratio=pb_ratio,
+            roe=roe,
+            debt_equity=debt_equity,
+            dividend_yield=dividend_yield,
+            beta=round(computed_beta, 2),
+            cagr_1y=cagr_1y,
+            cagr_3y=cagr_3y,
+            cagr_5y=cagr_5y,
+            alpha_score=alpha_score,
+            ai_summary="Generating Equity Intelligence Briefing in the background..."
+        )
+        db.add(stock_master)
+
+    # Sync to FTS5 search index
+    from sqlalchemy import text
+    await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
+    await db.execute(
+        text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
+        {"symbol": symbol, "name": company_name}
     )
-    db.add(stock_master)
 
     if prices_to_insert:
         db.add_all(prices_to_insert)
@@ -684,5 +722,102 @@ async def seed_stocks_data(db: AsyncSession):
         db.add(stock_master)
         await db.flush()
         
+        # Sync to FTS5 search index
+        from sqlalchemy import text
+        await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
+        await db.execute(
+            text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
+            {"symbol": symbol, "name": real_info["company_name"]}
+        )
+        
     await db.commit()
     logger.info("Stock seeding background task finished successfully.")
+
+async def populate_search_indices(db: AsyncSession):
+    """
+    Seeds mutual fund and stock search index FTS5 tables and stock_masters skeleton records.
+    """
+    from sqlalchemy import text
+    import json
+    import os
+    import csv
+    import httpx
+    
+    # 1. Populate Mutual Funds FTS5 Index if empty
+    check_funds = await db.execute(text("SELECT 1 FROM fund_search_index LIMIT 1"))
+    if not check_funds.scalar():
+        logger.info("Seeding fund_search_index FTS5 table...")
+        CACHE_FILE = "mf_master_list.json"
+        mf_list = []
+        if os.path.exists(CACHE_FILE):
+            try:
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    mf_list = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to read disk cache for seeding FTS5: {e}")
+                
+        if not mf_list:
+            try:
+                async with httpx.AsyncClient() as client:
+                    res = await client.get("https://api.mfapi.in/mf", timeout=15.0)
+                    if res.status_code == 200:
+                        mf_list = res.json()
+                        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                            json.dump(mf_list, f)
+            except Exception as e:
+                logger.error(f"Failed to fetch master fund list for seeding FTS5: {e}")
+                
+        if mf_list:
+            logger.info(f"Inserting {len(mf_list)} mutual funds into FTS5 index...")
+            stmt = "INSERT INTO fund_search_index (scheme_code, scheme_name) VALUES (:code, :name)"
+            batch_size = 5000
+            for i in range(0, len(mf_list), batch_size):
+                batch = mf_list[i:i+batch_size]
+                params = [{"code": str(item["schemeCode"]), "name": item["schemeName"]} for item in batch]
+                await db.execute(text(stmt), params)
+            await db.commit()
+            logger.info("Fund search index successfully seeded.")
+
+    # 2. Populate Stocks FTS5 Index and stock_masters skeleton records if empty
+    check_stocks = await db.execute(text("SELECT 1 FROM stock_search_index LIMIT 1"))
+    if not check_stocks.scalar():
+        logger.info("Seeding stock_search_index and stock_masters from NSE...")
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get("https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv", headers=headers, timeout=20.0)
+                if res.status_code == 200:
+                    lines = res.text.strip().split("\n")
+                    reader = csv.reader(lines)
+                    header = next(reader)
+                    
+                    stocks_to_insert = []
+                    for row in reader:
+                        if len(row) >= 7:
+                            symbol = row[0].strip()
+                            name = row[1].strip()
+                            isin = row[6].strip()
+                            if symbol == "SYMBOL" or not symbol:
+                                continue
+                            stocks_to_insert.append({"symbol": symbol, "name": name, "isin": isin})
+                            
+                    if stocks_to_insert:
+                        logger.info(f"Inserting {len(stocks_to_insert)} NSE tickers into DB...")
+                        stmt_master = """
+                            INSERT OR IGNORE INTO stock_masters (symbol, company_name, isin, sector)
+                            VALUES (:symbol, :name, :isin, 'Unknown')
+                        """
+                        stmt_fts = """
+                            INSERT INTO stock_search_index (symbol, company_name, exchange)
+                            VALUES (:symbol, :name, 'NSE')
+                        """
+                        batch_size = 1000
+                        for i in range(0, len(stocks_to_insert), batch_size):
+                            batch = stocks_to_insert[i:i+batch_size]
+                            await db.execute(text(stmt_master), batch)
+                            await db.execute(text(stmt_fts), batch)
+                        await db.commit()
+                        logger.info("Stock search index and masters successfully seeded.")
+        except Exception as e:
+            logger.error(f"Failed to fetch and seed stock list: {e}")
+
