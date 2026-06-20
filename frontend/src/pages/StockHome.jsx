@@ -97,7 +97,7 @@ export default function StockHome() {
         <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/5 via-transparent to-brand-primary/5 opacity-40 pointer-events-none" />
 
         <div className="flex items-center gap-1.5 px-3 py-1 bg-brand-primary/10 border border-brand-primary/40 text-brand-primary text-[10px] font-mono uppercase tracking-wider mb-5 animate-pulse-subtle">
-          <Cpu className="h-3 w-3" /> EQUITIES INTEL CORE [GEMINI_3.1_FLASH_LITE]
+          <Cpu className="h-3 w-3" /> EQUITIES INTEL CORE [DEEPSEEK_R1_DISTILL_LLAMA_70B]
         </div>
         
         <h1 className="text-4xl md:text-5xl font-extrabold text-black dark:text-white tracking-tight leading-none max-w-4xl font-display uppercase">
@@ -105,7 +105,7 @@ export default function StockHome() {
         </h1>
         
         <p className="text-brand-textMuted text-sm md:text-base max-w-2xl mt-4 leading-relaxed font-sans">
-          Analyze valuation multiples, multi-factor Alpha Scores, and historical returns across major NIFTY equities. Powered by Gemini.
+          Analyze valuation multiples, multi-factor Alpha Scores, and historical returns across major NIFTY equities. Powered by DeepSeek R1.
         </p>
 
         {/* Master Search Input */}

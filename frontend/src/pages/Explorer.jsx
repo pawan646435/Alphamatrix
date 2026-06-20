@@ -147,7 +147,7 @@ export default function Explorer() {
           {usingSemantic && parsedFilters && (
             <div className="bg-brand-bg border border-brand-primary/20 p-4 space-y-3 font-mono text-xs">
               <div className="flex justify-between items-center">
-                <span className="text-[9px] font-bold text-brand-primary uppercase">Gemini SQL Parser Metadata</span>
+                <span className="text-[9px] font-bold text-brand-primary uppercase">DeepSeek R1 SQL Parser Metadata</span>
                 <button 
                   onClick={handleClearSemantic}
                   className="text-[9px] text-brand-danger hover:underline font-bold"
