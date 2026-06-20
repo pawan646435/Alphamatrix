@@ -218,6 +218,7 @@ async def get_fund_detail(
         logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
         fund.ai_summary = "Generating AI Analysis in the background..."
         await db.commit()
+        await db.refresh(fund)
         
         # Invalidate cache so that cached response reflects the loading status
         if redis_client:

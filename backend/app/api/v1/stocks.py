@@ -312,6 +312,7 @@ async def get_stock_detail(
     if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
         stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
         await db.commit()
+        await db.refresh(stock)
         trigger_background = True
         
     prices = []
