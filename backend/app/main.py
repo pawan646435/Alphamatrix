@@ -30,7 +30,7 @@ app = FastAPI(
 # CORS Middleware setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -111,5 +111,15 @@ async def seed_data_background():
 
 @app.on_event("startup")
 async def startup_event():
-    # Run seeding in background after server start
+    # Do not execute background seeding inside Vercel serverless environments
+    if "VERCEL" in os.environ:
+        logger.info("Server running inside Vercel Serverless. Bypassing background seed queue.")
+        # Ensure database tables exist
+        try:
+            await init_db()
+        except Exception as e:
+            logger.error(f"Failed to initialize tables in Vercel: {e}")
+        return
+
+    # Run seeding in background after server start locally
     asyncio.create_task(seed_data_background())
