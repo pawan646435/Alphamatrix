@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Filter, ChevronDown, ChevronUp, AlertCircle, RefreshCw, Layers } from 'lucide-react';
+import { Filter, ChevronDown, ChevronUp, AlertCircle, RefreshCw } from 'lucide-react';
 import { useGetStocks } from '../hooks/useStocks';
 import StockLogo from '../components/StockLogo';
 
@@ -65,7 +65,7 @@ export default function StockExplorer() {
   const num = (val, dec = 2) => (val !== null && val !== undefined ? val.toFixed(dec) : '—');
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Title */}
       <div className="flex justify-between items-end border-b border-brand-border pb-4 animate-fade-in-up">
         <div>
@@ -93,7 +93,7 @@ export default function StockExplorer() {
               <select
                 value={sector}
                 onChange={(e) => setSector(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               >
                 <option value="">All Sectors</option>
                 <option value="IT">IT</option>
@@ -112,7 +112,7 @@ export default function StockExplorer() {
                 placeholder="e.g. 15"
                 value={minCagr}
                 onChange={(e) => setMinCagr(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -123,7 +123,7 @@ export default function StockExplorer() {
                 placeholder="e.g. 20"
                 value={minRoe}
                 onChange={(e) => setMinRoe(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -135,7 +135,7 @@ export default function StockExplorer() {
                 placeholder="e.g. 0.5"
                 value={maxDebtEquity}
                 onChange={(e) => setMaxDebtEquity(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -146,7 +146,7 @@ export default function StockExplorer() {
                 placeholder="e.g. 30"
                 value={maxPe}
                 onChange={(e) => setMaxPe(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
           </div>

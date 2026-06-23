@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" aria-label="AlphaMatrix Logo">
+  <defs>
+    <!-- Primary warm gold gradient (bottom-left to top-right) -->
+    <linearGradient id="am-gold" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#C9A56B"/>
+      <stop offset="50%"  stop-color="#E8C97A"/>
+      <stop offset="100%" stop-color="#F0D898"/>
+    </linearGradient>
+    <!-- Subtle dark gradient for the container fill -->
+    <linearGradient id="am-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#1A1712"/>
+      <stop offset="100%" stop-color="#0F0D0A"/>
+    </linearGradient>
+    <!-- Glow filter for the alpha stroke -->
+    <filter id="am-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Container: square with clipped corners (octagon-ish) for premium feel -->
+  <path d="M14 4 L86 4 Q96 4 96 14 L96 86 Q96 96 86 96 L14 96 Q4 96 4 86 L4 14 Q4 4 14 4 Z" fill="url(#am-bg)"/>
+
+  <!-- Border: thin golden edge -->
+  <path d="M14 4 L86 4 Q96 4 96 14 L96 86 Q96 96 86 96 L14 96 Q4 96 4 86 L4 14 Q4 4 14 4 Z" stroke="url(#am-gold)" stroke-width="1.5" fill="none" opacity="0.7"/>
+
+  <!-- Matrix grid dots: 3×3 array, evenly spaced, muted -->
+  <!-- Row 1 -->
+  <circle cx="28" cy="28" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="50" cy="28" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="72" cy="28" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <!-- Row 2 -->
+  <circle cx="28" cy="50" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="50" cy="50" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="72" cy="50" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <!-- Row 3 -->
+  <circle cx="28" cy="72" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="50" cy="72" r="2.2" fill="#C9A56B" opacity="0.20"/>
+  <circle cx="72" cy="72" r="2.2" fill="#C9A56B" opacity="0.20"/>
+
+  <!-- Matrix grid dots: accent — the 4 corners are slightly brighter -->
+  <circle cx="28" cy="28" r="1.5" fill="url(#am-gold)" opacity="0.45"/>
+  <circle cx="72" cy="28" r="1.5" fill="url(#am-gold)" opacity="0.45"/>
+  <circle cx="28" cy="72" r="1.5" fill="url(#am-gold)" opacity="0.45"/>
+  <circle cx="72" cy="72" r="1.5" fill="url(#am-gold)" opacity="0.45"/>
+
+  <!-- Center dot: fully lit -->
+  <circle cx="50" cy="50" r="2" fill="url(#am-gold)" opacity="0.6"/>
+
+  <!-- Alpha (α) mark — geometric, continuous loop -->
+  <!-- Glow layer -->
+  <path d="M 75 27.5 L 62.5 50 C 50 72.5, 25 72.5, 25 50 C 25 27.5, 50 27.5, 62.5 50 L 75 72.5" filter="url(#am-glow)" stroke="url(#am-gold)" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.45"/>
+
+  <!-- Sharp layer -->
+  <path d="M 75 27.5 L 62.5 50 C 50 72.5, 25 72.5, 25 50 C 25 27.5, 50 27.5, 62.5 50 L 75 72.5" stroke="url(#am-gold)" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Corner accent ticks: top-left and bottom-right for terminal aesthetic -->
+  <path d="M 10 18 L 10 10 L 18 10" stroke="url(#am-gold)" stroke-width="1.8" stroke-linecap="square" fill="none" opacity="0.5"/>
+  <path d="M 90 82 L 90 90 L 82 90" stroke="url(#am-gold)" stroke-width="1.8" stroke-linecap="square" fill="none" opacity="0.5"/>
+</svg>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, RefreshCw, Cpu, Layers, Zap } from 'lucide-react';
@@ -16,12 +16,13 @@ export default function GlobalSearch() {
   const dropdownRef = useRef(null);
 
   // Position the portal dropdown to exactly match the input width/position
+  // NOTE: fixed positioning does NOT need scrollX/scrollY offsets
   const updateDropdownPosition = useCallback(() => {
     if (!inputWrapperRef.current) return;
     const rect = inputWrapperRef.current.getBoundingClientRect();
     setDropdownStyle({
       position: 'fixed',
-      top: rect.bottom,
+      top: rect.bottom + 2,
       left: rect.left,
       width: rect.width,
       zIndex: 99999,
@@ -29,19 +30,21 @@ export default function GlobalSearch() {
   }, []);
 
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      // Check if click is inside the input wrapper OR the portaled dropdown
+    const close = (event) => {
       const inInput = inputWrapperRef.current && inputWrapperRef.current.contains(event.target);
       const inDropdown = dropdownRef.current && dropdownRef.current.contains(event.target);
       if (!inInput && !inDropdown) {
         setShowDropdown(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
+    // Support both mouse and touch events for mobile outside-click detection
+    document.addEventListener('mousedown', close);
+    document.addEventListener('touchstart', close, { passive: true });
     window.addEventListener('scroll', updateDropdownPosition, true);
     window.addEventListener('resize', updateDropdownPosition);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('touchstart', close);
       window.removeEventListener('scroll', updateDropdownPosition, true);
       window.removeEventListener('resize', updateDropdownPosition);
     };
@@ -57,7 +60,7 @@ export default function GlobalSearch() {
   // Debounced search
   useEffect(() => {
     if (query.trim().length < 2) {
-      setResults([]);
+      setTimeout(() => setResults([]), 0);
       return;
     }
 
@@ -101,16 +104,17 @@ export default function GlobalSearch() {
 
   const shouldShowDropdown = showDropdown && query.trim().length >= 2;
 
+  // Mobile-keyboard-safe max height: use 40vh so keyboard doesn't cover the list
   const dropdownContent = shouldShowDropdown ? (
     <div
       ref={dropdownRef}
       style={dropdownStyle}
-      className="bg-brand-surface border border-brand-border shadow-2xl max-h-[420px] overflow-y-auto divide-y divide-brand-border font-mono text-xs scrollbar"
+      className="bg-brand-surface border border-brand-border shadow-2xl max-h-[40vh] overflow-y-auto divide-y divide-brand-border font-mono text-xs scrollbar"
     >
       {/* Stocks Section */}
       {stocks.length > 0 && (
         <div>
-          <div className="bg-brand-bg px-4 py-1.5 text-[9px] text-brand-primary font-bold border-b border-brand-border flex items-center gap-1.5 tracking-wider">
+          <div className="bg-brand-bg px-4 py-2 text-[9px] text-brand-primary font-bold border-b border-brand-border flex items-center gap-1.5 tracking-wider">
             <Cpu className="w-3 h-3" /> EQUITIES
           </div>
           <div className="divide-y divide-brand-border/40">
@@ -118,7 +122,8 @@ export default function GlobalSearch() {
               <button
                 key={item.symbol}
                 onClick={() => item.discover ? handleDiscover(item.symbol) : handleSelect(item)}
-                className="w-full text-left px-4 py-2.5 hover:bg-brand-border/40 text-black dark:text-white transition-colors flex items-center justify-between gap-3 group cursor-pointer"
+                // min-h-[44px] ensures touch target compliance
+                className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-brand-border/40 text-black dark:text-white transition-colors flex items-center justify-between gap-3 group cursor-pointer"
               >
                 <span className="truncate group-hover:text-brand-primary transition-colors font-semibold">{item.name}</span>
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -140,7 +145,7 @@ export default function GlobalSearch() {
       {/* Mutual Funds Section */}
       {funds.length > 0 && (
         <div>
-          <div className="bg-brand-bg px-4 py-1.5 text-[9px] text-brand-primary font-bold border-b border-brand-border flex items-center gap-1.5 tracking-wider">
+          <div className="bg-brand-bg px-4 py-2 text-[9px] text-brand-primary font-bold border-b border-brand-border flex items-center gap-1.5 tracking-wider">
             <Layers className="w-3 h-3" /> MUTUAL FUNDS
           </div>
           <div className="divide-y divide-brand-border/40">
@@ -148,7 +153,7 @@ export default function GlobalSearch() {
               <button
                 key={item.scheme_code}
                 onClick={() => handleSelect(item)}
-                className="w-full text-left px-4 py-2.5 hover:bg-brand-border/40 text-black dark:text-white transition-colors flex items-center justify-between gap-3 group cursor-pointer"
+                className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-brand-border/40 text-black dark:text-white transition-colors flex items-center justify-between gap-3 group cursor-pointer"
               >
                 <span className="truncate group-hover:text-brand-primary transition-colors font-semibold">{item.name}</span>
                 <span className="shrink-0 text-brand-textMuted bg-brand-bg border border-brand-border/60 px-1.5 py-0.5 font-mono text-[9px]">
@@ -168,13 +173,13 @@ export default function GlobalSearch() {
           </p>
           <button
             onClick={() => handleDiscover(query)}
-            className="w-full flex items-center gap-2 px-3 py-2 bg-brand-primary/10 border border-brand-primary/40 hover:bg-brand-primary/20 transition-colors group cursor-pointer"
+            className="w-full flex items-center gap-2 px-3 py-3 min-h-[44px] bg-brand-primary/10 border border-brand-primary/40 hover:bg-brand-primary/20 transition-colors group cursor-pointer"
           >
             <Zap className="h-3 w-3 text-brand-primary shrink-0" />
             <span className="text-[10px] font-bold text-brand-primary">
               Discover <span className="uppercase">{query.trim()}</span> on NSE
             </span>
-            <span className="ml-auto text-[9px] text-brand-textMuted group-hover:text-brand-primary transition-colors">
+            <span className="ml-auto text-[9px] text-brand-textMuted group-hover:text-brand-primary transition-colors hidden sm:inline">
               → Auto-ingest from Yahoo Finance
             </span>
           </button>
@@ -192,10 +197,16 @@ export default function GlobalSearch() {
   return (
     <div className="relative w-full max-w-xl font-mono text-xs" ref={inputWrapperRef}>
       <div className="relative">
-        <Search className="absolute left-4 top-3.5 h-4 w-4 text-brand-textMuted" />
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-brand-textMuted pointer-events-none" />
         <input
           type="text"
-          placeholder="Search Stocks or Mutual Funds (e.g. TCS, Reliance, Parag Parikh)..."
+          inputMode="search"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck="false"
+          // Short placeholder on mobile, full one on sm+
+          placeholder="Search stocks & funds..."
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -206,10 +217,11 @@ export default function GlobalSearch() {
             setShowDropdown(true);
             updateDropdownPosition();
           }}
-          className="w-full pl-11 pr-10 py-3 bg-brand-bg border border-brand-border text-xs text-black dark:text-white placeholder-brand-textMuted focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-mono"
+          // min-h-[44px] ensures the input itself is a 44px touch target
+          className="w-full pl-11 pr-10 py-3 min-h-[44px] bg-brand-bg border border-brand-border text-xs text-black dark:text-white placeholder-brand-textMuted focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-all font-mono"
         />
         {loading && (
-          <RefreshCw className="absolute right-4 top-3.5 h-4 w-4 text-brand-primary animate-spin" />
+          <RefreshCw className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-brand-primary animate-spin" />
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, RefreshCw, Cpu, ShieldAlert, Sparkles, XCircle, Search, HelpCircle } from 'lucide-react';
 import { useWatchlist } from '../hooks/useStocks';
@@ -6,7 +6,7 @@ import StockLogo from '../components/StockLogo';
 
 export default function StockWatchlist() {
   const navigate = useNavigate();
-  const { watchlist, diagnostics, loading, diagLoading, error, fetchWatchlist, removeFromWatchlist, fetchDiagnostics } = useWatchlist();
+  const { watchlist, diagnostics, diagLoading, fetchWatchlist, removeFromWatchlist, fetchDiagnostics } = useWatchlist();
 
   useEffect(() => {
     fetchWatchlist();
@@ -40,7 +40,7 @@ export default function StockWatchlist() {
   const num = (val, dec = 2) => (val !== null && val !== undefined ? val.toFixed(dec) : '—');
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Title */}
       <div className="flex justify-between items-end border-b border-brand-border pb-4 animate-fade-in-up">
         <div>
@@ -91,12 +91,12 @@ export default function StockWatchlist() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-6 font-mono text-[10px] shrink-0 text-right">
+                  <div className="flex items-center gap-3 sm:gap-6 font-mono text-[10px] shrink-0 text-right">
                     <div>
                       <span className="text-brand-textMuted block text-[8px] uppercase font-bold">1Y return</span>
                       <span className="text-brand-success font-bold">{pct(s.cagr_1y)}</span>
                     </div>
-                    <div>
+                    <div className="hidden sm:block">
                       <span className="text-brand-textMuted block text-[8px] uppercase font-bold">PE Ratio</span>
                       <span className="text-black dark:text-white font-bold">{num(s.pe_ratio, 1)}</span>
                     </div>
@@ -106,7 +106,7 @@ export default function StockWatchlist() {
                     </div>
                     <button
                       onClick={(e) => handleRemove(e, s.symbol)}
-                      className="text-brand-textMuted hover:text-brand-danger transition-colors p-1"
+                      className="text-brand-textMuted hover:text-brand-danger transition-colors p-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
                       aria-label="Remove from watchlist"
                     >
                       <XCircle className="h-4 w-4" />
@@ -119,7 +119,7 @@ export default function StockWatchlist() {
 
           {/* Diagnostics Briefing Panel */}
           <div 
-            className="lg:col-span-5 border border-brand-border bg-brand-surface shadow-2xl p-6 min-h-[460px] flex flex-col justify-between animate-fade-in-up"
+            className="lg:col-span-5 border border-brand-border bg-brand-surface shadow-2xl p-5 sm:p-6 flex flex-col justify-between animate-fade-in-up"
             style={{ animationDelay: '100ms' }}
           >
             <div>

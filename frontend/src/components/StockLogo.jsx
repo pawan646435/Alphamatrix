@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 export default function StockLogo({ symbol, size = 'md' }) {
   const getLogoChar = (sym) => {

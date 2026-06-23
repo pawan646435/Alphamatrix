@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Cpu, BookOpen, AlertTriangle, Star } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Cpu, BookOpen, AlertTriangle } from 'lucide-react';
 import { useGetSectorDetails } from '../hooks/useStocks';
 import StockLogo from '../components/StockLogo';
 
@@ -47,12 +47,12 @@ export default function StockSector() {
   const { sector, sector_score, growth_drivers, major_risks, top_stocks, ai_outlook } = sectorDetails;
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Back Header */}
       <div className="animate-fade-in-up">
         <button
           onClick={() => navigate('/stocks')}
-          className="flex items-center gap-2 text-brand-textMuted hover:text-brand-primary transition-colors text-xs font-bold font-mono uppercase"
+          className="flex items-center gap-2 text-brand-textMuted hover:text-brand-primary transition-colors text-xs font-bold font-mono uppercase min-h-[44px]"
         >
           <ArrowLeft className="h-4 w-4" /> [Back to Dashboard]
         </button>
@@ -161,12 +161,12 @@ export default function StockSector() {
                   </div>
                 </div>
 
-                <div className="flex gap-6 font-mono text-[10px] shrink-0 text-right">
+                <div className="flex gap-3 sm:gap-6 font-mono text-[10px] shrink-0 text-right">
                   <div>
                     <span className="text-brand-textMuted block text-[8px] uppercase font-bold">3Y CAGR</span>
                     <span className="text-black dark:text-white font-bold">{s.cagr_3y ? `${(s.cagr_3y * 100).toFixed(1)}%` : '—'}</span>
                   </div>
-                  <div>
+                  <div className="hidden sm:block">
                     <span className="text-brand-textMuted block text-[8px] uppercase font-bold">PE</span>
                     <span className="text-black dark:text-white font-bold">{s.pe_ratio ? s.pe_ratio.toFixed(1) : '—'}</span>
                   </div>

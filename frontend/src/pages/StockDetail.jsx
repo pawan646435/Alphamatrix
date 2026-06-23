@@ -10,7 +10,7 @@ export default function StockDetail() {
   const { symbol } = useParams();
   const navigate = useNavigate();
   
-  const { stockDetail, loading, error, fetchDetail, discovering, discoveringMessage, checkStatus } = useGetStockDetail();
+  const { stockDetail, loading, error, fetchDetail, discovering, checkStatus } = useGetStockDetail();
   const { watchlist, addToWatchlist, removeFromWatchlist, fetchWatchlist } = useWatchlist();
   
   const [chatMessage, setChatMessage] = useState('');
@@ -331,7 +331,7 @@ export default function StockDetail() {
   }
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Back navigation & Watchlist Trigger */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in-up">
         <button
@@ -363,13 +363,13 @@ export default function StockDetail() {
 
       {/* Stock Metadata Header */}
       <div 
-        className="relative border border-brand-border p-6 md:p-8 shadow-xl animate-fade-in-up bg-brand-surface"
+        className="relative border border-brand-border p-4 sm:p-6 md:p-8 shadow-xl animate-fade-in-up bg-brand-surface"
         style={{ animationDelay: '50ms' }}
       >
         <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[9px]">+ [STOCK_META]</div>
         <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-center">
           <div className="lg:col-span-2 space-y-4">
             <div className="flex flex-wrap items-center gap-2 font-mono">
               <span className="text-[9px] font-bold bg-brand-primary/10 border border-brand-primary/40 text-brand-primary px-2.5 py-0.5 uppercase">
@@ -432,7 +432,7 @@ export default function StockDetail() {
 
       {/* Numerical Metrics Grid */}
       <div 
-        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-4 animate-fade-in-up"
+        className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-3 sm:gap-4 animate-fade-in-up"
         style={{ animationDelay: '100ms' }}
       >
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
@@ -628,8 +628,8 @@ export default function StockDetail() {
 
         {/* Interactive Analyst Terminal — full width, below research */}
         <div
-          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[640px] font-mono animate-fade-in-up"
-          style={{ animationDelay: '250ms' }}
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col font-mono animate-fade-in-up"
+          style={{ animationDelay: '250ms', minHeight: '480px', maxHeight: '640px' }}
         >
           {/* Panel header */}
           <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex items-center gap-2 text-xs">
@@ -641,7 +641,7 @@ export default function StockDetail() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed">
+          <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed" style={{ minHeight: '200px' }}>
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted space-y-2">
                 <Cpu className="h-6 w-6 opacity-30 text-brand-primary" />
@@ -667,15 +667,16 @@ export default function StockDetail() {
           <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
             <input
               type="text"
+              inputMode="text"
               placeholder={`Query analyst about ${stock.symbol}...`}
               value={chatMessage}
               onChange={(e) => setChatMessage(e.target.value)}
-              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
             />
             <button
               type="submit"
               disabled={chatLoading}
-              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-4 transition-colors border border-brand-primary"
+              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-4 min-h-[44px] transition-colors border border-brand-primary"
             >
               EXEC
             </button>

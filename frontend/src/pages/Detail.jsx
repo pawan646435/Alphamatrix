@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Sparkles, MessageSquare, TrendingUp, AlertTriangle, ShieldCheck, Cpu, Globe, ExternalLink, ShieldAlert, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Sparkles, MessageSquare, TrendingUp, AlertTriangle, ShieldCheck, Globe, ExternalLink, ShieldAlert } from 'lucide-react';
 import { useGetFundDetail, useSyncFund, useAIChat } from '../hooks/useFunds';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import FundLogo from '../components/FundLogo';
@@ -10,10 +10,10 @@ export default function Detail() {
   const { schemeCode } = useParams();
   const navigate = useNavigate();
   const { fundDetail, loading, error, fetchDetail } = useGetFundDetail();
-  const { sync, loading: syncing, error: syncError } = useSyncFund();
+  const { sync, loading: syncing } = useSyncFund();
   
   const [chatMessage, setChatMessage] = useState('');
-  const { messages, loading: chatLoading, sendMessage, setMessages } = useAIChat();
+  const { messages, loading: chatLoading, sendMessage } = useAIChat();
 
   useEffect(() => {
     fetchDetail(schemeCode);
@@ -123,7 +123,7 @@ export default function Detail() {
   }
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Back navigation & Refresh Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in-up">
         <button
@@ -183,7 +183,7 @@ export default function Detail() {
 
       {/* Numerical Metrics Grid */}
       <div 
-        className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-4 animate-fade-in-up"
+        className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-3 sm:gap-4 animate-fade-in-up"
         style={{ animationDelay: '100ms' }}
       >
         {/* Return cards */}
@@ -387,8 +387,8 @@ export default function Detail() {
 
         {/* Contextual chat panel - moved below and expanded */}
         <div 
-          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col h-[640px] font-mono animate-fade-in-up"
-          style={{ animationDelay: '250ms' }}
+          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col font-mono animate-fade-in-up"
+          style={{ animationDelay: '250ms', minHeight: '480px', maxHeight: '640px' }}
         >
           <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex items-center gap-2 text-xs">
             <MessageSquare className="h-4 w-4 text-brand-primary" />
@@ -399,7 +399,7 @@ export default function Detail() {
           </div>
           
           {/* Chat Messages */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed">
+          <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed" style={{ minHeight: '200px' }}>
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted space-y-2">
                 <MessageSquare className="h-6 w-6 opacity-35 text-brand-primary" />
@@ -425,15 +425,16 @@ export default function Detail() {
           <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
             <input
               type="text"
+              inputMode="text"
               placeholder="Query fund parameters..."
               value={chatMessage}
               onChange={(e) => setChatMessage(e.target.value)}
-              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
             />
             <button
               type="submit"
               disabled={chatLoading}
-              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-3 transition-colors border border-brand-primary"
+              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-3 min-h-[44px] transition-colors border border-brand-primary"
             >
               EXEC
             </button>

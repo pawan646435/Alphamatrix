@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function InteractiveChart({ navHistory = [] }) {
@@ -50,7 +50,7 @@ export default function InteractiveChart({ navHistory = [] }) {
   };
 
   // Custom premium Tooltip
-  const CustomTooltip = ({ active, payload }) => {
+  const renderTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const dateVal = new Date(payload[0].payload.date).toLocaleDateString('en-IN', {
         day: '2-digit',
@@ -123,7 +123,7 @@ export default function InteractiveChart({ navHistory = [] }) {
                 axisLine={{ stroke: 'var(--border-color)' }}
                 tickFormatter={(val) => `₹${val.toFixed(0)}`}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={renderTooltip} />
               <Area 
                 type="monotone" 
                 dataKey="nav" 

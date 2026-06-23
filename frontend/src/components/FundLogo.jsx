@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 export default function FundLogo({ fundName, size = 'md' }) {
   // Extract AMC Name

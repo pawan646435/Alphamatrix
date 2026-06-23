@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 from sqlalchemy import delete
 
 from app.core.database import get_db
-from app.core.security import check_rate_limit
+from app.core.security import check_rate_limit, get_current_user_email
 from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
 from app.schemas.stock_schema import (
     StockGridItem, StockDetailResponse, StockMasterResponse, 
@@ -515,7 +515,7 @@ async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_d
 # Watchlist Management Endpoints
 
 @router.get("/watchlist", response_model=List[StockGridItem])
-async def get_watchlist(email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+async def get_watchlist(email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Get user saved watchlisted stocks.
     """
@@ -528,7 +528,7 @@ async def get_watchlist(email: str = "user@alphamatrix.io", db: AsyncSession = D
     return result.scalars().all()
 
 @router.post("/watchlist")
-async def add_to_watchlist(symbol: str, email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+async def add_to_watchlist(symbol: str, email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Add a stock symbol to user's watchlist.
     """
@@ -564,7 +564,7 @@ async def add_to_watchlist(symbol: str, email: str = "user@alphamatrix.io", db: 
     return {"status": "success", "message": f"Successfully added {symbol} to watchlist."}
 
 @router.delete("/watchlist/{symbol}")
-async def remove_from_watchlist(symbol: str, email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+async def remove_from_watchlist(symbol: str, email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Remove stock symbol from user's watchlist.
     """
@@ -596,7 +596,7 @@ async def remove_from_watchlist(symbol: str, email: str = "user@alphamatrix.io",
     return {"status": "success", "message": f"Successfully removed {symbol} from watchlist."}
 
 @router.get("/watchlist/analytics", response_model=WatchlistAnalyticsResponse, dependencies=[Depends(check_rate_limit)])
-async def get_watchlist_diagnostics(email: str = "user@alphamatrix.io", db: AsyncSession = Depends(get_db)):
+async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Analyze watchlist stocks and return portfolio diagnostics.
     """

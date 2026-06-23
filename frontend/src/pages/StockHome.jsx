@@ -1,19 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, Star, Cpu, Layers, MessageSquare, RefreshCw, Crosshair, ArrowUpRight, Activity } from 'lucide-react';
-import { useGetStocks, useSearchStocks, useStockAIChat, useMarketRegime } from '../hooks/useStocks';
+import { TrendingUp, Star, Cpu, Layers, MessageSquare, ArrowUpRight, Activity } from 'lucide-react';
+import { useGetStocks, useStockAIChat, useMarketRegime } from '../hooks/useStocks';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
-import StockLogo from '../components/StockLogo';
 import GlobalSearch from '../components/GlobalSearch';
 
 export default function StockHome() {
   const navigate = useNavigate();
-  const { stocks, loading: loadingStocks, fetchStocks } = useGetStocks();
-  const { searchResults, loading: searching, search, setSearchResults } = useSearchStocks();
+  const { stocks, fetchStocks } = useGetStocks();
   const { marketRegime, loading: regimeLoading, fetchMarketRegime } = useMarketRegime();
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
@@ -24,24 +19,8 @@ export default function StockHome() {
     fetchMarketRegime();
   }, [fetchStocks, fetchMarketRegime]);
 
-  // Debounced search trigger
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (searchQuery.trim().length >= 2) {
-        search(searchQuery);
-      } else {
-        setSearchResults([]);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [searchQuery, search, setSearchResults]);
-
   const handleSectorClick = (sector) => {
     navigate(`/stocks/sector/${sector}`);
-  };
-
-  const handleStockSelect = (symbol) => {
-    navigate(`/stocks/detail/${symbol}`);
   };
 
   const handleSendChat = (e) => {
@@ -50,11 +29,6 @@ export default function StockHome() {
     sendMessage(chatMessage, null, messages);
     setChatMessage('');
   };
-
-  // Limit suggestions
-  const visibleSuggestions = React.useMemo(() => {
-    return searchResults.slice(0, 10);
-  }, [searchResults]);
 
   // Sector list configuration
   const sectors = [
@@ -82,10 +56,10 @@ export default function StockHome() {
   }, [stocks]);
 
   return (
-    <div className="space-y-12 pb-16">
+    <div className="space-y-8 sm:space-y-12 pb-20">
       {/* Hero Display Panel */}
       <div 
-        className="relative border border-brand-border p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
+        className="relative border border-brand-border p-6 sm:p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
       >
         {/* Terminal Corner Crosshairs decoration */}
         <div className="absolute top-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [EQUITY_SYS]</div>
@@ -115,7 +89,7 @@ export default function StockHome() {
       </div>
 
       {/* Analytics Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
         <div className="terminal-card flex items-center gap-4 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
           <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
             <Layers className="h-4 w-4" />
@@ -206,13 +180,13 @@ export default function StockHome() {
         </div>
 
         {/* Scatterplot */}
-        <div className="lg:col-span-7 h-[420px] animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+        <div className="lg:col-span-7 h-[300px] sm:h-[420px] animate-fade-in-up" style={{ animationDelay: '300ms' }}>
           <StockRiskScatterplot stocks={stocks} />
         </div>
       </div>
 
       {/* Floating AI Chat Assistant Drawer */}
-      <div className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ${chatOpen ? 'w-[360px] h-[480px]' : 'w-12 h-12'}`}>
+      <div className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 transition-all duration-300 ${chatOpen ? 'w-[calc(100vw-32px)] sm:w-[360px] h-[480px]' : 'w-12 h-12'}`}>
         {chatOpen ? (
           <div className="w-full h-full bg-brand-surface border border-brand-border shadow-2xl flex flex-col overflow-hidden font-mono">
             {/* Header */}
@@ -269,15 +243,16 @@ export default function StockHome() {
             <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
               <input
                 type="text"
+                inputMode="text"
                 placeholder="Ask about TCS vs Infosys, etc..."
                 value={chatMessage}
                 onChange={(e) => setChatMessage(e.target.value)}
-                className="flex-1 bg-brand-surface border border-brand-border px-3 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+                className="flex-1 bg-brand-surface border border-brand-border px-3 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
               />
               <button
                 type="submit"
                 disabled={chatLoading}
-                className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-3 py-1.5 transition-colors border border-brand-primary"
+                className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-3 min-h-[44px] transition-colors border border-brand-primary"
               >
                 EXEC
               </button>

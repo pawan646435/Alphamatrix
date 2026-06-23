@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Filter, Search, ChevronDown, ChevronUp, Sparkles, MessageCircle, AlertCircle, RefreshCw, Layers } from 'lucide-react';
+import { Filter, ChevronDown, ChevronUp, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
 import { useGetFunds, useSemanticQuery } from '../hooks/useFunds';
 import FundLogo from '../components/FundLogo';
 
@@ -13,7 +13,7 @@ export default function Explorer() {
   const [category, setCategory] = useState(categoryParam || '');
   const [minCagr1y, setMinCagr1y] = useState('');
   const [minCagr, setMinCagr] = useState('');
-  const [maxExpense, setMaxExpense] = useState('');
+  const [maxExpense] = useState('');
   const [minSharpe, setMinSharpe] = useState('');
   const [maxPe, setMaxPe] = useState('');
   
@@ -39,7 +39,7 @@ export default function Explorer() {
   // Load initial parameters or change parameters
   useEffect(() => {
     if (categoryParam) {
-      setCategory(categoryParam);
+      setTimeout(() => setCategory(categoryParam), 0);
     }
   }, [categoryParam]);
 
@@ -60,7 +60,7 @@ export default function Explorer() {
 
   useEffect(() => {
     if (!usingSemantic) {
-      loadFunds();
+      setTimeout(() => loadFunds(), 0);
     }
   }, [loadFunds, usingSemantic]);
 
@@ -104,7 +104,7 @@ export default function Explorer() {
   const isLoading = standardLoading || aiLoading;
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Title */}
       <div className="flex justify-between items-end border-b border-brand-border pb-4 animate-fade-in-up">
         <div>
@@ -132,12 +132,12 @@ export default function Explorer() {
               placeholder='e.g., "high-yield mid caps with low risk" or "small caps with sharpe > 1.2"'
               value={semanticQueryText}
               onChange={(e) => setSemanticQueryText(e.target.value)}
-              className="flex-1 bg-brand-bg border border-brand-border rounded-none px-4 py-2.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+              className="flex-1 bg-brand-bg border border-brand-border rounded-none px-4 py-2.5 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
             />
             <button
               type="submit"
               disabled={isLoading}
-              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-5 py-2.5 transition-colors flex items-center gap-1.5 shrink-0 border border-brand-primary"
+              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-5 py-2.5 min-h-[44px] transition-colors flex items-center gap-1.5 shrink-0 border border-brand-primary"
             >
               Parse & Query
             </button>
@@ -183,7 +183,7 @@ export default function Explorer() {
               <select
                 value={category}
                 onChange={(e) => { setCategory(e.target.value); setUsingSemantic(false); }}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               >
                 <option value="">All Categories</option>
                 <option value="Large Cap">Large Cap</option>
@@ -201,7 +201,7 @@ export default function Explorer() {
                 placeholder="e.g. 10"
                 value={minCagr1y}
                 onChange={(e) => { setMinCagr1y(e.target.value); setUsingSemantic(false); }}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -212,7 +212,7 @@ export default function Explorer() {
                 placeholder="e.g. 15"
                 value={minCagr}
                 onChange={(e) => { setMinCagr(e.target.value); setUsingSemantic(false); }}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -224,7 +224,7 @@ export default function Explorer() {
                 placeholder="e.g. 1.0"
                 value={minSharpe}
                 onChange={(e) => { setMinSharpe(e.target.value); setUsingSemantic(false); }}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
 
@@ -235,7 +235,7 @@ export default function Explorer() {
                 placeholder="e.g. 25"
                 value={maxPe}
                 onChange={(e) => { setMaxPe(e.target.value); setUsingSemantic(false); }}
-                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-1.5 text-[10px] text-black dark:text-white focus:outline-none"
+                className="w-full bg-brand-bg border border-brand-border rounded-none px-2.5 py-2 min-h-[40px] text-[10px] text-black dark:text-white focus:outline-none"
               />
             </div>
           </div>

@@ -46,7 +46,7 @@ export default function RiskScatterplot({ funds = [] }) {
   }, [data]);
 
   // Custom scatter Tooltip
-  const CustomTooltip = ({ active, payload }) => {
+  const renderTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const info = payload[0].payload;
       return (
@@ -109,7 +109,7 @@ export default function RiskScatterplot({ funds = [] }) {
                 <Label value="3-Year CAGR (%)" angle={-90} position="insideLeft" fill="var(--text-muted)" fontSize={11} dx={-10} />
               </YAxis>
               <ZAxis type="number" dataKey="z" range={[50, 450]} />
-              <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: 'var(--border-color)' }} />
+              <Tooltip content={renderTooltip} cursor={{ strokeDasharray: '3:3', stroke: 'var(--border-color)' }} />
               {groupedData.map((group) => (
                 <Scatter
                   key={group.category}

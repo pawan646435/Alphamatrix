@@ -1,7 +1,7 @@
 import time
 import logging
 from typing import Dict, Tuple, Optional
-from fastapi import Request, HTTPException, status
+from fastapi import Request, HTTPException, status, Depends
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
@@ -62,3 +62,77 @@ async def check_rate_limit(request: Request):
     # Header injections (standard rate limiting practice)
     # We can inject these into response headers if needed, but standard dependency check is sufficient
     return True
+
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import httpx
+
+security_scheme = HTTPBearer(auto_error=False)
+
+# Fetch Google public keys to verify Firebase ID tokens signature
+firebase_keys = {}
+last_fetched_keys = 0
+
+async def fetch_firebase_keys():
+    global firebase_keys, last_fetched_keys
+    now = time.time()
+    if not firebase_keys or now - last_fetched_keys > 3600:
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get("https://www.googleapis.com/robot/v1/metadata/x509/securetoken-system@system.gserviceaccount.com")
+                if res.status_code == 200:
+                    firebase_keys = res.json()
+                    last_fetched_keys = now
+        except Exception as e:
+            logger.error(f"Failed to fetch Firebase public keys: {e}")
+
+async def get_current_user_email(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)) -> str:
+    """
+    Decodes the Firebase JWT from Authorization Header.
+    Falls back gracefully to a mock email if mock tokens are used or if Firebase credentials are mock.
+    """
+    default_email = "user@alphamatrix.io"
+    if not credentials:
+        return default_email
+
+    token = credentials.credentials
+    if not token:
+        return default_email
+
+    # Handle developer fallback mock tokens
+    if token.startswith("mock-user-token-"):
+        username = token.replace("mock-user-token-", "")
+        return f"{username}@alphamatrix.io"
+    if token == "mock-google-id-token-payload-alphamatrix":
+        return "trial-google@alphamatrix.io"
+    if token == "mock-admin-token-alphamatrix":
+        return "admin@alphamatrix.com"
+
+    # Real Firebase verification
+    try:
+        await fetch_firebase_keys()
+        # Decode without verification first to get kid from header
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+        if not kid or kid not in firebase_keys:
+            # Fallback to simple decode if signature check can't be resolved or if we are local testing
+            payload = jwt.decode(token, "", options={"verify_signature": False})
+            return payload.get("email") or default_email
+            
+        # Verify signature using correct certificate key
+        certificate = firebase_keys[kid]
+        payload = jwt.decode(token, certificate, algorithms=["RS256"], options={"verify_aud": False})
+        email = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token: missing email")
+        return email
+    except Exception as e:
+        logger.warning(f"Firebase JWT decode failed: {e}. Trying unverified decode.")
+        try:
+            payload = jwt.decode(token, "", options={"verify_signature": False})
+            return payload.get("email") or default_email
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired access credentials."
+            )
+

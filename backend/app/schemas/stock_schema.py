@@ -39,7 +39,7 @@ class StockMasterResponse(StockMasterBase):
     cagr_5y: Optional[float] = None
     alpha_score: Optional[float] = None
     ai_summary: Optional[str] = None
-    last_updated: datetime
+    last_updated: Optional[datetime] = None
     
     model_config = ConfigDict(from_attributes=True)
 

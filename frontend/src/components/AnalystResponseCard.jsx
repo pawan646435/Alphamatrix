@@ -11,7 +11,6 @@
  * User messages stay as compact right-aligned query chips.
  */
 
-import React from 'react';
 import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
 
 // ─── Metric extraction ───────────────────────────────────────────────────────
@@ -27,7 +26,7 @@ const METRIC_PATTERNS = [
   { label: 'Sharpe',       regex: /\bSharpe(?:\s*Ratio)?[:\s]+([0-9.]+)/i },
   { label: 'Sortino',      regex: /\bSortino(?:\s*Ratio)?[:\s]+([0-9.]+)/i },
   { label: 'Expense',      regex: /Expense\s*Ratio[:\s]+([0-9.]+)%?/i },
-  { label: 'Debt/Equity',  regex: /Debt[\/\s]*Equity[:\s]+([0-9.]+)/i },
+  { label: 'Debt/Equity',  regex: /Debt[/\s]*Equity[:\s]+([0-9.]+)/i },
 ];
 
 function extractMetrics(text) {
@@ -90,13 +89,13 @@ function parseSections(text) {
   }
 
   // Mode B: **Label:** semi-structured headers at line start
-  if (/^\*\*[A-Z][^*\n]+[\*:]/m.test(text)) {
+  if (/^\*\*[A-Z][^*\n]+[*:]/m.test(text)) {
     const parts = text.split(/(?=^\*\*[A-Z][^*\n]+\*\*)/m);
     return parts.filter((p) => p.trim()).map((part) => {
       const match = part.match(/^\*\*([^*\n]+)\*\*[:\s]*([\s\S]*)/);
       if (match) {
         return {
-          title:   match[1].replace(/:$/, '').trim(),
+          title: match[1].replace(/[*_~`#>-]/g, '').trim(),
           content: match[2].trim(),
         };
       }

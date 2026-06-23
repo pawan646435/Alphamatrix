@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function StockComparisonChart({ 
@@ -97,7 +97,7 @@ export default function StockComparisonChart({
     }
   };
 
-  const CustomTooltip = ({ active, payload }) => {
+  const renderTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const dataPoint = payload[0].payload;
       const dateVal = new Date(dataPoint.date).toLocaleDateString('en-IN', {
@@ -147,7 +147,7 @@ export default function StockComparisonChart({
             <button
               key={r}
               onClick={() => setRange(r)}
-              className={`flex-1 sm:flex-none px-3 py-1.5 text-[10px] font-bold rounded-md transition-all ${
+              className={`flex-1 sm:flex-none px-3 py-2 min-h-[36px] text-[10px] font-bold rounded-md transition-all ${
                 range === r
                   ? 'bg-brand-primary text-black shadow-md'
                   : 'text-brand-textMuted hover:text-black dark:hover:text-white hover:bg-brand-border'
@@ -159,7 +159,7 @@ export default function StockComparisonChart({
         </div>
       </div>
 
-      <div className="h-[350px] w-full">
+      <div className="h-[280px] sm:h-[350px] w-full">
         {filteredData.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={filteredData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -178,7 +178,7 @@ export default function StockComparisonChart({
                 axisLine={{ stroke: 'var(--border-color)' }}
                 tickFormatter={(val) => `${val.toFixed(0)}%`}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={renderTooltip} />
               <Line 
                 type="monotone" 
                 dataKey="norm1" 

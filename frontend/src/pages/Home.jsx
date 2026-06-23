@@ -1,18 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, ShieldAlert, BookOpen, Layers, MessageSquare, RefreshCw, Star, Cpu, Crosshair } from 'lucide-react';
-import { useGetFunds, useSearchFunds, useAIChat } from '../hooks/useFunds';
+import { TrendingUp, Layers, MessageSquare, Star, Cpu } from 'lucide-react';
+import { useGetFunds, useAIChat } from '../hooks/useFunds';
 import RiskScatterplot from '../components/charts/RiskScatterplot';
-import FundLogo from '../components/FundLogo';
 import GlobalSearch from '../components/GlobalSearch';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { funds, loading: loadingFunds, fetchFunds } = useGetFunds();
-  const { searchResults, loading: searching, search, setSearchResults } = useSearchFunds();
+  const { funds, fetchFunds } = useGetFunds();
   
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
@@ -22,24 +18,8 @@ export default function Home() {
     fetchFunds();
   }, [fetchFunds]);
 
-  // Debounced search trigger
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (searchQuery.trim().length >= 3) {
-        search(searchQuery);
-      } else {
-        setSearchResults([]);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [searchQuery, search, setSearchResults]);
-
   const handleCategoryClick = (category) => {
     navigate(`/explorer?category=${encodeURIComponent(category)}`);
-  };
-
-  const handleFundSelect = (schemeCode) => {
-    navigate(`/detail/${schemeCode}`);
   };
 
   const handleSendChat = (e) => {
@@ -48,11 +28,6 @@ export default function Home() {
     sendMessage(chatMessage, null, messages);
     setChatMessage('');
   };
-
-  // Limit suggestions to top 10 for lazy rendering / DOM efficiency
-  const visibleSuggestions = React.useMemo(() => {
-    return searchResults.slice(0, 10);
-  }, [searchResults]);
 
   // High-level cards details
   const segments = [
@@ -79,10 +54,10 @@ export default function Home() {
   }, [funds]);
 
   return (
-    <div className="space-y-12 pb-16">
+    <div className="space-y-8 sm:space-y-12 pb-20">
       {/* Hero Display Panel */}
       <div 
-        className="relative border border-brand-border p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
+        className="relative border border-brand-border p-6 sm:p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
       >
         {/* Terminal Corner Crosshairs decoration */}
         <div className="absolute top-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [MATRIX_SYS]</div>
@@ -188,7 +163,7 @@ export default function Home() {
 
         {/* Scatterplot */}
         <div 
-          className="lg:col-span-7 h-[420px] animate-fade-in-up"
+          className="lg:col-span-7 h-[300px] sm:h-[420px] animate-fade-in-up"
           style={{ animationDelay: '300ms' }}
         >
           <RiskScatterplot funds={funds} />
@@ -196,7 +171,7 @@ export default function Home() {
       </div>
 
       {/* Floating AI Chat Assistant Drawer */}
-      <div className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ${chatOpen ? 'w-[360px] h-[480px]' : 'w-12 h-12'}`}>
+      <div className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 transition-all duration-300 ${chatOpen ? 'w-[calc(100vw-32px)] sm:w-[360px] h-[480px]' : 'w-12 h-12'}`}>
         {chatOpen ? (
           <div className="w-full h-full bg-brand-surface border border-brand-border shadow-2xl flex flex-col overflow-hidden font-mono">
             {/* Header */}
@@ -253,15 +228,16 @@ export default function Home() {
             <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
               <input
                 type="text"
+                inputMode="text"
                 placeholder="Query system database..."
                 value={chatMessage}
                 onChange={(e) => setChatMessage(e.target.value)}
-                className="flex-1 bg-brand-surface border border-brand-border px-3 py-1.5 text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
+                className="flex-1 bg-brand-surface border border-brand-border px-3 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
               />
               <button
                 type="submit"
                 disabled={chatLoading}
-                className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-3 py-1.5 transition-colors border border-brand-primary"
+                className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-3 min-h-[44px] transition-colors border border-brand-primary"
               >
                 EXEC
               </button>
