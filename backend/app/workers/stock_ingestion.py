@@ -1,7 +1,7 @@
 import logging
 import random
 from datetime import datetime, date, timedelta
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
