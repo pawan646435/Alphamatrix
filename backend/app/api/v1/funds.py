@@ -18,21 +18,11 @@ from app.schemas.fund_schema import (
 from app.workers.ingestion import ingest_fund
 from app.workers.cron_jobs import run_overnight_sync
 
-import redis
 from app.core.config import settings
+from app.core.redis import redis_client
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.funds")
-
-# Initialize Redis client if REDIS_URL is configured
-redis_client = None
-if settings.REDIS_URL:
-    try:
-        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        redis_client.ping()
-        logger.info("Connected to Redis successfully for API caching.")
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis for API caching: {e}")
 
 # In-memory cache for all Indian mutual funds search
 MF_MASTER_LIST = []
@@ -179,14 +169,13 @@ async def get_fund_detail(
     Self-healing: If the fund doesn't exist in DB, triggers on-demand ingestion.
     """
     cache_key = f"fund_detail:{scheme_code}"
-    if redis_client:
-        try:
-            cached_data = redis_client.get(cache_key)
-            if cached_data:
-                logger.info(f"Returning cached fund details for {scheme_code}")
-                return json.loads(cached_data)
-        except Exception as e:
-            logger.error(f"Redis get failed for key {cache_key}: {e}")
+    try:
+        cached_data = await redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Returning cached fund details for {scheme_code}")
+            return json.loads(cached_data)
+    except Exception as e:
+        logger.error(f"Redis get failed for key {cache_key}: {e}")
 
     # Check if fund exists
     fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
@@ -221,11 +210,10 @@ async def get_fund_detail(
         await db.refresh(fund)
         
         # Invalidate cache so that cached response reflects the loading status
-        if redis_client:
-            try:
-                redis_client.delete(cache_key)
-            except Exception as e:
-                logger.error(f"Failed to clear Redis cache on summary status change: {e}")
+        try:
+            await redis_client.delete(cache_key)
+        except Exception as e:
+            logger.error(f"Failed to clear Redis cache on summary status change: {e}")
                 
         background_tasks.add_task(generate_summary_background, scheme_code)
 
@@ -260,13 +248,12 @@ async def get_fund_detail(
     }
     
     # Store response in Redis cache (1 hour expiry, or 5 seconds if loading)
-    if redis_client:
-        try:
-            ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else 3600
-            redis_client.setex(cache_key, ttl, json.dumps(response_data))
-            logger.info(f"Cached fund details for {scheme_code} in Redis with TTL={ttl}s")
-        except Exception as e:
-            logger.error(f"Redis set failed for key {cache_key}: {e}")
+    try:
+        ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else 3600
+        await redis_client.setex(cache_key, ttl, json.dumps(response_data))
+        logger.info(f"Cached fund details for {scheme_code} in Redis with TTL={ttl}s")
+    except Exception as e:
+        logger.error(f"Redis set failed for key {cache_key}: {e}")
             
     return response_data
 
@@ -280,12 +267,11 @@ async def sync_fund_manual(
     Manually trigger sync and metrics computation for a specific fund.
     """
     # Invalidate cache
-    if redis_client:
-        try:
-            redis_client.delete(f"fund_detail:{scheme_code}")
-            logger.info(f"Invalidated Redis cache for manual sync of {scheme_code}")
-        except Exception as e:
-            logger.error(f"Failed to delete Redis cache key for {scheme_code}: {e}")
+    try:
+        await redis_client.delete(f"fund_detail:{scheme_code}")
+        logger.info(f"Invalidated Redis cache for manual sync of {scheme_code}")
+    except Exception as e:
+        logger.error(f"Failed to delete Redis cache key for {scheme_code}: {e}")
             
     try:
         res = await ingest_fund(db, scheme_code, force_recompute=True, background_tasks=background_tasks)

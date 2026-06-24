@@ -8,23 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import text
 
-from app.core.database import get_db
+from app.core.database import get_db, is_sqlite
 from app.core.security import check_rate_limit
 from app.models.stock import StockMaster
 from app.api.v1 import funds
-import redis
 from app.core.config import settings
+from app.services.cache_service import CacheService
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.search")
-
-# Initialize Redis client if REDIS_URL is configured
-redis_client = None
-if settings.REDIS_URL:
-    try:
-        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis for Search caching: {e}")
 
 
 def calculate_relevance_score(query_clean: str, item_type: str, item: dict) -> float:
@@ -90,60 +82,35 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
     if not query_clean or len(query_clean) < 2:
         return []
         
-    cache_key = f"global_search:{type or 'all'}:{query_clean}"
-    if redis_client:
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception as e:
-            logger.error(f"Redis get global search failed: {e}")
+    # Read search results from CacheService
+    cached_results = await CacheService.get_search(query_clean, type)
+    if cached_results is not None:
+        return cached_results
 
     stock_results = []
     fund_results = []
     
-    # Construct prefix FTS5 search query
-    escaped_query = query_clean.replace('"', '""')
-    words = [w for w in escaped_query.split() if w]
-    fts_query = " ".join([f"{w}*" for w in words]) if words else ""
-
     search_stocks = (type is None or type == "stock")
     search_funds = (type is None or type == "fund")
 
-    # 1. Search Stocks
-    if search_stocks and fts_query:
-        try:
-            # Query FTS5 index joined with stock_masters to get sector
-            stock_q = await db.execute(
-                text("""
-                    SELECT s.symbol, s.company_name, m.sector
-                    FROM stock_search_index s
-                    JOIN stock_masters m ON s.symbol = m.symbol
-                    WHERE s.stock_search_index MATCH :q
-                    LIMIT 100
-                """),
-                {"q": fts_query}
-            )
-            stocks = stock_q.all()
-            for s in stocks:
-                stock_results.append({
-                    "type": "stock",
-                    "symbol": s.symbol,
-                    "name": s.company_name,
-                    "sector": s.sector
-                })
-        except Exception as e:
-            logger.error(f"Stock FTS5 search failed, falling back: {e}")
-            # Fallback to standard LIKE
+    if is_sqlite:
+        # Construct prefix FTS5 search query
+        escaped_query = query_clean.replace('"', '""')
+        words = [w for w in escaped_query.split() if w]
+        fts_query = " ".join([f"{w}*" for w in words]) if words else ""
+
+        # 1. Search Stocks via SQLite FTS5
+        if search_stocks and fts_query:
             try:
-                q_wild = f"%{query_clean}%"
                 stock_q = await db.execute(
-                    select(StockMaster.symbol, StockMaster.company_name, StockMaster.sector)
-                    .where(
-                        (StockMaster.symbol.ilike(q_wild)) |
-                        (StockMaster.company_name.ilike(q_wild))
-                    )
-                    .limit(100)
+                    text("""
+                        SELECT s.symbol, s.company_name, m.sector
+                        FROM stock_search_index s
+                        JOIN stock_masters m ON s.symbol = m.symbol
+                        WHERE s.stock_search_index MATCH :q
+                        LIMIT 100
+                    """),
+                    {"q": fts_query}
                 )
                 for s in stock_q.all():
                     stock_results.append({
@@ -152,50 +119,76 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
                         "name": s.company_name,
                         "sector": s.sector
                     })
-            except Exception as fallback_err:
-                logger.error(f"Stock search fallback failed: {fallback_err}")
+            except Exception as e:
+                logger.error(f"SQLite Stock FTS5 search failed: {e}")
 
-    # 2. Search Mutual Funds
-    if search_funds and fts_query:
-        try:
-            # Query FTS5 virtual table
-            fund_q = await db.execute(
-                text("""
-                    SELECT scheme_code, scheme_name 
-                    FROM fund_search_index 
-                    WHERE fund_search_index MATCH :q
-                    LIMIT 100
-                """),
-                {"q": fts_query}
-            )
-            funds_res = fund_q.all()
-            for f in funds_res:
-                fund_results.append({
-                    "type": "fund",
-                    "scheme_code": int(f.scheme_code),
-                    "name": f.scheme_name
-                })
-        except Exception as e:
-            logger.error(f"Fund FTS5 search failed, falling back: {e}")
-            # Fallback to in-memory cache scan
+        # 2. Search Mutual Funds via SQLite FTS5
+        if search_funds and fts_query:
             try:
-                await funds.load_master_list_if_empty()
-                if funds.MF_MASTER_LIST:
-                    count = 0
-                    for item in funds.MF_MASTER_LIST:
-                        name = item.get("schemeName", "")
-                        code = str(item.get("schemeCode", ""))
-                        if query_clean in name.lower() or query_clean in code:
-                            fund_results.append({
-                                "type": "fund",
-                                "scheme_code": item.get("schemeCode"),
-                                "name": name
-                            })
-                            count += 1
-                            if count >= 100:
-                                break
-            except Exception as fallback_err:
-                logger.error(f"Fund search fallback failed: {fallback_err}")
+                fund_q = await db.execute(
+                    text("""
+                        SELECT scheme_code, scheme_name 
+                        FROM fund_search_index 
+                        WHERE fund_search_index MATCH :q
+                        LIMIT 100
+                    """),
+                    {"q": fts_query}
+                )
+                for f in fund_q.all():
+                    fund_results.append({
+                        "type": "fund",
+                        "scheme_code": int(f.scheme_code),
+                        "name": f.scheme_name
+                    })
+            except Exception as e:
+                logger.error(f"SQLite Fund FTS5 search failed: {e}")
+    else:
+        # PostgreSQL ILIKE search with Trigram indexes
+        # 1. Search Stocks
+        if search_stocks:
+            try:
+                q_wild = f"%{query_clean}%"
+                stock_q = await db.execute(
+                    text("""
+                        SELECT s.symbol, s.company_name, m.sector
+                        FROM stock_search_index s
+                        JOIN stock_masters m ON s.symbol = m.symbol
+                        WHERE s.symbol ILIKE :q OR s.company_name ILIKE :q
+                        LIMIT 100
+                    """),
+                    {"q": q_wild}
+                )
+                for s in stock_q.all():
+                    stock_results.append({
+                        "type": "stock",
+                        "symbol": s.symbol,
+                        "name": s.company_name,
+                        "sector": s.sector
+                    })
+            except Exception as e:
+                logger.error(f"PostgreSQL Stock search failed: {e}")
+
+        # 2. Search Mutual Funds
+        if search_funds:
+            try:
+                q_wild = f"%{query_clean}%"
+                fund_q = await db.execute(
+                    text("""
+                        SELECT scheme_code, scheme_name 
+                        FROM fund_search_index 
+                        WHERE scheme_code ILIKE :q OR scheme_name ILIKE :q
+                        LIMIT 100
+                    """),
+                    {"q": q_wild}
+                )
+                for f in fund_q.all():
+                    fund_results.append({
+                        "type": "fund",
+                        "scheme_code": int(f.scheme_code),
+                        "name": f.scheme_name
+                    })
+            except Exception as e:
+                logger.error(f"PostgreSQL Fund search failed: {e}")
 
     # Compute relevance scores and sort
     for s in stock_results:
@@ -217,7 +210,6 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
     results = stock_results_sliced + fund_results_sliced
 
     # 3. Dynamic ticker suggestion for stocks context
-    #    Only run if we are in stock/all search context, have no stock matches, and query looks like a symbol
     no_stocks = not stock_results_sliced
     looks_like_ticker = len(query_clean) <= 15 and " " not in query_clean
 
@@ -255,11 +247,8 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
         except Exception as e:
             logger.debug(f"yfinance quick-check failed for {ticker_upper}: {e}")
 
-    if redis_client and results:
-        try:
-            redis_client.setex(cache_key, 600, json.dumps(results))
-        except Exception as e:
-            logger.error(f"Redis set global search failed: {e}")
+    # Cache results in Redis
+    await CacheService.set_search(query_clean, type, results)
 
     return results
 

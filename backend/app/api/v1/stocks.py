@@ -16,8 +16,8 @@ from app.schemas.stock_schema import (
 )
 from app.schemas.ai_schema import AIChatRequest, AIChatResponse, ChatMessage
 
-import redis
 from app.core.config import settings
+from app.core.redis import redis_client
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.stocks")
@@ -91,15 +91,7 @@ class MockStock:
         self.beta = d.get("beta")
         self.alpha_score = d.get("alpha_score", 50)
 
-# Initialize Redis client if REDIS_URL is configured
-redis_client = None
-if settings.REDIS_URL:
-    try:
-        redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        redis_client.ping()
-        logger.info("Connected to Redis successfully for Stocks API caching.")
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis for Stocks API caching: {e}")
+# Redis client is imported from app.core.redis
 
 async def generate_briefing_background(symbol: str):
     """
@@ -205,19 +197,16 @@ async def generate_briefing_background(symbol: str):
             await session.commit()
             
             # Invalidate Redis cache
-            if settings.REDIS_URL:
-                try:
-                    import redis
-                    r = redis.from_url(settings.REDIS_URL)
-                    r.delete(
-                        f"stock_detail:{symbol}", 
-                        f"stock_master:{symbol}", 
-                        f"stock_briefing:{symbol}", 
-                        f"stock_history:{symbol}"
-                    )
-                    logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
-                except Exception as cache_err:
-                    logger.error(f"Failed to invalidate Redis cache for stock {symbol}: {cache_err}")
+            try:
+                await redis_client.delete(
+                    f"stock_detail:{symbol}", 
+                    f"stock_master:{symbol}", 
+                    f"stock_briefing:{symbol}", 
+                    f"stock_history:{symbol}"
+                )
+                logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
+            except Exception as cache_err:
+                logger.error(f"Failed to invalidate Redis cache for stock {symbol}: {cache_err}")
             logger.info(f"Background AI briefing generated successfully for stock {symbol}")
         except Exception as e:
             logger.error(f"Error in background briefing task for stock {symbol}: {e}")
@@ -228,13 +217,12 @@ async def search_stocks(query: str, db: AsyncSession = Depends(get_db)):
     Search seeded stocks by symbol or company name.
     """
     cache_key = f"stock_search:{query.strip().lower()}"
-    if redis_client:
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception as e:
-            logger.error(f"Redis get search failed: {e}")
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get search failed: {e}")
 
     # Query DB
     q_lower = f"%{query.strip().lower()}%"
@@ -253,11 +241,10 @@ async def search_stocks(query: str, db: AsyncSession = Depends(get_db)):
         for s in stocks
     ]
     
-    if redis_client:
-        try:
-            redis_client.setex(cache_key, 600, json.dumps(response_data)) # Cache search results for 10 mins
-        except Exception as e:
-            logger.error(f"Redis set search failed: {e}")
+    try:
+        await redis_client.setex(cache_key, 600, json.dumps(response_data)) # Cache search results for 10 mins
+    except Exception as e:
+        logger.error(f"Redis set search failed: {e}")
             
     return response_data
 
@@ -322,13 +309,12 @@ async def get_stock_detail(
     cached_history = None
     cached_briefing = None
     
-    if redis_client:
-        try:
-            cached_master = redis_client.get(f"stock_master:{symbol}")
-            cached_history = redis_client.get(f"stock_history:{symbol}")
-            cached_briefing = redis_client.get(f"stock_briefing:{symbol}")
-        except Exception as e:
-            logger.error(f"Redis get split detail failed: {e}")
+    try:
+        cached_master = await redis_client.get(f"stock_master:{symbol}")
+        cached_history = await redis_client.get(f"stock_history:{symbol}")
+        cached_briefing = await redis_client.get(f"stock_briefing:{symbol}")
+    except Exception as e:
+        logger.error(f"Redis get split detail failed: {e}")
             
     # Reconstruct from cache if all exist and briefing is not generating placeholder
     if cached_master and cached_history and cached_briefing:
@@ -396,12 +382,11 @@ async def get_stock_detail(
             .order_by(StockPriceHistory.date.desc())
         )
         prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
-        if redis_client:
-            try:
-                # Cache history for 24h
-                redis_client.setex(f"stock_history:{symbol}", 86400, json.dumps(prices))
-            except Exception as e:
-                logger.error(f"Redis set history failed: {e}")
+        try:
+            # Cache history for 24h
+            await redis_client.setex(f"stock_history:{symbol}", 86400, json.dumps(prices))
+        except Exception as e:
+            logger.error(f"Redis set history failed: {e}")
                 
     master_dict = {
         "symbol": stock.symbol,
@@ -425,22 +410,20 @@ async def get_stock_detail(
     
     if trigger_background:
         # Delete briefing and master cache to reflect "Generating..." state
-        if redis_client:
-            try:
-                redis_client.delete(f"stock_master:{symbol}", f"stock_briefing:{symbol}")
-            except Exception as e:
-                logger.error(f"Failed to clear Redis keys for briefing status: {e}")
+        try:
+            await redis_client.delete(f"stock_master:{symbol}", f"stock_briefing:{symbol}")
+        except Exception as e:
+            logger.error(f"Failed to clear Redis keys for briefing status: {e}")
         background_tasks.add_task(generate_briefing_background, symbol)
         
     # Set cache for master (without AI summary, TTL 6h)
-    if redis_client:
-        try:
-            redis_client.setex(f"stock_master:{symbol}", 21600, json.dumps(master_dict))
-            # Cache briefing (TTL 24h if real, 5s if generating)
-            briefing_ttl = 5 if trigger_background else 86400
-            redis_client.setex(f"stock_briefing:{symbol}", briefing_ttl, stock.ai_summary)
-        except Exception as e:
-            logger.error(f"Redis set split cache failed: {e}")
+    try:
+        await redis_client.setex(f"stock_master:{symbol}", 21600, json.dumps(master_dict))
+        # Cache briefing (TTL 24h if real, 5s if generating)
+        briefing_ttl = 5 if trigger_background else 86400
+        await redis_client.setex(f"stock_briefing:{symbol}", briefing_ttl, stock.ai_summary)
+    except Exception as e:
+        logger.error(f"Redis set split cache failed: {e}")
             
     # Return response including ai_summary
     master_response = dict(master_dict)
@@ -555,11 +538,10 @@ async def add_to_watchlist(symbol: str, email: str = Depends(get_current_user_em
     await db.commit()
     
     # Invalidate watchlist analytics cache
-    if redis_client:
-        try:
-            redis_client.delete(f"watchlist_analytics:{email}")
-        except Exception as e:
-            logger.error(f"Failed to clear watchlist cache: {e}")
+    try:
+        await redis_client.delete(f"watchlist_analytics:{email}")
+    except Exception as e:
+        logger.error(f"Failed to clear watchlist cache: {e}")
             
     return {"status": "success", "message": f"Successfully added {symbol} to watchlist."}
 
@@ -587,11 +569,10 @@ async def remove_from_watchlist(symbol: str, email: str = Depends(get_current_us
     await db.commit()
     
     # Invalidate cache
-    if redis_client:
-        try:
-            redis_client.delete(f"watchlist_analytics:{email}")
-        except Exception as e:
-            logger.error(f"Failed to clear watchlist cache: {e}")
+    try:
+        await redis_client.delete(f"watchlist_analytics:{email}")
+    except Exception as e:
+        logger.error(f"Failed to clear watchlist cache: {e}")
             
     return {"status": "success", "message": f"Successfully removed {symbol} from watchlist."}
 
@@ -601,13 +582,12 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
     Analyze watchlist stocks and return portfolio diagnostics.
     """
     cache_key = f"watchlist_analytics:{email}"
-    if redis_client:
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception as e:
-            logger.error(f"Redis get diagnostics failed: {e}")
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get diagnostics failed: {e}")
 
     # Fetch all stocks in watchlist
     query = (
@@ -647,11 +627,10 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
     from app.services.ai_agent import generate_watchlist_analytics
     diagnostics = await generate_watchlist_analytics(stocks_list)
     
-    if redis_client:
-        try:
-            redis_client.setex(cache_key, 1800, json.dumps(diagnostics)) # Cache diagnostics for 30 mins
-        except Exception as e:
-            logger.error(f"Redis set diagnostics failed: {e}")
+    try:
+        await redis_client.setex(cache_key, 1800, json.dumps(diagnostics)) # Cache diagnostics for 30 mins
+    except Exception as e:
+        logger.error(f"Redis set diagnostics failed: {e}")
             
     return diagnostics
 
@@ -663,13 +642,12 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
     Get sector details, score, drivers, risks, top companies, and AI sector outlook.
     """
     cache_key = f"sector_details:{sector.lower()}"
-    if redis_client:
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception as e:
-            logger.error(f"Redis get sector failed: {e}")
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get sector failed: {e}")
 
     # Query all seeded stocks in this sector
     result = await db.execute(
@@ -711,11 +689,10 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
         "ai_outlook": outlook.get("ai_outlook", "")
     }
     
-    if redis_client:
-        try:
-            redis_client.setex(cache_key, 86400, json.dumps(response_data, default=str)) # Cache for 24 hours
-        except Exception as e:
-            logger.error(f"Redis set sector failed: {e}")
+    try:
+        await redis_client.setex(cache_key, 86400, json.dumps(response_data, default=str)) # Cache for 24 hours
+    except Exception as e:
+        logger.error(f"Redis set sector failed: {e}")
             
     return response_data
 
@@ -760,7 +737,7 @@ async def compare_stocks(s1: str, s2: str, db: AsyncSession = Depends(get_db)):
     comparison_verdict = None
     if redis_client:
         try:
-            comparison_verdict = redis_client.get(cache_key)
+            comparison_verdict = await redis_client.get(cache_key)
         except Exception as e:
             logger.error(f"Redis get comparison verdict failed: {e}")
             
@@ -797,7 +774,7 @@ async def compare_stocks(s1: str, s2: str, db: AsyncSession = Depends(get_db)):
         comparison_verdict = await generate_stock_comparison(s1_dict, s2_dict)
         if redis_client:
             try:
-                redis_client.setex(cache_key, 86400, comparison_verdict)
+                await redis_client.setex(cache_key, 86400, comparison_verdict)
             except Exception as e:
                 logger.error(f"Redis set comparison verdict failed: {e}")
                 
@@ -826,7 +803,7 @@ async def get_market_regime():
     cache_key = "market_regime_analytics"
     if redis_client:
         try:
-            cached = redis_client.get(cache_key)
+            cached = await redis_client.get(cache_key)
             if cached:
                 logger.info("Returning cached market regime diagnostics")
                 return json.loads(cached)
@@ -839,7 +816,7 @@ async def get_market_regime():
 
     if redis_client:
         try:
-            redis_client.setex(cache_key, 86400, json.dumps(diagnostics))
+            await redis_client.setex(cache_key, 86400, json.dumps(diagnostics))
         except Exception as e:
             logger.error(f"Redis set market regime failed: {e}")
 

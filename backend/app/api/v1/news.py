@@ -8,6 +8,7 @@ import yfinance as yf
 
 from app.core.security import check_rate_limit
 from app.services.ai_agent import groq_client, groq_configured
+from app.services.cache_service import CacheService
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.news")
@@ -138,6 +139,12 @@ async def list_news(stream: str = "india", category: str = "all"):
     stream_val = stream.lower() if stream.lower() in ["india", "global"] else "india"
     category_val = category.lower() if category.lower() in queries_map[stream_val] else "all"
     
+    # Check cache first
+    cached_news = await CacheService.get_news_feed(stream_val, category_val)
+    if cached_news is not None:
+        logger.info(f"Returning cached news list for {stream_val}:{category_val}")
+        return cached_news
+
     query = queries_map[stream_val][category_val]
     logger.info(f"Fetching news for query: {query}")
     
@@ -167,6 +174,10 @@ async def list_news(stream: str = "india", category: str = "all"):
         
         # Sort news by newest timestamp first
         formatted_news.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        # Cache the results
+        await CacheService.set_news_feed(stream_val, category_val, formatted_news)
+        
         return formatted_news
         
     except Exception as e:

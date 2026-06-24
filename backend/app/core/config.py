@@ -18,6 +18,14 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="REDIS_URL"
     )
+    UPSTASH_REDIS_REST_URL: Optional[str] = Field(
+        default=None,
+        validation_alias="UPSTASH_REDIS_REST_URL"
+    )
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(
+        default=None,
+        validation_alias="UPSTASH_REDIS_REST_TOKEN"
+    )
     
     # AI models
     GROQ_API_KEY: Optional[str] = Field(
