@@ -1,6 +1,12 @@
 # 💎 AlphaMatrix — Quantitative Analytics & AI Intelligence Terminal
 
-AlphaMatrix is a premium, high-performance quantitative intelligence terminal for Indian Mutual Funds and Equities. Designed with a luxury minimalist aesthetic (inspired by *lunchlab.fr*), the platform integrates strict multi-factor RAG models (Retrieval-Augmented Generation), timeseries performance mathematics, dynamic stock auto-ingestion, and macro-financial risk overlays into a unified desktop dashboard.
+[![Deployed Live Link](https://img.shields.io/badge/Deployed%20Link-Live-brightgreen)](https://alphamatrix-alpha.vercel.app/)
+
+**Live Production Link**: [https://alphamatrix-alpha.vercel.app/](https://alphamatrix-alpha.vercel.app/)
+
+AlphaMatrix is a premium, high-performance quantitative intelligence terminal for Indian Mutual Funds and Equities. Designed with a luxury minimalist dark-mode aesthetic, the platform integrates multi-factor Llama 3.3 models, timeseries performance mathematics, dynamic stock auto-ingestion, and macro-financial risk overlays into a unified desktop dashboard.
+
+For a full structural specification, see the [Complete System Architecture Blueprint & Audit Report](file:///Users/pawan/.gemini/antigravity/brain/4cd66675-7883-4b1b-88b9-74019e4d3999/complete_architecture_blueprint.md).
 
 ---
 
@@ -34,72 +40,31 @@ A unified interface structure where Mutual Funds and Equities share a single des
 * **Timeseries Visualization**: High-performance SVG area charts showing performance over customizable periods (1M, 6M, 1Y, 3Y, 5Y, MAX).
 * **Risk/Return Scatter Matrix**: Coordinate mapping plots of Sharpe Ratio vs. CAGR for Mutual Funds, and Volatility vs. CAGR for Stocks, to visually identify efficient frontier candidates.
 * **Multi-Stock Comparison**: Interactive comparison overlay mapping relative returns of multiple stocks on a single timeseries axis.
-* **Geopolitical & Regime Intelligence**: Incorporates macro market regime classifiers (**RISK ON** / **RISK OFF**) and generates macro geopolitical briefings contextually.
+* **Geopolitical & Regime Intelligence**: Incorporates macro market regime classifiers (**BULLISH** / **BEARISH** / **SIDEWAYS**) and generates macro geopolitical briefings contextually.
+* **AI Watchlist Diagnostics**: Modern portfolio analysis calculating portfolio Beta, expected returns, and sector concentration risks using Llama 3.3.
 
 ---
 
 ## 🛠️ Technology Stack
 
 ### Backend
-* **FastAPI**: Asynchronous high-performance API server.
-* **SQLAlchemy & SQLite**: Modern ORM layer and local relational database for indexing stock master data, historical price series, and fund data.
+* **FastAPI**: Asynchronous high-performance API gateway.
+* **SQLAlchemy & Asyncpg**: Database mapping utilizing asynchronous drivers.
+* **Neon PostgreSQL**: Serverless PostgreSQL cloud database with transaction pooling.
 * **Yahoo Finance API & MFAPI**: Ingestion pipelines for stock prices, fund NAVs, and metadata.
 * **Groq Llama 3.3**: Dynamic AI summarization, investment briefings, semantic query parsing, and conversational stock/fund chatbots targeting the `llama-3.3-70b-versatile` model.
-* **Redis**: (Optional) Cache manager for speed-up of global search queries and fund calculations.
+* **Upstash Redis (REST & TCP)**: Asynchronous serverless Redis caching for global search suggestions and analytics.
 
 ### Frontend
-* **Vite + React**: Rapid HMR frontend tooling.
-* **Tailwind CSS**: Utility-first CSS framework mapped to custom theme variables.
+* **Vite + React (v19)**: Rapid HMR frontend build tooling.
+* **Tailwind CSS**: Utility-first CSS framework mapped to custom design token variables.
 * **Recharts**: Responsive chart rendering matching light/dark SVGs.
 * **Lucide Icons**: Minimalist vector icons.
+* **Firebase Auth**: JWT authentication token integration with a built-in mock fallback environment.
 
 ---
 
-## 📁 Repository Structure
-
-```
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── api.py           # Endpoint router mount point
-│   │   │   └── v1/
-│   │   │       ├── search.py    # Unified Global Search endpoint
-│   │   │       ├── stocks.py    # Equities metadata, status, comparison, & details
-│   │   │       ├── funds.py     # Mutual funds query, search & details
-│   │   │       └── ai.py        # Semantic SQL parsing & analyst chat endpoints
-│   │   ├── core/
-│   │   │   ├── database.py      # SQLite connection & database session generators
-│   │   │   └── config.py        # Environment variables & Pydantic setting declarations
-│   │   ├── models/
-│   │   │   └── stock.model      # StockMaster & StockPriceHistory SQL schemas
-│   │   ├── workers/
-│   │   │   └── stock_ingestion.py # yfinance data harvester, CAGR and Alpha Score calculations
-│   │   └── tests/               # Pytest suite (AI agents, CAGR formulas, and Stock score analytics)
-│   └── requirements.txt         # Python package dependencies
-│
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── GlobalSearch.jsx # Portaled global search input & event delegation
-    │   │   ├── StockLogo.jsx    # SVG dynamic stock monogram generator
-    │   │   └── charts/
-    │   │       ├── InteractiveChart.jsx       # Fund NAV area timeseries
-    │   │       ├── StockComparisonChart.jsx   # Multi-equity comparative timeseries
-    │   │       └── StockRiskScatterplot.jsx   # Volatility vs return scatterplot
-    │   ├── hooks/
-    │   │   ├── useFunds.js      # Custom React hooks for MF querying, chat & semantic lookup
-    │   │   └── useStocks.js     # Custom React hooks for stock query, status polling & comparison
-    │   └── pages/
-    │       ├── Home.jsx         # Mutual Funds homepage
-    │       ├── StockHome.jsx    # Equities homepage & Market Regime overview
-    │       └── StockDetail.jsx  # Equities detail views, including live polling spinner
-    ├── package.json             # NPM package scripts
-    └── vite.config.js           # Vite dev server configuration
-```
-
----
-
-## 🚀 Setup & Execution
+## Setup & Local Execution
 
 ### Prerequisites
 * **Python**: Version 3.10 or higher
@@ -109,8 +74,10 @@ A unified interface structure where Mutual Funds and Equities share a single des
 Create a `.env` file inside the `backend/` directory:
 ```env
 GROQ_API_KEY=your_groq_api_key
-DATABASE_URL=sqlite:///./alphamatrix.db
-REDIS_URL=redis://localhost:6379  # Optional
+DATABASE_URL=postgresql+asyncpg://neondb_owner:***@ep-twilight.aws.neon.tech/neondb
+SECRET_KEY=your_jwt_signing_secret
+UPSTASH_REDIS_REST_URL=your_upstash_redis_rest_url
+UPSTASH_REDIS_REST_TOKEN=your_upstash_redis_rest_token
 ```
 
 ### 2. Backend Installation & Server Start
@@ -127,7 +94,7 @@ source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # Start the FastAPI server
-PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+.venv/bin/uvicorn app.main:app --port 8000
 ```
 *Note: On startup, the backend automatically initializes database tables and seeds base records.*
 

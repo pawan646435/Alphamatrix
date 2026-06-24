@@ -13,6 +13,13 @@ class RedisClient:
         self.rest_url = settings.UPSTASH_REDIS_REST_URL
         self.rest_token = settings.UPSTASH_REDIS_REST_TOKEN
         self.redis_url = settings.REDIS_URL
+        self._initialized = False
+
+    def _ensure_client(self):
+        if self._initialized:
+            return
+        
+        self._initialized = True
         
         # Initialize TCP client if REDIS_URL is configured
         if self.redis_url:
@@ -39,6 +46,7 @@ class RedisClient:
                 self.rest_url = self.rest_url[:-1]
 
     async def get(self, key: str) -> Optional[str]:
+        self._ensure_client()
         if self.redis_client:
             try:
                 return self.redis_client.get(key)
@@ -66,6 +74,7 @@ class RedisClient:
         return None
 
     async def setex(self, key: str, seconds: int, value: str) -> bool:
+        self._ensure_client()
         if self.redis_client:
             try:
                 self.redis_client.setex(key, seconds, value)
@@ -92,6 +101,7 @@ class RedisClient:
         return False
 
     async def delete(self, *keys: str) -> bool:
+        self._ensure_client()
         if self.redis_client:
             try:
                 self.redis_client.delete(*keys)

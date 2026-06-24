@@ -2,43 +2,77 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
-db_url = settings.DATABASE_URL
+db_url = settings.DATABASE_URL or ""
 if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 is_sqlite = db_url.startswith("sqlite")
 
-# Configure connection arguments
-connect_args = {}
-if is_sqlite:
-    # Disable same-thread check for SQLite to allow multi-threaded access in development
-    connect_args["check_same_thread"] = False
-else:
-    # It's PostgreSQL or other SQL. Strip query parameters (like sslmode) to prevent asyncpg TypeError
-    if "?" in db_url:
-        db_url = db_url.split("?")[0]
-    # Inject SSL parameter for secure PostgreSQL connections
-    connect_args["ssl"] = True
+# We will initialize the engine and session maker lazily on first access
+engine = None
+_real_async_session_maker = None
 
-# Create Async Engine
-engine = create_async_engine(
-    db_url,
-    echo=False,
-    connect_args=connect_args,
-)
+def get_engine():
+    global engine
+    if engine is None:
+        _init_db_engine()
+    return engine
 
-# Async Session Factory
-async_session_maker = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+def get_session_maker():
+    global _real_async_session_maker
+    if _real_async_session_maker is None:
+        _init_db_engine()
+    return _real_async_session_maker
+
+def _init_db_engine():
+    global engine, _real_async_session_maker
+    import logging
+    logger = logging.getLogger("app.core.database")
+    try:
+        if not db_url:
+            logger.error("DATABASE_URL is not set or empty. Database operations will fail.")
+            raise ValueError("DATABASE_URL is not set or empty.")
+            
+        connect_args = {}
+        local_url = db_url
+        if is_sqlite:
+            connect_args["check_same_thread"] = False
+        else:
+            # Strip query parameters (like sslmode) to prevent asyncpg TypeError
+            if "?" in local_url:
+                local_url = local_url.split("?")[0]
+            # Inject SSL parameter for secure PostgreSQL connections
+            connect_args["ssl"] = True
+            
+        logger.info(f"Initializing database engine with URL schema: {db_url.split('://')[0]}://...")
+        engine = create_async_engine(
+            local_url if not is_sqlite else db_url,
+            echo=False,
+            connect_args=connect_args,
+        )
+        _real_async_session_maker = async_sessionmaker(
+            bind=engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
+        logger.info("Database engine and session maker initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize database engine: {e}")
+        raise e
+
+class AsyncSessionMakerProxy:
+    def __call__(self, *args, **kwargs):
+        session_maker = get_session_maker()
+        return session_maker(*args, **kwargs)
+
+async_session_maker = AsyncSessionMakerProxy()
 
 # Declarative Base for models
 Base = declarative_base()
 
 # Dependency to get async DB session
 async def get_db():
-    async with async_session_maker() as session:
+    session_maker = get_session_maker()
+    async with session_maker() as session:
         try:
             yield session
             await session.commit()
@@ -50,7 +84,8 @@ async def get_db():
             
 async def init_db():
     """Initializes tables in database if they do not exist."""
-    async with engine.begin() as conn:
+    db_engine = get_engine()
+    async with db_engine.begin() as conn:
         # Import models inside function to prevent circular imports
         from app.models.fund import FundMaster, NAVHistory
         from app.models.user import User
