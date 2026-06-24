@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 import httpx
 import redis
@@ -15,13 +16,20 @@ class RedisClient:
         
         # Initialize TCP client if REDIS_URL is configured
         if self.redis_url:
-            try:
-                self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
-                self.redis_client.ping()
-                logger.info("Connected to Redis successfully via TCP.")
-            except Exception as e:
-                logger.error(f"Failed to connect to TCP Redis at {self.redis_url}: {e}")
+            is_vercel = os.environ.get("VERCEL") is not None
+            is_local_redis = "localhost" in self.redis_url or "127.0.0.1" in self.redis_url
+            
+            if is_vercel and is_local_redis:
+                logger.info("Skipping local TCP Redis connection in Vercel serverless environment.")
                 self.redis_client = None
+            else:
+                try:
+                    self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
+                    self.redis_client.ping()
+                    logger.info("Connected to Redis successfully via TCP.")
+                except Exception as e:
+                    logger.error(f"Failed to connect to TCP Redis at {self.redis_url}: {e}")
+                    self.redis_client = None
 
         # Check if Upstash REST is active
         if not self.redis_client and self.rest_url and self.rest_token:
