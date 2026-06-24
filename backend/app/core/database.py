@@ -2,18 +2,24 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
-# Determine DB properties
-is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+db_url = settings.DATABASE_URL
+is_sqlite = db_url.startswith("sqlite")
 
 # Configure connection arguments
 connect_args = {}
 if is_sqlite:
     # Disable same-thread check for SQLite to allow multi-threaded access in development
     connect_args["check_same_thread"] = False
+else:
+    # It's PostgreSQL or other SQL. Strip query parameters (like sslmode) to prevent asyncpg TypeError
+    if "?" in db_url:
+        db_url = db_url.split("?")[0]
+    # Inject SSL parameter for secure PostgreSQL connections
+    connect_args["ssl"] = True
 
 # Create Async Engine
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=False,
     connect_args=connect_args,
 )
@@ -50,24 +56,25 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         
     # Initialize SQLite FTS5 search index virtual tables
-    from sqlalchemy import text
-    async with async_session_maker() as session:
-        try:
-            await session.execute(text("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS stock_search_index USING fts5(
-                    symbol,
-                    company_name,
-                    exchange UNINDEXED
-                );
-            """))
-            await session.execute(text("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS fund_search_index USING fts5(
-                    scheme_code,
-                    scheme_name
-                );
-            """))
-            await session.commit()
-        except Exception as e:
-            await session.rollback()
-            raise e
+    if is_sqlite:
+        from sqlalchemy import text
+        async with async_session_maker() as session:
+            try:
+                await session.execute(text("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS stock_search_index USING fts5(
+                        symbol,
+                        company_name,
+                        exchange UNINDEXED
+                    );
+                """))
+                await session.execute(text("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS fund_search_index USING fts5(
+                        scheme_code,
+                        scheme_name
+                    );
+                """))
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                raise e
 

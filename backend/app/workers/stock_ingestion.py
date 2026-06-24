@@ -479,12 +479,14 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         db.add(stock_master)
 
     # Sync to FTS5 search index
-    from sqlalchemy import text
-    await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
-    await db.execute(
-        text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
-        {"symbol": symbol, "name": company_name}
-    )
+    from app.core.database import is_sqlite
+    if is_sqlite:
+        from sqlalchemy import text
+        await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
+        await db.execute(
+            text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
+            {"symbol": symbol, "name": company_name}
+        )
 
     if prices_to_insert:
         db.add_all(prices_to_insert)
@@ -740,69 +742,78 @@ async def seed_stocks_data(db: AsyncSession):
         await db.flush()
         
         # Sync to FTS5 search index
-        from sqlalchemy import text
-        await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
-        await db.execute(
-            text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
-            {"symbol": symbol, "name": real_info["company_name"]}
-        )
+        from app.core.database import is_sqlite
+        if is_sqlite:
+            from sqlalchemy import text
+            await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
+            await db.execute(
+                text("INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:symbol, :name, 'NSE')"),
+                {"symbol": symbol, "name": real_info["company_name"]}
+            )
         
     await db.commit()
     logger.info("Stock seeding background task finished successfully.")
 
 async def populate_search_indices(db: AsyncSession):
     """
-    Seeds mutual fund and stock search index FTS5 tables and stock_masters skeleton records.
+    Seeds mutual fund and stock search index FTS5 tables (SQLite only) and stock_masters skeleton records.
     """
     from sqlalchemy import text
     import json
     import os
     import csv
     import httpx
+    from app.core.database import is_sqlite
     
-    # 1. Populate Mutual Funds FTS5 Index if below threshold
-    check_funds = await db.execute(text("SELECT COUNT(*) FROM fund_search_index"))
-    funds_count = check_funds.scalar() or 0
-    if funds_count < 30000:
-        logger.info(f"Fund search index has only {funds_count} records. Seeding fund_search_index FTS5 table...")
-        await db.execute(text("DELETE FROM fund_search_index"))
-        CACHE_FILE = "mf_master_list.json"
-        mf_list = []
-        if os.path.exists(CACHE_FILE):
-            try:
-                with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                    mf_list = json.load(f)
-            except Exception as e:
-                logger.error(f"Failed to read disk cache for seeding FTS5: {e}")
-                
-        if not mf_list:
-            try:
-                async with httpx.AsyncClient() as client:
-                    res = await client.get("https://api.mfapi.in/mf", timeout=15.0)
-                    if res.status_code == 200:
-                        mf_list = res.json()
-                        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                            json.dump(mf_list, f)
-            except Exception as e:
-                logger.error(f"Failed to fetch master fund list for seeding FTS5: {e}")
-                
-        if mf_list:
-            logger.info(f"Inserting {len(mf_list)} mutual funds into FTS5 index...")
-            stmt = "INSERT INTO fund_search_index (scheme_code, scheme_name) VALUES (:code, :name)"
-            batch_size = 5000
-            for i in range(0, len(mf_list), batch_size):
-                batch = mf_list[i:i+batch_size]
-                params = [{"code": str(item["schemeCode"]), "name": item["schemeName"]} for item in batch]
-                await db.execute(text(stmt), params)
-            await db.commit()
-            logger.info("Fund search index successfully seeded.")
+    # 1. Populate Mutual Funds FTS5 Index if SQLite and below threshold
+    if is_sqlite:
+        check_funds = await db.execute(text("SELECT COUNT(*) FROM fund_search_index"))
+        funds_count = check_funds.scalar() or 0
+        if funds_count < 30000:
+            logger.info(f"Fund search index has only {funds_count} records. Seeding fund_search_index FTS5 table...")
+            await db.execute(text("DELETE FROM fund_search_index"))
+            CACHE_FILE = "mf_master_list.json"
+            mf_list = []
+            if os.path.exists(CACHE_FILE):
+                try:
+                    with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                        mf_list = json.load(f)
+                except Exception as e:
+                    logger.error(f"Failed to read disk cache for seeding FTS5: {e}")
+                    
+            if not mf_list:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        res = await client.get("https://api.mfapi.in/mf", timeout=15.0)
+                        if res.status_code == 200:
+                            mf_list = res.json()
+                            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                                json.dump(mf_list, f)
+                except Exception as e:
+                    logger.error(f"Failed to fetch master fund list for seeding FTS5: {e}")
+                    
+            if mf_list:
+                logger.info(f"Inserting {len(mf_list)} mutual funds into FTS5 index...")
+                stmt = "INSERT INTO fund_search_index (scheme_code, scheme_name) VALUES (:code, :name)"
+                batch_size = 5000
+                for i in range(0, len(mf_list), batch_size):
+                    batch = mf_list[i:i+batch_size]
+                    params = [{"code": str(item["schemeCode"]), "name": item["schemeName"]} for item in batch]
+                    await db.execute(text(stmt), params)
+                await db.commit()
+                logger.info("Fund search index successfully seeded.")
 
-    # 2. Populate Stocks FTS5 Index and stock_masters skeleton records if below threshold
-    check_stocks = await db.execute(text("SELECT COUNT(*) FROM stock_search_index"))
+    # 2. Populate stock_masters skeleton records (and stock_search_index on SQLite) if below threshold
+    check_stocks = await db.execute(text("SELECT COUNT(*) FROM stock_masters"))
     stocks_count = check_stocks.scalar() or 0
     if stocks_count < 2000:
-        logger.info(f"Stock search index has only {stocks_count} records. Seeding stock_search_index and stock_masters from NSE...")
-        await db.execute(text("DELETE FROM stock_search_index"))
+        logger.info(f"Stock masters table has only {stocks_count} records. Seeding stock_masters from NSE...")
+        if is_sqlite:
+            try:
+                await db.execute(text("DELETE FROM stock_search_index"))
+            except Exception as e:
+                logger.warning(f"Failed to clear stock_search_index FTS5 table: {e}")
+                
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         try:
             async with httpx.AsyncClient() as client:
@@ -824,21 +835,31 @@ async def populate_search_indices(db: AsyncSession):
                             
                     if stocks_to_insert:
                         logger.info(f"Inserting {len(stocks_to_insert)} NSE tickers into DB...")
-                        stmt_master = """
-                            INSERT OR IGNORE INTO stock_masters (symbol, company_name, isin, sector)
-                            VALUES (:symbol, :name, :isin, 'Unknown')
-                        """
-                        stmt_fts = """
-                            INSERT INTO stock_search_index (symbol, company_name, exchange)
-                            VALUES (:symbol, :name, 'NSE')
-                        """
+                        if is_sqlite:
+                            stmt_master = """
+                                INSERT OR IGNORE INTO stock_masters (symbol, company_name, isin, sector)
+                                VALUES (:symbol, :name, :isin, 'Unknown')
+                            """
+                            stmt_fts = """
+                                INSERT INTO stock_search_index (symbol, company_name, exchange)
+                                VALUES (:symbol, :name, 'NSE')
+                            """
+                        else:
+                            stmt_master = """
+                                INSERT INTO stock_masters (symbol, company_name, isin, sector)
+                                VALUES (:symbol, :name, :isin, 'Unknown')
+                                ON CONFLICT (symbol) DO NOTHING
+                            """
+                            stmt_fts = None
+                            
                         batch_size = 1000
                         for i in range(0, len(stocks_to_insert), batch_size):
                             batch = stocks_to_insert[i:i+batch_size]
                             await db.execute(text(stmt_master), batch)
-                            await db.execute(text(stmt_fts), batch)
+                            if is_sqlite and stmt_fts:
+                                await db.execute(text(stmt_fts), batch)
                         await db.commit()
-                        logger.info("Stock search index and masters successfully seeded.")
+                        logger.info("Stock masters (and FTS5 if SQLite) successfully seeded.")
         except Exception as e:
             logger.error(f"Failed to fetch and seed stock list: {e}")
 

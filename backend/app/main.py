@@ -51,6 +51,62 @@ async def root():
 async def health():
     return {"status": "ok"}
 
+@app.get("/api/v1/db-health")
+async def db_health():
+    from sqlalchemy import text, func
+    from sqlalchemy.future import select
+    from app.models.user import User
+    from app.models.fund import FundMaster
+    from app.models.stock import StockMaster
+
+    try:
+        async with async_session_maker() as session:
+            # 1. Verify active connection
+            await session.execute(text("SELECT 1"))
+            
+            # 2. Check table existence / count rows using count query
+            user_count = 0
+            fund_count = 0
+            stock_count = 0
+            
+            try:
+                user_res = await session.execute(select(func.count()).select_from(User))
+                user_count = user_res.scalar() or 0
+            except Exception as e:
+                logger.warning(f"Could not count users table: {e}")
+                user_count = -1
+                
+            try:
+                fund_res = await session.execute(select(func.count()).select_from(FundMaster))
+                fund_count = fund_res.scalar() or 0
+            except Exception as e:
+                logger.warning(f"Could not count fund_masters table: {e}")
+                fund_count = -1
+
+            try:
+                stock_res = await session.execute(select(func.count()).select_from(StockMaster))
+                stock_count = stock_res.scalar() or 0
+            except Exception as e:
+                logger.warning(f"Could not count stock_masters table: {e}")
+                stock_count = -1
+                
+            return {
+                "status": "healthy",
+                "database": "connected",
+                "counts": {
+                    "users": user_count,
+                    "funds": fund_count,
+                    "stocks": stock_count
+                }
+            }
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e)
+        }
+
 async def seed_data_background():
     """
     Background worker task to seed database with popular Indian mutual funds
