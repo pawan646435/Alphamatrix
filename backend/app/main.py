@@ -60,7 +60,12 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if request.method == "GET" and any(path.startswith(p) for p in CACHEABLE_PREFIXES):
+        if (
+            request.method == "GET"
+            and response.status_code == 200
+            and "Cache-Control" not in response.headers
+            and any(path.startswith(p) for p in CACHEABLE_PREFIXES)
+        ):
             # stale-while-revalidate: serve stale for 60s while refetching in background
             response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=30"
         return response

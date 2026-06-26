@@ -311,7 +311,8 @@ async def get_stocks(
 async def get_stock_detail(
     symbol: str,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    response: Response = None
 ):
     """
     Retrieve stock metadata, fundamentals, return metrics, and daily close history.
@@ -369,7 +370,7 @@ async def get_stock_detail(
         background_tasks.add_task(_ingest_and_brief, symbol)
         # Return a 202 Accepted with discovering state so frontend can poll
         from fastapi.responses import JSONResponse
-        return JSONResponse(
+        res = JSONResponse(
             status_code=202,
             content={
                 "status": "discovering",
@@ -377,6 +378,8 @@ async def get_stock_detail(
                 "message": f"AlphaMatrix is fetching market data for {symbol} from live exchanges. This takes 10–30 seconds. Please wait..."
             }
         )
+        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return res
         
     # Trigger background AI briefing if missing
     trigger_background = False
@@ -444,6 +447,9 @@ async def get_stock_detail(
     master_response = dict(master_dict)
     master_response["ai_summary"] = stock.ai_summary
     
+    if (trigger_background or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...") and response is not None:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        
     return {
         "stock": master_response,
         "price_history": prices,

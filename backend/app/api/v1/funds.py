@@ -3,7 +3,7 @@ import json
 import httpx
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -163,7 +163,8 @@ async def get_funds(
 async def get_fund_detail(
     scheme_code: int, 
     background_tasks: BackgroundTasks, 
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    response: Response = None
 ):
     """
     Retrieve full details of a mutual fund and its NAV history.
@@ -256,6 +257,9 @@ async def get_fund_detail(
     except Exception as e:
         logger.error(f"Redis set failed for key {cache_key}: {e}")
             
+    if fund.ai_summary == "Generating AI Analysis in the background..." and response is not None:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
     return response_data
 
 @router.post("/sync/{scheme_code}", response_model=SyncResponse)

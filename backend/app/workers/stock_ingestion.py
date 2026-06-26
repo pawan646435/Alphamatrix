@@ -497,6 +497,7 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         logger.error(f"Failed to sync stock {symbol} to search index: {e}")
 
     if prices_to_insert:
+        await db.execute(delete(StockPriceHistory).where(StockPriceHistory.symbol == symbol))
         db.add_all(prices_to_insert)
 
     await db.commit()
@@ -745,6 +746,7 @@ async def seed_stocks_data(db: AsyncSession):
         await db.flush()
 
         # 5. Batch insert price histories
+        await db.execute(delete(StockPriceHistory).where(StockPriceHistory.symbol == symbol))
         db.add_all(prices_to_insert)
         await db.flush()
         logger.info(f"Inserted {len(prices_to_insert)} price records for {symbol}.")
