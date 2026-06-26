@@ -1,24 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Star, Cpu, Layers, MessageSquare, ArrowUpRight, Activity } from 'lucide-react';
-import { useGetStocks, useStockAIChat, useMarketRegime } from '../hooks/useStocks';
+import { useStockAIChat } from '../hooks/useStocks';
+import { useStockList, useMarketRegime } from '../hooks/useQueries';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardGridSkeleton } from '../components/skeletons/Skeletons';
 
 export default function StockHome() {
   const navigate = useNavigate();
-  const { stocks, loading: stocksLoading, fetchStocks } = useGetStocks();
-  const { marketRegime, loading: regimeLoading, fetchMarketRegime } = useMarketRegime();
+  const { data: stocks = [], isLoading: stocksLoading } = useStockList();
+  const { data: marketRegime, isLoading: regimeLoading } = useMarketRegime();
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
-
-  useEffect(() => {
-    fetchStocks();
-    fetchMarketRegime();
-  }, [fetchStocks, fetchMarketRegime]);
 
   const handleSectorClick = (sector) => {
     navigate(`/stocks/sector/${sector}`);

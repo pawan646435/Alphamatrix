@@ -43,3 +43,7 @@ class NAVHistory(Base):
 
 # Indices for quick lookup of NAV timeseries
 Index("idx_nav_scheme_date", NAVHistory.scheme_code, NAVHistory.date)
+
+# Indexes for fund list default sort
+Index("idx_fund_cagr3y", FundMaster.cagr_3y.desc())
+Index("idx_fund_sharpe", FundMaster.sharpe_ratio.desc())

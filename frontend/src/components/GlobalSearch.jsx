@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, RefreshCw, Cpu, Layers, Zap } from 'lucide-react';
 import apiClient from '../services/api';
+import { cacheGet, cacheSet } from '../hooks/useSearchCache';
 
 export default function GlobalSearch() {
   const navigate = useNavigate();
@@ -57,27 +58,46 @@ export default function GlobalSearch() {
     }
   }, [showDropdown, updateDropdownPosition]);
 
-  // Debounced search
+  // Debounced search with AbortController + LRU cache
+  // AbortController: cancels in-flight requests when user types again (no stale results)
+  // LRU cache: returns instantly for repeated queries (0ms network for cache hits)
   useEffect(() => {
     if (query.trim().length < 2) {
-      setTimeout(() => setResults([]), 0);
+      setResults([]);
       return;
     }
 
+    // Cache hit — return immediately without network call
+    const cached = cacheGet(query.trim());
+    if (cached) {
+      setResults(cached);
+      return;
+    }
+
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
         const type = location.pathname.startsWith('/stocks') ? 'stock' : 'fund';
-        const response = await apiClient.get('/search', { params: { query: query.trim(), type } });
+        const response = await apiClient.get('/search', {
+          params: { query: query.trim(), type },
+          signal: controller.signal,
+        });
+        cacheSet(query.trim(), response.data);
         setResults(response.data);
       } catch (err) {
-        console.error('Failed to search:', err);
+        if (err.name !== 'CanceledError' && err.code !== 'ERR_CANCELED' && err.name !== 'AbortError') {
+          console.error('Failed to search:', err);
+        }
       } finally {
         setLoading(false);
       }
-    }, 250);
+    }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [query, location.pathname]);
 
   const handleSelect = (item) => {

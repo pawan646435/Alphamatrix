@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Filter, ChevronDown, ChevronUp, Sparkles, AlertCircle, RefreshCw } from 'lucide-react';
-import { useGetFunds, useSemanticQuery } from '../hooks/useFunds';
+import { useSemanticQuery } from '../hooks/useFunds';
+import { useFundList } from '../hooks/useQueries';
 import FundLogo from '../components/FundLogo';
 
 export default function Explorer() {
@@ -25,12 +26,26 @@ export default function Explorer() {
   const [semanticQueryText, setSemanticQueryText] = useState('');
   const [usingSemantic, setUsingSemantic] = useState(false);
 
-  const { funds, loading: standardLoading, fetchFunds } = useGetFunds();
-  const { 
-    matchedFunds: aiFunds, 
-    parsedFilters, 
-    sqlExplanation, 
-    loading: aiLoading, 
+  // Build params object for React Query — query key changes trigger auto-refetch
+  const fundParams = {
+    category: category || undefined,
+    min_cagr_1y: minCagr1y || undefined,
+    min_cagr_3y: minCagr || undefined,
+    max_expense_ratio: maxExpense || undefined,
+    min_sharpe_ratio: minSharpe || undefined,
+    max_pe_ratio: maxPe || undefined,
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  };
+
+  // React Query: auto-fetches when params change, caches between visits
+  const { data: funds = [], isLoading: standardLoading } = useFundList(usingSemantic ? {} : fundParams);
+
+  const {
+    matchedFunds: aiFunds,
+    parsedFilters,
+    sqlExplanation,
+    loading: aiLoading,
     executeSemanticQuery,
     setMatchedFunds,
     setParsedFilters
@@ -43,27 +58,6 @@ export default function Explorer() {
     }
   }, [categoryParam]);
 
-  // Fetch standard funds based on filters
-  const loadFunds = React.useCallback(() => {
-    setUsingSemantic(false);
-    fetchFunds({
-      category: category || undefined,
-      min_cagr_1y: minCagr1y || undefined,
-      min_cagr_3y: minCagr || undefined,
-      max_expense_ratio: maxExpense || undefined,
-      min_sharpe_ratio: minSharpe || undefined,
-      max_pe_ratio: maxPe || undefined,
-      sort_by: sortBy,
-      sort_order: sortOrder,
-    });
-  }, [fetchFunds, category, minCagr1y, minCagr, maxExpense, minSharpe, maxPe, sortBy, sortOrder]);
-
-  useEffect(() => {
-    if (!usingSemantic) {
-      setTimeout(() => loadFunds(), 0);
-    }
-  }, [loadFunds, usingSemantic]);
-
   // Trigger semantic query
   const handleSemanticSearchSubmit = async (e) => {
     e.preventDefault();
@@ -72,26 +66,12 @@ export default function Explorer() {
     await executeSemanticQuery(semanticQueryText);
   };
 
-  // Toggle sorting
-  const handleSort = (field) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortOrder('desc');
-    }
-  };
-
-  const handleRowClick = (schemeCode) => {
-    navigate(`/detail/${schemeCode}`);
-  };
-
   const handleClearSemantic = () => {
     setUsingSemantic(false);
     setSemanticQueryText('');
     setMatchedFunds([]);
     setParsedFilters(null);
-    loadFunds();
+    // React Query will auto-serve the cached standard list
   };
 
   // Render sorting arrows

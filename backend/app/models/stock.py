@@ -63,3 +63,7 @@ class WatchlistItem(Base):
 Index("idx_stock_price_symbol_date", StockPriceHistory.symbol, StockPriceHistory.date)
 # Composite unique constraint to prevent duplicate symbols in a single user watchlist
 Index("idx_watchlist_email_symbol", WatchlistItem.email, WatchlistItem.symbol, unique=True)
+
+# Indexes for sort-heavy list queries (alpha_score is the default sort column)
+Index("idx_stock_alpha_score", StockMaster.alpha_score.desc())
+Index("idx_stock_cagr3y", StockMaster.cagr_3y.desc())

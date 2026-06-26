@@ -1,7 +1,7 @@
 import logging
 import json
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
@@ -18,6 +18,17 @@ from app.schemas.ai_schema import AIChatRequest, AIChatResponse, ChatMessage
 
 from app.core.config import settings
 from app.core.redis import redis_client
+from app.core.cache_ttl import (
+    STOCK_SEARCH_TTL,
+    STOCK_LIST_TTL,
+    STOCK_MASTER_TTL,
+    STOCK_HISTORY_TTL,
+    AI_ANALYSIS_TTL,
+    AI_COMPARISON_TTL,
+    WATCHLIST_DIAGNOSTICS_TTL,
+    SECTOR_LAB_TTL,
+    MARKET_REGIME_TTL,
+)
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.stocks")
@@ -242,7 +253,7 @@ async def search_stocks(query: str, db: AsyncSession = Depends(get_db)):
     ]
     
     try:
-        await redis_client.setex(cache_key, 600, json.dumps(response_data)) # Cache search results for 10 mins
+        await redis_client.setex(cache_key, STOCK_SEARCH_TTL, json.dumps(response_data))  # Cache search results for 10 mins
     except Exception as e:
         logger.error(f"Redis set search failed: {e}")
             
@@ -259,7 +270,8 @@ async def get_stocks(
     sort_order: str = "desc",
     skip: int = 0,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    response: Response = None
 ):
     """
     Get list of seeded stocks applying sector/financial filters.
@@ -289,7 +301,10 @@ async def get_stocks(
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     stocks = result.scalars().all()
-    
+
+    if response is not None:
+        response.headers["X-Cache"] = "miss"
+
     return stocks
 
 @router.get("/detail/{symbol}", response_model=StockDetailResponse, dependencies=[Depends(check_rate_limit)])
@@ -384,7 +399,7 @@ async def get_stock_detail(
         prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
         try:
             # Cache history for 24h
-            await redis_client.setex(f"stock_history:{symbol}", 86400, json.dumps(prices))
+            await redis_client.setex(f"stock_history:{symbol}", STOCK_HISTORY_TTL, json.dumps(prices))
         except Exception as e:
             logger.error(f"Redis set history failed: {e}")
                 
@@ -418,9 +433,9 @@ async def get_stock_detail(
         
     # Set cache for master (without AI summary, TTL 6h)
     try:
-        await redis_client.setex(f"stock_master:{symbol}", 21600, json.dumps(master_dict))
-        # Cache briefing (TTL 24h if real, 5s if generating)
-        briefing_ttl = 5 if trigger_background else 86400
+        await redis_client.setex(f"stock_master:{symbol}", STOCK_MASTER_TTL, json.dumps(master_dict))
+        # Cache briefing (TTL AI_ANALYSIS_TTL if real, 5s if generating)
+        briefing_ttl = 5 if trigger_background else AI_ANALYSIS_TTL
         await redis_client.setex(f"stock_briefing:{symbol}", briefing_ttl, stock.ai_summary)
     except Exception as e:
         logger.error(f"Redis set split cache failed: {e}")
@@ -628,7 +643,7 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
     diagnostics = await generate_watchlist_analytics(stocks_list)
     
     try:
-        await redis_client.setex(cache_key, 1800, json.dumps(diagnostics)) # Cache diagnostics for 30 mins
+        await redis_client.setex(cache_key, WATCHLIST_DIAGNOSTICS_TTL, json.dumps(diagnostics))  # Cache diagnostics for 30 mins
     except Exception as e:
         logger.error(f"Redis set diagnostics failed: {e}")
             
@@ -690,7 +705,7 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
     }
     
     try:
-        await redis_client.setex(cache_key, 86400, json.dumps(response_data, default=str)) # Cache for 24 hours
+        await redis_client.setex(cache_key, SECTOR_LAB_TTL, json.dumps(response_data, default=str))  # Cache for 24 hours
     except Exception as e:
         logger.error(f"Redis set sector failed: {e}")
             
@@ -774,7 +789,7 @@ async def compare_stocks(s1: str, s2: str, db: AsyncSession = Depends(get_db)):
         comparison_verdict = await generate_stock_comparison(s1_dict, s2_dict)
         if redis_client:
             try:
-                await redis_client.setex(cache_key, 86400, comparison_verdict)
+                await redis_client.setex(cache_key, AI_COMPARISON_TTL, comparison_verdict)
             except Exception as e:
                 logger.error(f"Redis set comparison verdict failed: {e}")
                 
@@ -816,7 +831,7 @@ async def get_market_regime():
 
     if redis_client:
         try:
-            await redis_client.setex(cache_key, 86400, json.dumps(diagnostics))
+            await redis_client.setex(cache_key, MARKET_REGIME_TTL, json.dumps(diagnostics))
         except Exception as e:
             logger.error(f"Redis set market regime failed: {e}")
 

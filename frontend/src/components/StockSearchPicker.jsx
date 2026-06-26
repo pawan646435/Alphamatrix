@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, RefreshCw, Star, History } from 'lucide-react';
 import apiClient from '../services/api';
+import { cacheGet, cacheSet } from '../hooks/useSearchCache';
 
 const POPULAR_STOCKS = [
   { symbol: 'TCS', company_name: 'Tata Consultancy Services Ltd.' },
@@ -106,28 +107,49 @@ export default function StockSearchPicker({
     }
   }, [showDropdown, updateDropdownPosition]);
 
-  // Debounced Search suggestions
+  // Debounced search with AbortController + LRU cache
   useEffect(() => {
     if (query.trim().length < 2 || query === selectedSymbol) {
-      setTimeout(() => setResults([]), 0);
+      setResults([]);
       return;
     }
 
+    // Cache hit
+    const cached = cacheGet(query.trim());
+    if (cached) {
+      const filtered = cached
+        .filter(r => r.symbol && r.symbol !== excludeSymbol)
+        .map(r => ({ symbol: r.symbol, company_name: r.company_name || r.name }));
+      setResults(filtered);
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await apiClient.get('/stocks/search', { params: { query: query.trim() } });
+        const response = await apiClient.get('/stocks/search', {
+          params: { query: query.trim() },
+          signal: controller.signal,
+        });
+        cacheSet(query.trim(), response.data);
         const filtered = response.data.filter(s => s.symbol !== excludeSymbol);
         setResults(filtered);
         setHighlightedIndex(-1);
       } catch (err) {
-        console.error('Failed to search stocks:', err);
+        if (err.name !== 'CanceledError' && err.code !== 'ERR_CANCELED' && err.name !== 'AbortError') {
+          console.error('Failed to search stocks:', err);
+        }
       } finally {
         setLoading(false);
       }
-    }, 200);
+    }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [query, excludeSymbol, selectedSymbol]);
 
   const handleSelect = (stock) => {

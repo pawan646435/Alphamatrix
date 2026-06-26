@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   RefreshCw, Zap, X, ExternalLink, 
   TrendingUp, TrendingDown, Minus, Filter, AlertTriangle 
 } from 'lucide-react';
 import apiClient from '../services/api';
 import { NewsCardSkeleton } from '../components/skeletons/Skeletons';
+import { useNewsIndia, useNewsGlobal } from '../hooks/useQueries';
+import { useQueryClient } from '@tanstack/react-query';
 
 const CATEGORIES = [
   { id: 'all', label: 'All Feeds' },
@@ -18,10 +20,11 @@ const CATEGORIES = [
 export default function News() {
   const [activeStream, setActiveStream] = useState('india'); // Default to India stream
   const [category, setCategory] = useState('all');
-  const [indiaNews, setIndiaNews] = useState([]);
-  const [globalNews, setGlobalNews] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const queryClient = useQueryClient();
+  const { data: indiaNews = [], isLoading: indiaLoading, error: indiaError } = useNewsIndia(category);
+  const { data: globalNews = [], isLoading: globalLoading, error: globalError } = useNewsGlobal(category);
+  const loading = indiaLoading || globalLoading;
+  const error = indiaError || globalError ? 'Failed to fetch news feeds. Please check your backend connection.' : null;
 
   // AI Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -30,29 +33,6 @@ export default function News() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
   const [loadingStep, setLoadingStep] = useState(0);
-
-  // Fetch news feeds (fetches both streams concurrently)
-  const fetchNews = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [indiaRes, globalRes] = await Promise.all([
-        apiClient.get('/news/list', { params: { stream: 'india', category } }),
-        apiClient.get('/news/list', { params: { stream: 'global', category } })
-      ]);
-      setIndiaNews(indiaRes.data || []);
-      setGlobalNews(globalRes.data || []);
-    } catch (err) {
-      console.error('Failed to fetch news feeds', err);
-      setError('Failed to fetch news feeds. Please check your backend connection.');
-    } finally {
-      setLoading(false);
-    }
-  }, [category]);
-
-  useEffect(() => {
-    setTimeout(() => fetchNews(), 0);
-  }, [fetchNews]);
 
   // Loading steps animation for AI
   useEffect(() => {
@@ -134,7 +114,9 @@ export default function News() {
         </div>
         <div className="flex gap-2 w-full md:w-auto shrink-0">
           <button 
-            onClick={fetchNews} 
+            onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['news'] });
+          }}
             disabled={loading}
             className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-brand-border hover:border-brand-primary hover:text-brand-primary text-xs font-mono transition-all rounded bg-brand-surface disabled:opacity-50 w-full md:w-auto"
           >

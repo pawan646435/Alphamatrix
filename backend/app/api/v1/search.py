@@ -3,7 +3,7 @@ import json
 import asyncio
 import difflib
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import text
@@ -72,7 +72,7 @@ def calculate_relevance_score(query_clean: str, item_type: str, item: dict) -> f
 
 
 @router.get("", dependencies=[Depends(check_rate_limit)])
-async def global_search(query: str, type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def global_search(query: str, type: Optional[str] = None, db: AsyncSession = Depends(get_db), response: Response = None):
     """
     Unified search endpoint with context-aware isolation.
     Returns matches from Stocks or Mutual Funds based on the 'type' parameter.
@@ -85,6 +85,8 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
     # Read search results from CacheService
     cached_results = await CacheService.get_search(query_clean, type)
     if cached_results is not None:
+        if response:
+            response.headers["X-Cache"] = "hit"
         return cached_results
 
     stock_results = []
@@ -249,6 +251,9 @@ async def global_search(query: str, type: Optional[str] = None, db: AsyncSession
 
     # Cache results in Redis
     await CacheService.set_search(query_clean, type, results)
+
+    if response:
+        response.headers["X-Cache"] = "miss"
 
     return results
 

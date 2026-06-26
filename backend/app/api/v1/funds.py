@@ -20,6 +20,7 @@ from app.workers.cron_jobs import run_overnight_sync
 
 from app.core.config import settings
 from app.core.redis import redis_client
+from app.core.cache_ttl import FUND_DETAIL_TTL, FUND_LIST_TTL
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.funds")
@@ -249,7 +250,7 @@ async def get_fund_detail(
     
     # Store response in Redis cache (1 hour expiry, or 5 seconds if loading)
     try:
-        ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else 3600
+        ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else FUND_DETAIL_TTL
         await redis_client.setex(cache_key, ttl, json.dumps(response_data))
         logger.info(f"Cached fund details for {scheme_code} in Redis with TTL={ttl}s")
     except Exception as e:

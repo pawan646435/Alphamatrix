@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.middleware.timing import TimingMiddleware
+
 from app.core.config import settings
 from app.core.database import init_db, async_session_maker
 from app.api.api import api_router
@@ -64,6 +66,10 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(CacheControlMiddleware)
+
+# TimingMiddleware added last so it runs outermost (first in, last out)
+# It therefore captures total wall-clock time including all other middleware
+app.add_middleware(TimingMiddleware)
 
 
 # Include v1 routes

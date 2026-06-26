@@ -1,23 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Layers, MessageSquare, Star, Cpu } from 'lucide-react';
-import { useGetFunds, useAIChat } from '../hooks/useFunds';
+import { useAIChat } from '../hooks/useFunds';
+import { useFundList } from '../hooks/useQueries';
 import RiskScatterplot from '../components/charts/RiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardSkeleton } from '../components/skeletons/Skeletons';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { funds, loading: fundsLoading, fetchFunds } = useGetFunds();
+  const { data: funds = [], isLoading: fundsLoading } = useFundList();
   
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
   const { messages, loading: chatLoading, sendMessage } = useAIChat();
-
-  useEffect(() => {
-    fetchFunds();
-  }, [fetchFunds]);
 
   const handleCategoryClick = (category) => {
     navigate(`/explorer?category=${encodeURIComponent(category)}`);
