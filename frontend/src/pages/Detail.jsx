@@ -10,13 +10,16 @@ import AnalystResponseCard from '../components/AnalystResponseCard';
 export default function Detail() {
   const { schemeCode } = useParams();
   const navigate = useNavigate();
-  const { data: fundDetail, isLoading: loading, error: fundError, refetch } = useFundDetail(schemeCode);
+  const { data: fundDetail, isLoading: loading, error: fundError, refetch } = useFundDetail(schemeCode, {
+    staleTime: fundDetail?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : 3600000,
+    refetchInterval: fundDetail?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false,
+  });
   const { sync, loading: syncing } = useSyncFund();
   
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useAIChat();
 
-  const error = fundError ? (fundError.response?.data?.detail || fundError.message || 'Failed to fetch fund details.') : null;
+  const error = fundError ? (fundError.detail || fundError.response?.data?.detail || fundError.message || 'Failed to fetch fund details.') : null;
 
   // Handle manual data refresh
   const handleSync = async () => {

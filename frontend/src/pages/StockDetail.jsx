@@ -13,7 +13,10 @@ export default function StockDetail() {
   const navigate = useNavigate();
   
   const queryClient = useQueryClient();
-  const { data: stockDetail, isLoading: loading, error: stockError, refetch } = useStockDetail(symbol);
+  const { data: stockDetail, isLoading: loading, error: stockError, refetch } = useStockDetail(symbol, {
+    staleTime: stockDetail?.status === 'discovering' ? 0 : 21600000,
+    refetchInterval: stockDetail?.status === 'discovering' ? 5000 : false,
+  });
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();
   
@@ -21,7 +24,7 @@ export default function StockDetail() {
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
   const [discoverStep, setDiscoverStep] = useState(0);
 
-  const error = stockError ? (stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
+  const error = stockError ? (stockError.detail || stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
   const discovering = stockDetail?.status === 'discovering';
 
   // Cycle through step labels every 4s during discovery

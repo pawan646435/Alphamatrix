@@ -59,7 +59,7 @@ export function useStockList(params = {}) {
 }
 
 /** Returns detailed stock data for a symbol. Handles 202 discovering state with auto-polling. */
-export function useStockDetail(symbol) {
+export function useStockDetail(symbol, options = {}) {
   return useQuery({
     queryKey: qk.stockDetail(symbol),
     queryFn: async () => {
@@ -69,14 +69,9 @@ export function useStockDetail(symbol) {
       return response.data;
     },
     enabled: !!symbol,
-    staleTime: (query) => {
-      return query?.state?.data?.status === 'discovering' ? 0 : STALE.MASTER;
-    },
-    refetchInterval: (query) => {
-      const data = query?.state?.data;
-      return data?.status === 'discovering' ? 5000 : false;
-    },
+    staleTime: STALE.MASTER,
     retry: 1,
+    ...options
   });
 }
 
@@ -135,7 +130,7 @@ export function useFundList(params = {}) {
 }
 
 /** Returns detailed fund data including NAV history and background AI generation auto-polling */
-export function useFundDetail(schemeCode) {
+export function useFundDetail(schemeCode, options = {}) {
   return useQuery({
     queryKey: qk.fundDetail(schemeCode),
     queryFn: async () => {
@@ -143,15 +138,9 @@ export function useFundDetail(schemeCode) {
       return data;
     },
     enabled: !!schemeCode,
-    staleTime: (query) => {
-      const data = query?.state?.data;
-      return data?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : STALE.FUND;
-    },
-    refetchInterval: (query) => {
-      const data = query?.state?.data;
-      return data?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false;
-    },
+    staleTime: STALE.FUND,
     retry: 1,
+    ...options
   });
 }
 

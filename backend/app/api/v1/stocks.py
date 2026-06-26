@@ -683,6 +683,7 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
         stocks_list.append({
             "symbol": s.symbol,
             "company_name": s.company_name,
+            "sector": s.sector,
             "pe_ratio": s.pe_ratio,
             "roe": s.roe,
             "debt_equity": s.debt_equity,
@@ -700,7 +701,7 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
         "sector_score": outlook.get("sector_score", 70.0),
         "growth_drivers": outlook.get("growth_drivers", []),
         "major_risks": outlook.get("major_risks", []),
-        "top_stocks": stocks, # Return SQLAlchemy models matching StockGridItem
+        "top_stocks": stocks_list, # Return serializable dictionaries matching StockGridItem
         "ai_outlook": outlook.get("ai_outlook", "")
     }
     
