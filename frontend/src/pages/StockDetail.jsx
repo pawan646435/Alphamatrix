@@ -13,9 +13,10 @@ export default function StockDetail() {
   const navigate = useNavigate();
   
   const queryClient = useQueryClient();
+  const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol]);
   const { data: stockDetail, isLoading: loading, error: stockError, refetch } = useStockDetail(symbol, {
-    staleTime: stockDetail?.status === 'discovering' ? 0 : 21600000,
-    refetchInterval: stockDetail?.status === 'discovering' ? 5000 : false,
+    staleTime: cachedStock?.status === 'discovering' ? 0 : 21600000,
+    refetchInterval: cachedStock?.status === 'discovering' ? 5000 : false,
   });
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Sparkles, MessageSquare, TrendingUp, AlertTriangle, ShieldCheck, Globe, ExternalLink, ShieldAlert } from 'lucide-react';
 import { useSyncFund, useAIChat } from '../hooks/useFunds';
 import { useFundDetail } from '../hooks/useQueries';
+import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import FundLogo from '../components/FundLogo';
 import AnalystResponseCard from '../components/AnalystResponseCard';
@@ -10,9 +11,11 @@ import AnalystResponseCard from '../components/AnalystResponseCard';
 export default function Detail() {
   const { schemeCode } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const cachedData = queryClient.getQueryData(['funds', 'detail', schemeCode]);
   const { data: fundDetail, isLoading: loading, error: fundError, refetch } = useFundDetail(schemeCode, {
-    staleTime: fundDetail?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : 3600000,
-    refetchInterval: fundDetail?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false,
+    staleTime: cachedData?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : 3600000,
+    refetchInterval: cachedData?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false,
   });
   const { sync, loading: syncing } = useSyncFund();
   
