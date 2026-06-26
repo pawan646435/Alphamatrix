@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Sparkles, MessageSquare, TrendingUp, AlertTriangle, ShieldCheck, Globe, ExternalLink, ShieldAlert } from 'lucide-react';
-import { useGetFundDetail, useSyncFund, useAIChat } from '../hooks/useFunds';
+import { useSyncFund, useAIChat } from '../hooks/useFunds';
+import { useFundDetail } from '../hooks/useQueries';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import FundLogo from '../components/FundLogo';
 import AnalystResponseCard from '../components/AnalystResponseCard';
@@ -9,31 +10,19 @@ import AnalystResponseCard from '../components/AnalystResponseCard';
 export default function Detail() {
   const { schemeCode } = useParams();
   const navigate = useNavigate();
-  const { fundDetail, loading, error, fetchDetail } = useGetFundDetail();
+  const { data: fundDetail, isLoading: loading, error: fundError, refetch } = useFundDetail(schemeCode);
   const { sync, loading: syncing } = useSyncFund();
   
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useAIChat();
 
-  useEffect(() => {
-    fetchDetail(schemeCode);
-  }, [schemeCode, fetchDetail]);
-
-  // Polling hook to auto-reload details once background AI summary is ready
-  useEffect(() => {
-    if (fundDetail && fundDetail.fund && fundDetail.fund.ai_summary === "Generating AI Analysis in the background...") {
-      const pollTimer = setTimeout(() => {
-        fetchDetail(schemeCode);
-      }, 4000);
-      return () => clearTimeout(pollTimer);
-    }
-  }, [fundDetail, schemeCode, fetchDetail]);
+  const error = fundError ? (fundError.response?.data?.detail || fundError.message || 'Failed to fetch fund details.') : null;
 
   // Handle manual data refresh
   const handleSync = async () => {
     try {
       await sync(schemeCode);
-      fetchDetail(schemeCode);
+      refetch();
     } catch (err) {
       console.error("Manual sync failed", err);
     }

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
-import { useGetStockDetail, useStockAIChat, useWatchlist } from '../hooks/useStocks';
+import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
+import { useStockDetail, useWatchlistQuery } from '../hooks/useQueries';
+import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
 import AnalystResponseCard from '../components/AnalystResponseCard';
@@ -10,60 +12,26 @@ export default function StockDetail() {
   const { symbol } = useParams();
   const navigate = useNavigate();
   
-  const { stockDetail, loading, error, fetchDetail, discovering, checkStatus } = useGetStockDetail();
-  const { watchlist, addToWatchlist, removeFromWatchlist, fetchWatchlist } = useWatchlist();
+  const queryClient = useQueryClient();
+  const { data: stockDetail, isLoading: loading, error: stockError, refetch } = useStockDetail(symbol);
+  const { data: watchlist = [] } = useWatchlistQuery();
+  const { addToWatchlist, removeFromWatchlist } = useWatchlist();
   
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
   const [discoverStep, setDiscoverStep] = useState(0);
 
-  useEffect(() => {
-    fetchDetail(symbol);
-    fetchWatchlist();
-  }, [symbol, fetchDetail, fetchWatchlist]);
+  const error = stockError ? (stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
+  const discovering = stockDetail?.status === 'discovering';
 
-  // Discovering state: poll /status every 5s until stock is ready, then load full detail
+  // Cycle through step labels every 4s during discovery
   useEffect(() => {
     if (!discovering) return;
-    const DISCOVERY_STEPS = [
-      'Connecting to NSE live data feed...',
-      'Fetching 6Y price history from Yahoo Finance...',
-      'Computing CAGR (1Y / 3Y / 5Y) metrics...',
-      'Calculating Beta against NIFTY benchmark...',
-      'Running multi-factor Alpha Score model...',
-      'Persisting to AlphaMatrix intelligence database...',
-      'Running AI equity briefing synthesis...',
-    ];
-    // Cycle through step labels every 4s
     const stepInterval = setInterval(() => {
-      setDiscoverStep((prev) => (prev + 1) % DISCOVERY_STEPS.length);
+      setDiscoverStep((prev) => (prev + 1) % 7);
     }, 4000);
-    // Poll status every 6s
-    const pollInterval = setInterval(async () => {
-      const statusData = await checkStatus(symbol);
-      if (statusData?.status === 'ready') {
-        clearInterval(stepInterval);
-        clearInterval(pollInterval);
-        // Re-fetch full detail now that ingestion is complete
-        fetchDetail(symbol);
-      }
-    }, 6000);
-    return () => {
-      clearInterval(stepInterval);
-      clearInterval(pollInterval);
-    };
-  }, [discovering, symbol, checkStatus, fetchDetail]);
-
-  // Polling to reload details when background AI summary is ready
-  useEffect(() => {
-    if (stockDetail && stockDetail.stock && stockDetail.stock.ai_summary === "Generating Equity Intelligence Briefing in the background...") {
-      const pollTimer = setTimeout(() => {
-        fetchDetail(symbol);
-      }, 4000);
-      return () => clearTimeout(pollTimer);
-    }
-  }, [stockDetail, symbol, fetchDetail]);
-
+    return () => clearInterval(stepInterval);
+  }, [discovering]);
 
   const handleSendChat = (e) => {
     e.preventDefault();
@@ -83,6 +51,7 @@ export default function StockDetail() {
       } else {
         await addToWatchlist(symbol);
       }
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     } catch (err) {
       console.error("Watchlist modification failed", err);
     }

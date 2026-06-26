@@ -58,7 +58,7 @@ export function useStockList(params = {}) {
   });
 }
 
-/** Returns detailed stock data for a symbol. Handles 202 discovering state. */
+/** Returns detailed stock data for a symbol. Handles 202 discovering state with auto-polling. */
 export function useStockDetail(symbol) {
   return useQuery({
     queryKey: qk.stockDetail(symbol),
@@ -69,7 +69,13 @@ export function useStockDetail(symbol) {
       return response.data;
     },
     enabled: !!symbol,
-    staleTime: STALE.MASTER,
+    staleTime: (query) => {
+      return query?.state?.data?.status === 'discovering' ? 0 : STALE.MASTER;
+    },
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      return data?.status === 'discovering' ? 5000 : false;
+    },
     retry: 1,
   });
 }
@@ -128,7 +134,7 @@ export function useFundList(params = {}) {
   });
 }
 
-/** Returns detailed fund data including NAV history */
+/** Returns detailed fund data including NAV history and background AI generation auto-polling */
 export function useFundDetail(schemeCode) {
   return useQuery({
     queryKey: qk.fundDetail(schemeCode),
@@ -137,7 +143,14 @@ export function useFundDetail(schemeCode) {
       return data;
     },
     enabled: !!schemeCode,
-    staleTime: STALE.FUND,
+    staleTime: (query) => {
+      const data = query?.state?.data;
+      return data?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : STALE.FUND;
+    },
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      return data?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false;
+    },
     retry: 1,
   });
 }
