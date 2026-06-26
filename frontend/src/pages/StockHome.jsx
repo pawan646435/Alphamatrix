@@ -4,10 +4,11 @@ import { TrendingUp, Star, Cpu, Layers, MessageSquare, ArrowUpRight, Activity } 
 import { useGetStocks, useStockAIChat, useMarketRegime } from '../hooks/useStocks';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
+import { CardGridSkeleton } from '../components/skeletons/Skeletons';
 
 export default function StockHome() {
   const navigate = useNavigate();
-  const { stocks, fetchStocks } = useGetStocks();
+  const { stocks, loading: stocksLoading, fetchStocks } = useGetStocks();
   const { marketRegime, loading: regimeLoading, fetchMarketRegime } = useMarketRegime();
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
@@ -89,63 +90,67 @@ export default function StockHome() {
       </div>
 
       {/* Analytics Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
-        <div className="terminal-card flex items-center gap-4 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-          <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
-            <Layers className="h-4 w-4" />
+      {stocksLoading ? (
+        <CardGridSkeleton count={4} />
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+          <div className="terminal-card flex items-center gap-4 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+            <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
+              <Layers className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">EQUITIES MASTERSTORE</p>
+              <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.activeCount} seeded</h3>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">EQUITIES MASTERSTORE</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.activeCount} seeded</h3>
-          </div>
-        </div>
 
-        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '150ms' }}>
-          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
-            <TrendingUp className="h-4 w-4" />
+          <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '150ms' }}>
+            <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
+              <TrendingUp className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3Y STOCKS YIELD</p>
+              <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.avgCagr}</h3>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3Y STOCKS YIELD</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.avgCagr}</h3>
-          </div>
-        </div>
 
-        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '200ms' }}>
-          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
-            <Star className="h-4 w-4" />
+          <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '200ms' }}>
+            <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
+              <Star className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK ALPHA SCORE</p>
+              <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.peakAlpha}/100</h3>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK ALPHA SCORE</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.peakAlpha}/100</h3>
-          </div>
-        </div>
 
-        <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '250ms' }}>
-          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary shrink-0">
-            <Activity className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">MARKET REGIME</p>
-            {regimeLoading ? (
-              <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Calculating...</p>
-            ) : marketRegime ? (
-              <div className="space-y-0.5">
-                <h3 className="text-sm font-bold text-black dark:text-white font-mono flex items-center gap-1.5 leading-none">
-                  <span className={marketRegime.regime === 'RISK ON' ? 'text-green-500' : marketRegime.regime === 'RISK OFF' ? 'text-red-500' : 'text-yellow-500'}>
-                    {marketRegime.regime}
-                  </span>
-                  <span className="text-[9px] font-mono text-brand-textMuted font-normal">({marketRegime.confidence}%)</span>
-                </h3>
-                <p className="text-[9px] text-brand-textMuted leading-tight truncate font-sans hover:text-clip hover:whitespace-normal" title={marketRegime.explanation}>
-                  {marketRegime.explanation}
-                </p>
-              </div>
-            ) : (
-              <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Unavailable</p>
-            )}
+          <div className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]" style={{ animationDelay: '250ms' }}>
+            <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary shrink-0">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">MARKET REGIME</p>
+              {regimeLoading ? (
+                <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Calculating...</p>
+              ) : marketRegime ? (
+                <div className="space-y-0.5">
+                  <h3 className="text-sm font-bold text-black dark:text-white font-mono flex items-center gap-1.5 leading-none">
+                    <span className={marketRegime.regime === 'RISK ON' ? 'text-green-500' : marketRegime.regime === 'RISK OFF' ? 'text-red-500' : 'text-yellow-500'}>
+                      {marketRegime.regime}
+                    </span>
+                    <span className="text-[9px] font-mono text-brand-textMuted font-normal">({marketRegime.confidence}%)</span>
+                  </h3>
+                  <p className="text-[9px] text-brand-textMuted leading-tight truncate font-sans hover:text-clip hover:whitespace-normal" title={marketRegime.explanation}>
+                    {marketRegime.explanation}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Unavailable</p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Middle Grid: Sector Matrix cards and Scatterplot */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">

@@ -48,7 +48,19 @@ def _init_db_engine():
             local_url if not is_sqlite else db_url,
             echo=False,
             connect_args=connect_args,
+            # Connection pool settings for production (PostgreSQL only)
+            # pool_size: number of persistent connections kept open
+            # max_overflow: additional connections allowed above pool_size
+            # pool_pre_ping: test connection liveness before use (prevents stale connection errors on Neon)
+            # pool_recycle: recycle connections after 5 minutes to match Neon idle timeout
+            **({
+                "pool_size": 5,
+                "max_overflow": 10,
+                "pool_pre_ping": True,
+                "pool_recycle": 300,
+            } if not is_sqlite else {}),
         )
+
         _real_async_session_maker = async_sessionmaker(
             bind=engine,
             class_=AsyncSession,

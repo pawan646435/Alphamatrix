@@ -4,10 +4,11 @@ import { TrendingUp, Layers, MessageSquare, Star, Cpu } from 'lucide-react';
 import { useGetFunds, useAIChat } from '../hooks/useFunds';
 import RiskScatterplot from '../components/charts/RiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
+import { CardSkeleton } from '../components/skeletons/Skeletons';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { funds, fetchFunds } = useGetFunds();
+  const { funds, loading: fundsLoading, fetchFunds } = useGetFunds();
   
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
@@ -86,46 +87,56 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Analytics Overview Cards - Staggered Animations */}
+      {/* Analytics Overview Cards - show skeletons until data is ready */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up"
-          style={{ animationDelay: '100ms' }}
-        >
-          <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
-            <Layers className="h-4 w-4" />
-          </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">OPERATIONAL DATABASE</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.activeCount} seeded</h3>
-          </div>
-        </div>
+        {fundsLoading ? (
+          <>
+            <CardSkeleton />
+            <CardSkeleton />
+            <CardSkeleton />
+          </>
+        ) : (
+          <>
+            <div 
+              className="terminal-card flex items-center gap-4 animate-fade-in-up"
+              style={{ animationDelay: '100ms' }}
+            >
+              <div className="w-10 h-10 border border-brand-border bg-brand-surface flex items-center justify-center text-brand-primary">
+                <Layers className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">OPERATIONAL DATABASE</p>
+                <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.activeCount} seeded</h3>
+              </div>
+            </div>
 
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
-          style={{ animationDelay: '150ms' }}
-        >
-          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
-            <TrendingUp className="h-4 w-4" />
-          </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3-YEAR YIELD</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.avgCagr}</h3>
-          </div>
-        </div>
+            <div 
+              className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
+              style={{ animationDelay: '150ms' }}
+            >
+              <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
+                <TrendingUp className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">AVG 3-YEAR YIELD</p>
+                <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.avgCagr}</h3>
+              </div>
+            </div>
 
-        <div 
-          className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
-          style={{ animationDelay: '200ms' }}
-        >
-          <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
-            <Star className="h-4 w-4" />
-          </div>
-          <div>
-            <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK SHARPE RATIO</p>
-            <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.maxSharpe}</h3>
-          </div>
-        </div>
+            <div 
+              className="terminal-card flex items-center gap-4 animate-fade-in-up hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]"
+              style={{ animationDelay: '200ms' }}
+            >
+              <div className="w-10 h-10 border border-brand-primary bg-brand-surface flex items-center justify-center text-brand-primary">
+                <Star className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[10px] text-brand-textMuted uppercase font-bold tracking-wider font-display">PEAK SHARPE RATIO</p>
+                <h3 className="text-xl font-bold text-black dark:text-white mt-0.5 font-mono">{stats.maxSharpe}</h3>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Middle Grid: Segment Matrix cards and Scatterplot */}

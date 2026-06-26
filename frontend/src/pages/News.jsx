@@ -4,6 +4,7 @@ import {
   TrendingUp, TrendingDown, Minus, Filter, AlertTriangle 
 } from 'lucide-react';
 import apiClient from '../services/api';
+import { NewsCardSkeleton } from '../components/skeletons/Skeletons';
 
 const CATEGORIES = [
   { id: 'all', label: 'All Feeds' },
@@ -199,12 +200,12 @@ export default function News() {
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Loading State — skeleton cards matching real card dimensions */}
       {loading ? (
-        <div className="p-8 border border-dashed border-brand-border rounded flex flex-col items-center justify-center space-y-3 bg-brand-surface/40 min-h-[300px]">
-          <RefreshCw className="h-6 w-6 animate-spin text-brand-primary" />
-          <span className="font-mono text-xs text-brand-primary uppercase tracking-widest animate-pulse">[Loading Market Intelligence...]</span>
-          <p className="text-[10px] text-brand-textMuted">Syncing live RSS telemetry feeds...</p>
+        <div className="space-y-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <NewsCardSkeleton key={i} />
+          ))}
         </div>
       ) : (
         /* Focused Single-Column News List Container */

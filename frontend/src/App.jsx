@@ -2,14 +2,16 @@ import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { LayoutDashboard, Compass, Sun, Moon, Star, RefreshCw, GitCompare, Newspaper, Menu, X, LogOut, LogIn, ChevronDown, User, Settings } from 'lucide-react';
 import AlphaMatrixLogo from './components/AlphaMatrixLogo';
-import Home from './pages/Home';
-import Explorer from './pages/Explorer';
-import Detail from './pages/Detail';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
-import SettingsPage from './pages/Settings';
 import { AuthProvider } from './context/AuthContext';
 import useAuth from './hooks/useAuth';
+
+// ── Lazy-loaded Mutual Fund Pages ──
+const Home = React.lazy(() => import('./pages/Home'));
+const Explorer = React.lazy(() => import('./pages/Explorer'));
+const Detail = React.lazy(() => import('./pages/Detail'));
+const Login = React.lazy(() => import('./pages/Login'));
+const Signup = React.lazy(() => import('./pages/Signup'));
+const SettingsPage = React.lazy(() => import('./pages/Settings'));
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -27,7 +29,7 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-// Lazy loaded Stock Pages
+// ── Lazy-loaded Stock Pages ──
 const StockHome = React.lazy(() => import('./pages/StockHome'));
 const StockExplorer = React.lazy(() => import('./pages/StockExplorer'));
 const StockDetail = React.lazy(() => import('./pages/StockDetail'));

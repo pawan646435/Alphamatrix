@@ -2,8 +2,10 @@ import os
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import asyncio
 import logging
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db, async_session_maker
@@ -35,6 +37,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip compression for all JSON responses > 1KB
+# Reduces payload size ~60-70% on typical fund/stock JSON responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Cache-Control headers for static-ish read endpoints
+# Instructs Vercel edge cache and browser to cache read API responses
+CACHEABLE_PREFIXES = (
+    "/api/v1/stocks/list",
+    "/api/v1/stocks/detail/",
+    "/api/v1/stocks/sector/",
+    "/api/v1/stocks/market-regime",
+    "/api/v1/funds/",
+    "/api/v1/news/",
+    "/api/v1/search",
+)
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if request.method == "GET" and any(path.startswith(p) for p in CACHEABLE_PREFIXES):
+            # stale-while-revalidate: serve stale for 60s while refetching in background
+            response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=30"
+        return response
+
+app.add_middleware(CacheControlMiddleware)
+
 
 # Include v1 routes
 app.include_router(api_router, prefix=settings.API_V1_STR)

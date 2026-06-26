@@ -7,6 +7,27 @@ from app.core.config import settings
 
 logger = logging.getLogger("app.core.redis")
 
+# ---------------------------------------------------------------------------
+# Shared persistent httpx client for Upstash REST API calls.
+# Creating a new AsyncClient per request wastes connection setup time.
+# A module-level client is reused across all coroutines within the same worker.
+# ---------------------------------------------------------------------------
+_upstash_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return (or lazily create) the shared Upstash HTTP client."""
+    global _upstash_http_client
+    if _upstash_http_client is None or _upstash_http_client.is_closed:
+        # connection limits: max 20 concurrent connections to Upstash REST
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        _upstash_http_client = httpx.AsyncClient(
+            timeout=5.0,
+            limits=limits,
+        )
+    return _upstash_http_client
+
+
 class RedisClient:
     def __init__(self):
         self.redis_client = None
@@ -18,14 +39,18 @@ class RedisClient:
     def _ensure_client(self):
         if self._initialized:
             return
-        
+
         self._initialized = True
-        
-        # Initialize TCP client if REDIS_URL is configured
+
+        # Normalize Upstash REST URL
+        if self.rest_url and self.rest_url.endswith("/"):
+            self.rest_url = self.rest_url[:-1]
+
+        # Initialize TCP client only when REDIS_URL is configured
         if self.redis_url:
             is_vercel = os.environ.get("VERCEL") is not None
             is_local_redis = "localhost" in self.redis_url or "127.0.0.1" in self.redis_url
-            
+
             if is_vercel and is_local_redis:
                 logger.info("Skipping local TCP Redis connection in Vercel serverless environment.")
                 self.redis_client = None
@@ -38,12 +63,8 @@ class RedisClient:
                     logger.error(f"Failed to connect to TCP Redis at {self.redis_url}: {e}")
                     self.redis_client = None
 
-        # Check if Upstash REST is active
         if not self.redis_client and self.rest_url and self.rest_token:
-            logger.info("Using Upstash Redis REST API client.")
-            # Normalize REST URL to ensure no trailing slash
-            if self.rest_url.endswith("/"):
-                self.rest_url = self.rest_url[:-1]
+            logger.info("Using Upstash Redis REST API (persistent connection pool).")
 
     async def get(self, key: str) -> Optional[str]:
         self._ensure_client()
@@ -53,21 +74,17 @@ class RedisClient:
             except Exception as e:
                 logger.error(f"TCP Redis GET failed: {e}")
                 return None
-                
+
         if self.rest_url and self.rest_token:
             try:
-                async with httpx.AsyncClient() as client:
-                    headers = {"Authorization": f"Bearer {self.rest_token}"}
-                    response = await client.post(
-                        self.rest_url,
-                        json=["GET", key],
-                        headers=headers,
-                        timeout=5.0
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        # Upstash REST returns {"result": value}
-                        return data.get("result")
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["GET", key],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    return response.json().get("result")
             except Exception as e:
                 logger.error(f"Upstash Redis REST GET failed: {e}")
                 return None
@@ -82,19 +99,16 @@ class RedisClient:
             except Exception as e:
                 logger.error(f"TCP Redis SETEX failed: {e}")
                 return False
-                
+
         if self.rest_url and self.rest_token:
             try:
-                async with httpx.AsyncClient() as client:
-                    headers = {"Authorization": f"Bearer {self.rest_token}"}
-                    response = await client.post(
-                        self.rest_url,
-                        json=["SET", key, value, "EX", str(seconds)],
-                        headers=headers,
-                        timeout=5.0
-                    )
-                    if response.status_code == 200:
-                        return True
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["SET", key, value, "EX", str(seconds)],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                return response.status_code == 200
             except Exception as e:
                 logger.error(f"Upstash Redis REST SETEX failed: {e}")
                 return False
@@ -109,23 +123,22 @@ class RedisClient:
             except Exception as e:
                 logger.error(f"TCP Redis DELETE failed: {e}")
                 return False
-                
+
         if self.rest_url and self.rest_token:
             try:
-                async with httpx.AsyncClient() as client:
-                    headers = {"Authorization": f"Bearer {self.rest_token}"}
-                    for key in keys:
-                        await client.post(
-                            self.rest_url,
-                            json=["DEL", key],
-                            headers=headers,
-                            timeout=5.0
-                        )
-                    return True
+                client = _get_http_client()
+                for key in keys:
+                    await client.post(
+                        self.rest_url,
+                        json=["DEL", key],
+                        headers={"Authorization": f"Bearer {self.rest_token}"},
+                    )
+                return True
             except Exception as e:
                 logger.error(f"Upstash Redis REST DELETE failed: {e}")
                 return False
         return False
+
 
 # Singleton instance
 redis_client = RedisClient()
