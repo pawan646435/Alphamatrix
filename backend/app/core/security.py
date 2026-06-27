@@ -78,7 +78,7 @@ async def fetch_firebase_keys():
     if not firebase_keys or now - last_fetched_keys > 3600:
         try:
             async with httpx.AsyncClient() as client:
-                res = await client.get("https://www.googleapis.com/robot/v1/metadata/x509/securetoken-system@system.gserviceaccount.com")
+                res = await client.get("https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com")
                 if res.status_code == 200:
                     firebase_keys = res.json()
                     last_fetched_keys = now
