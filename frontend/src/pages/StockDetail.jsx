@@ -45,6 +45,13 @@ export default function StockDetail() {
     }
   };
 
+  const handleSendChat = (e) => {
+    e.preventDefault();
+    if (!chatMessage.trim()) return;
+    sendMessage(chatMessage, symbol, messages);
+    setChatMessage('');
+  };
+
   // Safe fallback placeholders for progressive loading
   const stock = stockDetail?.stock || {
     symbol: symbol,
