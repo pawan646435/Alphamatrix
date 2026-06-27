@@ -249,6 +249,7 @@ async def generate_briefing_background(symbol: str):
                     f"stock_briefing:{symbol}", 
                     f"stock_history:{symbol}"
                 )
+                await redis_client.delete_pattern("stocks_list:*")
                 logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
             except Exception as cache_err:
                 logger.error(f"Failed to invalidate Redis cache for stock {symbol}: {cache_err}")
@@ -310,7 +311,17 @@ async def get_stocks(
     """
     Get list of seeded stocks applying sector/financial filters.
     """
-    query = select(StockMaster)
+    cache_key = f"stocks_list:{sector or ''}:{min_cagr_3y or ''}:{min_roe or ''}:{max_debt_equity or ''}:{max_pe or ''}:{sort_by or ''}:{sort_order or ''}:{skip}:{limit}"
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            if response is not None:
+                response.headers["X-Cache"] = "hit"
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stocks list failed: {e}")
+
+    query = select(StockMaster).where(StockMaster.sector != "Invalid")
     
     # Apply filters
     if sector:
@@ -341,10 +352,31 @@ async def get_stocks(
     result = await db.execute(query)
     stocks = result.scalars().all()
 
+    stocks_data = [
+        {
+            "symbol": s.symbol,
+            "company_name": s.company_name,
+            "sector": s.sector,
+            "cagr_1y": s.cagr_1y,
+            "cagr_3y": s.cagr_3y,
+            "cagr_5y": s.cagr_5y,
+            "pe_ratio": s.pe_ratio,
+            "roe": s.roe,
+            "alpha_score": s.alpha_score,
+            "beta": s.beta
+        }
+        for s in stocks
+    ]
+
+    try:
+        await redis_client.setex(cache_key, STOCK_LIST_TTL, json.dumps(stocks_data))
+    except Exception as e:
+        logger.error(f"Redis set stocks list failed: {e}")
+
     if response is not None:
         response.headers["X-Cache"] = "miss"
 
-    return stocks
+    return stocks_data
 
 @router.get("/detail/{symbol}", response_model=StockDetailResponse, dependencies=[Depends(check_rate_limit)])
 async def get_stock_detail(
@@ -578,7 +610,8 @@ async def add_to_watchlist(symbol: str = Query(..., min_length=1, max_length=20)
     symbol = symbol.upper().strip()
     # Check if stock exists
     check_stock = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
-    if not check_stock.scalar_one_or_none():
+    stock = check_stock.scalar_one_or_none()
+    if not stock or stock.sector == "Invalid":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stock {symbol} does not exist in our index."
@@ -702,6 +735,11 @@ async def get_sector_lab(sector: str = Path(..., min_length=1, max_length=30), d
     Get sector details, score, drivers, risks, top companies, and AI sector outlook.
     """
     sector_key = sector.upper().strip()
+    if sector_key not in SECTOR_MAP:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sector '{sector}' has no seeded companies in our store."
+        )
     sector_label = SECTOR_LABELS.get(sector_key, sector)
     cache_key = f"sector_details:{sector_key.lower()}"
     try:
@@ -717,6 +755,7 @@ async def get_sector_lab(sector: str = Path(..., min_length=1, max_length=30), d
         query = select(StockMaster).where(StockMaster.sector.ilike(db_sectors[0]))
     else:
         query = select(StockMaster).where(StockMaster.sector.in_(db_sectors))
+    query = query.where(StockMaster.sector != "Invalid")
 
     result = await db.execute(query.order_by(StockMaster.alpha_score.desc()))
     stocks = result.scalars().all()
@@ -780,7 +819,7 @@ async def compare_stocks(
     s2_q = await db.execute(select(StockMaster).where(StockMaster.symbol == s2))
     stock2 = s2_q.scalar_one_or_none()
     
-    if not stock1 or not stock2:
+    if not stock1 or stock1.sector == "Invalid" or not stock2 or stock2.sector == "Invalid":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"One or both symbols ({s1}, {s2}) not found in database."

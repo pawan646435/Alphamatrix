@@ -68,10 +68,15 @@ class TestStockDetail:
         resp = client.get("/api/v1/stocks/detail/RELIANCE")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["symbol"] == "RELIANCE"
-        assert data["company_name"] == "Reliance Industries Ltd"
+        assert data["stock"]["symbol"] == "RELIANCE"
+        assert data["stock"]["company_name"] == "Reliance Industries Ltd"
 
     def test_detail_not_found(self, client):
+        # First call triggers dynamic ingestion and returns 202
+        resp = client.get("/api/v1/stocks/detail/INVALID")
+        assert resp.status_code in (202, 404)
+        
+        # Subsequent call returns 404 since it gets saved as Invalid
         resp = client.get("/api/v1/stocks/detail/INVALID")
         assert resp.status_code == 404
 
@@ -175,7 +180,7 @@ class TestSectorLab:
         resp = client.get("/api/v1/stocks/sector/ENERGY")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["sector"] == "ENERGY"
+        assert data["sector"] == "Energy"
         assert len(data["top_stocks"]) >= 1
 
     def test_sector_lab_invalid(self, client):

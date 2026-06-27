@@ -220,14 +220,13 @@ async def generate_summary_background(scheme_code: int):
             fund.ai_summary = summary
             await session.commit()
             # Invalidate Redis cache so that the frontend immediately pulls the new completed summary
-            if settings.REDIS_URL:
-                try:
-                    import redis
-                    r = redis.from_url(settings.REDIS_URL)
-                    r.delete(f"fund_detail:{scheme_code}")
-                    logger.info(f"Invalidated Redis cache for fund {scheme_code} after AI summary completion")
-                except Exception as cache_err:
-                    logger.error(f"Failed to invalidate Redis cache for fund {scheme_code}: {cache_err}")
+            try:
+                from app.core.redis import redis_client
+                await redis_client.delete(f"fund_detail:{scheme_code}")
+                await redis_client.delete_pattern("funds_list:*")
+                logger.info(f"Invalidated Redis cache for fund {scheme_code} after AI summary completion")
+            except Exception as cache_err:
+                logger.error(f"Failed to invalidate Redis cache for fund {scheme_code}: {cache_err}")
             logger.info(f"Background AI summary generated successfully for scheme_code {scheme_code}")
         except Exception as e:
             logger.error(f"Error in background summary task for scheme_code {scheme_code}: {e}")
@@ -418,14 +417,13 @@ async def ingest_fund(
         
     await db.commit()
     # Invalidate Redis cache after ingestion
-    if settings.REDIS_URL:
-        try:
-            import redis
-            r = redis.from_url(settings.REDIS_URL)
-            r.delete(f"fund_detail:{scheme_code}")
-            logger.info(f"Invalidated Redis cache for fund {scheme_code} after ingestion")
-        except Exception as cache_err:
-            logger.error(f"Failed to invalidate Redis cache for fund {scheme_code}: {cache_err}")
+    try:
+        from app.core.redis import redis_client
+        await redis_client.delete(f"fund_detail:{scheme_code}")
+        await redis_client.delete_pattern("funds_list:*")
+        logger.info(f"Invalidated Redis cache for fund {scheme_code} after ingestion")
+    except Exception as cache_err:
+        logger.error(f"Failed to invalidate Redis cache for fund {scheme_code}: {cache_err}")
     logger.info(f"Ingestion and metrics calculation complete for scheme_code: {scheme_code}")
     
     return {

@@ -113,6 +113,14 @@ async def get_funds(
     Get lists of ingested mutual funds applying filters.
     Includes pagination and dynamic sorting.
     """
+    cache_key = f"funds_list:{category or ''}:{min_cagr_1y or ''}:{max_cagr_1y or ''}:{min_cagr_3y or ''}:{max_cagr_3y or ''}:{min_cagr_5y or ''}:{max_cagr_5y or ''}:{min_expense_ratio or ''}:{max_expense_ratio or ''}:{min_sharpe_ratio or ''}:{max_sharpe_ratio or ''}:{min_pe_ratio or ''}:{max_pe_ratio or ''}:{sort_by or ''}:{sort_order or ''}:{skip}:{limit}"
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get funds list failed: {e}")
+
     query = select(FundMaster)
     
     # Apply filters
@@ -158,7 +166,29 @@ async def get_funds(
     result = await db.execute(query)
     funds = result.scalars().all()
     
-    return funds
+    funds_data = [
+        {
+            "scheme_code": f.scheme_code,
+            "fund_name": f.fund_name,
+            "category": f.category,
+            "cagr_1y": f.cagr_1y,
+            "cagr_3y": f.cagr_3y,
+            "cagr_5y": f.cagr_5y,
+            "sharpe_ratio": f.sharpe_ratio,
+            "alpha": f.alpha,
+            "pe_ratio": f.pe_ratio,
+            "expense_ratio": f.expense_ratio,
+            "beta": f.beta
+        }
+        for f in funds
+    ]
+
+    try:
+        await redis_client.setex(cache_key, FUND_LIST_TTL, json.dumps(funds_data))
+    except Exception as e:
+        logger.error(f"Redis set funds list failed: {e}")
+    
+    return funds_data
 
 @router.get("/{scheme_code}", response_model=FundDetailResponse, dependencies=[Depends(check_rate_limit)])
 async def get_fund_detail(
@@ -275,6 +305,7 @@ async def sync_fund_manual(
     # Invalidate cache
     try:
         await redis_client.delete(f"fund_detail:{scheme_code}")
+        await redis_client.delete_pattern("funds_list:*")
         logger.info(f"Invalidated Redis cache for manual sync of {scheme_code}")
     except Exception as e:
         logger.error(f"Failed to delete Redis cache key for {scheme_code}: {e}")
@@ -299,5 +330,9 @@ async def trigger_all_funds_sync(background_tasks: BackgroundTasks, db: AsyncSes
     """
     Trigger overnight sync for all loaded funds in the background.
     """
+    try:
+        await redis_client.delete_pattern("funds_list:*")
+    except Exception as e:
+        logger.error(f"Failed to delete Redis cache keys for sync-all: {e}")
     background_tasks.add_task(run_overnight_sync, db)
     return {"status": "accepted", "message": "Overnight batch update task launched in the background."}

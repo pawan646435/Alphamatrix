@@ -139,6 +139,38 @@ class RedisClient:
                 return False
         return False
 
+    async def keys(self, pattern: str) -> list:
+        self._ensure_client()
+        if self.redis_client:
+            try:
+                return self.redis_client.keys(pattern)
+            except Exception as e:
+                logger.error(f"TCP Redis KEYS failed: {e}")
+                return []
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["KEYS", pattern],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    return response.json().get("result") or []
+            except Exception as e:
+                logger.error(f"Upstash Redis REST KEYS failed: {e}")
+                return []
+        return []
+
+    async def delete_pattern(self, pattern: str) -> bool:
+        matching_keys = await self.keys(pattern)
+        if matching_keys:
+            # Handle list conversion / slicing if matching_keys is large, but for lists it is tiny
+            await self.delete(*[str(k) for k in matching_keys])
+            return True
+        return False
+
 
 # Singleton instance
 redis_client = RedisClient()

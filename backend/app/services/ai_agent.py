@@ -980,7 +980,7 @@ def _mock_stock_chat_response(message: str, stock_data: Optional[Dict[str, Any]]
     return "I am your AlphaMatrix AI Equity Analyst. Ask me about stock valuations, compare sectors, check watchlist metrics, or analyze individual corporate details."
 
 def _generate_mock_watchlist_analytics(stocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    scores = [s.get("alpha_score", 50) for s in stocks]
+    scores = [s.get("alpha_score") if s.get("alpha_score") is not None else 50.0 for s in stocks]
     avg_score = sum(scores) / len(scores) if scores else 0
     symbols = [s.get("symbol") for s in stocks]
     
@@ -999,7 +999,7 @@ def _generate_mock_watchlist_analytics(stocks: List[Dict[str, Any]]) -> Dict[str
     }
 
 def _generate_mock_sector_outlook(sector: str, stocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    scores = [s.get("alpha_score", 50) for s in stocks]
+    scores = [s.get("alpha_score") if s.get("alpha_score") is not None else 50.0 for s in stocks]
     avg_score = sum(scores) / len(scores) if scores else 65.0
     
     drivers = {
@@ -1141,8 +1141,8 @@ Safety Constraint: Use probability-based language. Avoid absolute statements.
 def _generate_mock_stock_comparison(s1: Dict[str, Any], s2: Dict[str, Any]) -> str:
     sym1 = s1.get("symbol")
     sym2 = s2.get("symbol")
-    score1 = s1.get("alpha_score", 50)
-    score2 = s2.get("alpha_score", 50)
+    score1 = s1.get("alpha_score") if s1.get("alpha_score") is not None else 50.0
+    score2 = s2.get("alpha_score") if s2.get("alpha_score") is not None else 50.0
     
     preferred = sym1 if score1 > score2 else sym2
     

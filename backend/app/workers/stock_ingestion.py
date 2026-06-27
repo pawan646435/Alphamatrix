@@ -512,6 +512,7 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
             f"stock_briefing:{symbol}",
             f"stock_search:{symbol.lower()}",
         )
+        await redis_client.delete_pattern("stocks_list:*")
     except Exception as e:
         logger.warning(f"Failed to invalidate Redis cache for {symbol}: {e}")
     
