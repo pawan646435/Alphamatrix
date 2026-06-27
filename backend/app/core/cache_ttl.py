@@ -43,3 +43,11 @@ AI_COMPARISON_TTL = 86_400    # 24 hours   — AI stock comparison verdicts
 # ---------------------------------------------------------------------------
 FUND_DETAIL_TTL = 3_600       # 1 hour    — fund NAV detail
 FUND_LIST_TTL = 3_600         # 1 hour    — fund list / explorer
+
+# ---------------------------------------------------------------------------
+# Optimized Data Caching Sprint (Phase 2 TTLs)
+# ---------------------------------------------------------------------------
+OPTIMIZED_METADATA_TTL = 86_400   # 24 hours
+OPTIMIZED_CHART_TTL = 86_400      # 24 hours
+OPTIMIZED_METRICS_TTL = 86_400    # 24 hours
+OPTIMIZED_AI_TTL = 604_800        # 7 days

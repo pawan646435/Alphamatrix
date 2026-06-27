@@ -92,7 +92,9 @@ export function useStockDetail(symbol, options = {}) {
       return response.data;
     },
     enabled: !!symbol,
-    staleTime: STALE.MASTER,
+    staleTime: 3600000, // 1 hour
+    gcTime: 86400000,    // 24 hours
+    cacheTime: 86400000, // 24 hours compatibility
     retry: 1,
     ...options
   });
@@ -161,7 +163,9 @@ export function useFundDetail(schemeCode, options = {}) {
       return data;
     },
     enabled: !!schemeCode,
-    staleTime: STALE.FUND,
+    staleTime: 3600000, // 1 hour
+    gcTime: 86400000,    // 24 hours
+    cacheTime: 86400000, // 24 hours compatibility
     retry: 1,
     ...options
   });

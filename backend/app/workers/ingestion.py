@@ -222,7 +222,12 @@ async def generate_summary_background(scheme_code: int):
             # Invalidate Redis cache so that the frontend immediately pulls the new completed summary
             try:
                 from app.core.redis import redis_client
-                await redis_client.delete(f"fund_detail:{scheme_code}")
+                await redis_client.delete(
+                    f"fund:{scheme_code}",
+                    f"fund_chart:{scheme_code}",
+                    f"fund_metrics:{scheme_code}",
+                    f"fund_ai:{scheme_code}"
+                )
                 await redis_client.delete_pattern("funds_list:*")
                 logger.info(f"Invalidated Redis cache for fund {scheme_code} after AI summary completion")
             except Exception as cache_err:
@@ -419,7 +424,12 @@ async def ingest_fund(
     # Invalidate Redis cache after ingestion
     try:
         from app.core.redis import redis_client
-        await redis_client.delete(f"fund_detail:{scheme_code}")
+        await redis_client.delete(
+            f"fund:{scheme_code}",
+            f"fund_chart:{scheme_code}",
+            f"fund_metrics:{scheme_code}",
+            f"fund_ai:{scheme_code}"
+        )
         await redis_client.delete_pattern("funds_list:*")
         logger.info(f"Invalidated Redis cache for fund {scheme_code} after ingestion")
     except Exception as cache_err:

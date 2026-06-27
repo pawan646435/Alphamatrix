@@ -12,11 +12,17 @@ export default function Detail() {
   const { schemeCode } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  
   const cachedData = queryClient.getQueryData(['funds', 'detail', schemeCode]);
+  const isDiscovering = cachedData?.status === 'discovering' || cachedData?.fund?.status === 'discovering' || cachedData?.fund?.cagr_1y === null;
+  
   const { data: fundDetail, isLoading: loading, error: fundError, refetch } = useFundDetail(schemeCode, {
-    staleTime: cachedData?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 0 : 3600000,
-    refetchInterval: cachedData?.fund?.ai_summary === "Generating AI Analysis in the background..." ? 4000 : false,
+    staleTime: isDiscovering ? 0 : 3600000,
+    refetchInterval: isDiscovering ? 3000 : false, // Poll faster for progressive hydration
   });
+  
+  const currentIsDiscovering = isDiscovering || fundDetail?.status === 'discovering' || fundDetail?.fund?.status === 'discovering' || fundDetail?.fund?.cagr_1y === null;
+  
   const { sync, loading: syncing } = useSyncFund();
   
   const [chatMessage, setChatMessage] = useState('');
@@ -41,15 +47,6 @@ export default function Detail() {
     setChatMessage('');
   };
 
-  if (loading && !fundDetail) {
-    return (
-      <div className="h-[60vh] flex flex-col items-center justify-center text-brand-textMuted font-mono">
-        <RefreshCw className="h-6 w-6 animate-spin text-brand-primary mb-3" />
-        <p className="text-[10px] tracking-wider">RESOLVING FUND PERFORMANCE PARAMETERS...</p>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
@@ -66,7 +63,7 @@ export default function Detail() {
     );
   }
 
-  if (!fundDetail || fundDetail.detail) {
+  if (!loading && !currentIsDiscovering && (!fundDetail || fundDetail.detail)) {
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
         <AlertTriangle className="h-10 w-10 text-brand-warning mx-auto" />
@@ -82,14 +79,35 @@ export default function Detail() {
     );
   }
 
-  const { fund, nav_history } = fundDetail;
+  // Safe fallback placeholders for progressive loading
+  const fund = fundDetail?.fund || {
+    scheme_code: schemeCode,
+    isin: 'Ingesting...',
+    fund_name: `Discovering Mutual Fund ${schemeCode}...`,
+    category: 'Equity',
+    sub_category: 'Ingesting...',
+    pe_ratio: null,
+    expense_ratio: null,
+    cagr_1y: null,
+    cagr_3y: null,
+    cagr_5y: null,
+    sharpe_ratio: null,
+    sortino_ratio: null,
+    alpha: null,
+    beta: null,
+    ai_summary: null,
+    last_updated: null
+  };
+  const nav_history = fundDetail?.nav_history || [];
 
   // Format helper
   const pct = (val) => (val !== null && val !== undefined ? `${(val * 100).toFixed(2)}%` : '—');
   const num = (val, dec = 2) => (val !== null && val !== undefined ? val.toFixed(dec) : '—');
 
+  const isBriefingLoading = currentIsDiscovering || !fund.ai_summary || fund.ai_summary === "Generating AI Analysis in the background...";
+
   // Parse bullets from ai_summary
-  const aiBullets = fund.ai_summary
+  const aiBullets = !isBriefingLoading && fund.ai_summary
     ? fund.ai_summary.split('\n').filter(line => line.trim().startsWith('-'))
     : [];
 
@@ -130,6 +148,19 @@ export default function Detail() {
     else if (lowerStance.includes('avoid')) stanceType = 'AVOID';
     else if (lowerStance.includes('hold')) stanceType = 'HOLD';
   }
+
+  const renderMetricVal = (val, formatter, colorClass = "text-black dark:text-white") => {
+    if (currentIsDiscovering || val === null || val === undefined) {
+      return (
+        <div className="h-5 w-16 bg-brand-border/40 animate-pulse rounded mx-auto mt-2" />
+      );
+    }
+    return (
+      <p className={`text-lg font-bold mt-1 font-mono ${colorClass}`}>
+        {formatter(val)}
+      </p>
+    );
+  };
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
@@ -183,7 +214,7 @@ export default function Detail() {
               <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[10px] text-brand-textMuted font-mono pt-1">
                 <p>SCHEME_CODE: <span className="text-black dark:text-white font-bold">{fund.scheme_code}</span></p>
                 {fund.isin && <p>ISIN: <span className="text-black dark:text-white font-bold">{fund.isin}</span></p>}
-                <p>LAST_SYNC: <span className="text-black dark:text-white">{new Date(fund.last_updated).toLocaleString('en-IN')}</span></p>
+                <p>LAST_SYNC: <span className="text-black dark:text-white">{fund.last_updated ? new Date(fund.last_updated).toLocaleString('en-IN') : 'Ingesting...'}</span></p>
               </div>
             </div>
           </div>
@@ -198,49 +229,49 @@ export default function Detail() {
         {/* Return cards */}
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">1Y CAGR</p>
-          <p className="text-lg font-bold text-brand-success mt-1 font-mono">{pct(fund.cagr_1y)}</p>
+          {renderMetricVal(fund.cagr_1y, pct, "text-brand-success")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">3Y CAGR</p>
-          <p className="text-lg font-bold text-black dark:text-white mt-1 font-mono">{pct(fund.cagr_3y)}</p>
+          {renderMetricVal(fund.cagr_3y, pct, "text-black dark:text-white")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">5Y CAGR</p>
-          <p className="text-lg font-bold text-black dark:text-white mt-1 font-mono">{pct(fund.cagr_5y)}</p>
+          {renderMetricVal(fund.cagr_5y, pct, "text-black dark:text-white")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Sharpe Ratio</p>
-          <p className="text-lg font-bold text-brand-primary mt-1 font-mono">{num(fund.sharpe_ratio)}</p>
+          {renderMetricVal(fund.sharpe_ratio, num, "text-brand-primary")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Sortino Ratio</p>
-          <p className="text-lg font-bold text-brand-primary mt-1 font-mono">{num(fund.sortino_ratio)}</p>
+          {renderMetricVal(fund.sortino_ratio, num, "text-brand-primary")}
         </div>
 
         {/* Risk CAPM cards */}
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Beta (Nifty50)</p>
-          <p className="text-lg font-bold text-brand-warning mt-1 font-mono">{num(fund.beta)}</p>
+          {renderMetricVal(fund.beta, num, "text-brand-warning")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Alpha (Nifty50)</p>
-          <p className="text-lg font-bold text-brand-warning mt-1 font-mono">{pct(fund.alpha)}</p>
+          {renderMetricVal(fund.alpha, pct, "text-brand-warning")}
         </div>
 
         {/* Cost and valuation cards */}
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">P/E Ratio</p>
-          <p className="text-lg font-bold text-black dark:text-white mt-1 font-mono">{num(fund.pe_ratio, 1)}</p>
+          {renderMetricVal(fund.pe_ratio, (val) => num(val, 1), "text-black dark:text-white")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Expense Ratio</p>
-          <p className="text-lg font-bold text-brand-textMuted mt-1 font-mono">{fund.expense_ratio ? `${fund.expense_ratio.toFixed(2)}%` : '—'}</p>
+          {renderMetricVal(fund.expense_ratio, (val) => `${val.toFixed(2)}%`, "text-brand-textMuted")}
         </div>
       </div>
 
@@ -249,7 +280,14 @@ export default function Detail() {
         className="w-full animate-fade-in-up shadow-xl"
         style={{ animationDelay: '150ms' }}
       >
-        <InteractiveChart navHistory={nav_history} />
+        {currentIsDiscovering || nav_history.length === 0 ? (
+          <div className="h-[360px] bg-brand-surface border border-brand-border flex flex-col items-center justify-center text-brand-textMuted font-mono">
+            <RefreshCw className="h-6 w-6 animate-spin text-brand-primary mb-3" />
+            <p className="text-[10px] tracking-wider uppercase">Loading interactive time-series timeline...</p>
+          </div>
+        ) : (
+          <InteractiveChart navHistory={nav_history} />
+        )}
       </div>
 
       {/* Bottom Layout: AI Synthesis and Contextual Chat stacked vertically */}
@@ -271,7 +309,28 @@ export default function Detail() {
           </div>
 
           <div className="p-6 md:p-8 flex-1 flex flex-col justify-between">
-            {aiBullets.length > 0 ? (
+            {isBriefingLoading ? (
+              <div className="space-y-6 animate-pulse flex-grow">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] font-mono border-b border-brand-border/40 pb-4 mb-4">
+                  <span className="text-brand-textMuted uppercase">[SOURCES_LINKS]:</span>
+                  <div className="h-4 bg-brand-border/40 rounded w-24" />
+                  <div className="h-4 bg-brand-border/40 rounded w-24" />
+                </div>
+                <div className="space-y-2 border-l-2 border-brand-border pl-4 py-1">
+                  <div className="h-3 bg-brand-border/40 rounded w-1/4 mb-2" />
+                  <div className="h-2.5 bg-brand-border/40 rounded w-5/6" />
+                  <div className="h-2.5 bg-brand-border/40 rounded w-4/5" />
+                </div>
+                <div className="space-y-2 border-l-2 border-brand-border pl-4 py-1">
+                  <div className="h-3 bg-brand-border/40 rounded w-1/4 mb-2" />
+                  <div className="h-2.5 bg-brand-border/40 rounded w-3/4" />
+                </div>
+                <div className="mt-6 border border-brand-border/40 p-4 relative overflow-hidden">
+                  <div className="h-3.5 bg-brand-border/40 rounded w-1/3 mb-2" />
+                  <div className="h-2.5 bg-brand-border/40 rounded w-full" />
+                </div>
+              </div>
+            ) : aiBullets.length > 0 ? (
               <div className="space-y-6">
                 {/* Data Sources and Links */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] font-mono border-b border-brand-border/40 pb-4 mb-4">

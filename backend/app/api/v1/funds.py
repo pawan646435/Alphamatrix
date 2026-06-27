@@ -20,10 +20,18 @@ from app.workers.cron_jobs import run_overnight_sync
 
 from app.core.config import settings
 from app.core.redis import redis_client
-from app.core.cache_ttl import FUND_DETAIL_TTL, FUND_LIST_TTL
+from app.core.cache_ttl import (
+    FUND_DETAIL_TTL, 
+    FUND_LIST_TTL,
+    OPTIMIZED_METADATA_TTL,
+    OPTIMIZED_CHART_TTL,
+    OPTIMIZED_METRICS_TTL,
+    OPTIMIZED_AI_TTL
+)
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.funds")
+ingesting_funds = set()
 
 # In-memory cache for all Indian mutual funds search
 MF_MASTER_LIST = []
@@ -192,106 +200,202 @@ async def get_funds(
 
 @router.get("/{scheme_code}", response_model=FundDetailResponse, dependencies=[Depends(check_rate_limit)])
 async def get_fund_detail(
-    scheme_code: int, 
-    background_tasks: BackgroundTasks, 
-    db: AsyncSession = Depends(get_db),
-    response: Response = None
+	scheme_code: int, 
+	background_tasks: BackgroundTasks, 
+	db: AsyncSession = Depends(get_db),
+	response: Response = None
 ):
     """
     Retrieve full details of a mutual fund and its NAV history.
     Self-healing: If the fund doesn't exist in DB, triggers on-demand ingestion.
     """
-    cache_key = f"fund_detail:{scheme_code}"
+    cached_meta = None
+    cached_chart = None
+    cached_metrics = None
+    cached_ai = None
+    
     try:
-        cached_data = await redis_client.get(cache_key)
-        if cached_data:
-            logger.info(f"Returning cached fund details for {scheme_code}")
-            return json.loads(cached_data)
+        import asyncio
+        cached_meta, cached_chart, cached_metrics, cached_ai = await asyncio.gather(
+            redis_client.get(f"fund:{scheme_code}"),
+            redis_client.get(f"fund_chart:{scheme_code}"),
+            redis_client.get(f"fund_metrics:{scheme_code}"),
+            redis_client.get(f"fund_ai:{scheme_code}")
+        )
     except Exception as e:
-        logger.error(f"Redis get failed for key {cache_key}: {e}")
+        logger.error(f"Redis get split detail failed for fund {scheme_code}: {e}")
+            
+    # Reconstruct from cache if all exist and summary is not generating placeholder
+    if cached_meta and cached_chart and cached_metrics and cached_ai:
+        meta_dict = json.loads(cached_meta)
+        metrics_dict = json.loads(cached_metrics)
+        ai_val = cached_ai
+        
+        fund_dict = {**meta_dict, **metrics_dict}
+        fund_dict["ai_summary"] = ai_val
+        fund_dict["status"] = "discovering" if fund_dict.get("cagr_1y") is None else "ready"
+        
+        if ai_val != "Generating AI Analysis in the background...":
+            logger.info(f"Returning fully split cached fund details for {scheme_code}")
+            return {
+                "fund": fund_dict,
+                "nav_history": json.loads(cached_chart)
+            }
 
     # Check if fund exists
     fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
     fund = fund_check.scalar_one_or_none()
     
-    if not fund:
-        logger.info(f"Fund {scheme_code} not found in DB. Ingesting on-demand...")
-        try:
-            await ingest_fund(db, scheme_code, force_recompute=True, background_tasks=background_tasks)
-            # Fetch again after ingestion
-            fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
-            fund = fund_check.scalar_one_or_none()
-        except Exception as e:
-            logger.error(f"On-demand ingestion failed for {scheme_code}: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Mutual Fund with code {scheme_code} not found, and on-demand ingestion failed: {str(e)}"
-            )
-            
-    if not fund:
+    if fund and fund.isin == "Invalid":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Mutual Fund with code {scheme_code} not found."
+            detail=f"Mutual Fund with code {scheme_code} not found on live exchanges."
         )
-        
-    # If the fund exists but doesn't have a summary, trigger background summary generation
-    if not fund.ai_summary or fund.ai_summary == "Generating AI Analysis in the background...":
-        from app.workers.ingestion import generate_summary_background
-        logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
-        fund.ai_summary = "Generating AI Analysis in the background..."
-        await db.commit()
-        await db.refresh(fund)
-        
-        # Invalidate cache so that cached response reflects the loading status
-        try:
-            await redis_client.delete(cache_key)
-        except Exception as e:
-            logger.error(f"Failed to clear Redis cache on summary status change: {e}")
-                
-        background_tasks.add_task(generate_summary_background, scheme_code)
-
-    # Get NAV history sorted descending (latest first)
-    nav_check = await db.execute(
-        select(NAVHistory.date, NAVHistory.nav)
-        .where(NAVHistory.scheme_code == scheme_code)
-        .order_by(NAVHistory.date.desc())
-    )
-    navs = [{"date": row.date.isoformat(), "nav": row.nav} for row in nav_check.all()]
     
-    response_data = {
-        "fund": {
-            "scheme_code": fund.scheme_code,
-            "isin": fund.isin,
-            "fund_name": fund.fund_name,
-            "category": fund.category,
-            "sub_category": fund.sub_category,
-            "pe_ratio": fund.pe_ratio,
-            "expense_ratio": fund.expense_ratio,
-            "cagr_1y": fund.cagr_1y,
-            "cagr_3y": fund.cagr_3y,
-            "cagr_5y": fund.cagr_5y,
-            "sharpe_ratio": fund.sharpe_ratio,
-            "sortino_ratio": fund.sortino_ratio,
-            "alpha": fund.alpha,
-            "beta": fund.beta,
-            "ai_summary": fund.ai_summary,
-            "last_updated": fund.last_updated.isoformat() if fund.last_updated else None
-        },
-        "nav_history": navs
+    is_new = False
+    if not fund:
+        logger.info(f"Fund {scheme_code} not found in DB. Creating skeleton and scheduling background sync...")
+        try:
+            fund = FundMaster(
+                scheme_code=scheme_code,
+                isin=None,
+                fund_name=f"Discovering Mutual Fund {scheme_code}...",
+                category="Equity",
+                sub_category="Unknown",
+                pe_ratio=None,
+                expense_ratio=None,
+                ai_summary="Generating AI Analysis in the background..."
+            )
+            db.add(fund)
+            await db.commit()
+            await db.refresh(fund)
+            is_new = True
+        except Exception as e:
+            await db.rollback()
+            fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
+            fund = fund_check.scalar_one_or_none()
+            if not fund:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to initialize skeleton metadata for fund {scheme_code}: {e}"
+                )
+            
+    # Trigger background ingestion if new skeleton or if metrics are missing
+    if is_new or (fund.cagr_1y is None and fund.category == "Equity" and fund.sub_category == "Unknown"):
+        if scheme_code not in ingesting_funds:
+            ingesting_funds.add(scheme_code)
+            logger.info(f"Fund {scheme_code} is in skeleton/discovering state — scheduling background ingestion")
+            async def _ingest_and_brief(code: int):
+                from app.core.database import async_session_maker
+                from app.workers.ingestion import ingest_fund, generate_summary_background
+                from app.models.fund import FundMaster
+                try:
+                    async with async_session_maker() as ingest_session:
+                        await ingest_fund(ingest_session, code, force_recompute=True)
+                        await generate_summary_background(code)
+                except Exception as e:
+                    logger.error(f"Background ingest failed for fund {code}: {e}")
+                    # Mark fund as invalid in database to prevent infinite discovery loops
+                    async with async_session_maker() as cleanup_session:
+                        res = await cleanup_session.execute(
+                            select(FundMaster).where(FundMaster.scheme_code == code)
+                        )
+                        f = res.scalar_one_or_none()
+                        if f:
+                            f.isin = "Invalid"
+                            f.fund_name = f"Invalid Fund ({code})"
+                            await cleanup_session.commit()
+                finally:
+                    ingesting_funds.discard(code)
+            background_tasks.add_task(_ingest_and_brief, scheme_code)
+        
+    # Trigger background AI summary if missing (for already ingested funds)
+    trigger_background = False
+    if fund.cagr_1y is not None:
+        if not fund.ai_summary or fund.ai_summary == "Generating AI Analysis in the background...":
+            from app.workers.ingestion import generate_summary_background
+            logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
+            fund.ai_summary = "Generating AI Analysis in the background..."
+            await db.commit()
+            await db.refresh(fund)
+            trigger_background = True
+            
+            try:
+                await redis_client.delete(f"fund_ai:{scheme_code}")
+            except Exception as e:
+                logger.error(f"Failed to clear Redis cache on summary status change: {e}")
+                    
+            background_tasks.add_task(generate_summary_background, scheme_code)
+
+    navs = []
+    if cached_chart:
+        navs = json.loads(cached_chart)
+    else:
+        # Get NAV history sorted descending (latest first)
+        nav_check = await db.execute(
+            select(NAVHistory.date, NAVHistory.nav)
+            .where(NAVHistory.scheme_code == scheme_code)
+            .order_by(NAVHistory.date.desc())
+        )
+        navs = [{"date": row.date.isoformat(), "nav": row.nav} for row in nav_check.all()]
+        try:
+            await redis_client.setex(f"fund_chart:{scheme_code}", OPTIMIZED_CHART_TTL, json.dumps(navs))
+        except Exception as e:
+            logger.error(f"Redis set fund history failed: {e}")
+    
+    meta_dict = {
+        "scheme_code": fund.scheme_code,
+        "isin": fund.isin,
+        "fund_name": fund.fund_name,
+        "category": fund.category,
+        "sub_category": fund.sub_category,
     }
     
-    # Store response in Redis cache (1 hour expiry, or 5 seconds if loading)
-    try:
-        ttl = 5 if fund.ai_summary == "Generating AI Analysis in the background..." else FUND_DETAIL_TTL
-        await redis_client.setex(cache_key, ttl, json.dumps(response_data))
-        logger.info(f"Cached fund details for {scheme_code} in Redis with TTL={ttl}s")
-    except Exception as e:
-        logger.error(f"Redis set failed for key {cache_key}: {e}")
+    metrics_dict = {
+        "pe_ratio": fund.pe_ratio,
+        "expense_ratio": fund.expense_ratio,
+        "cagr_1y": fund.cagr_1y,
+        "cagr_3y": fund.cagr_3y,
+        "cagr_5y": fund.cagr_5y,
+        "sharpe_ratio": fund.sharpe_ratio,
+        "sortino_ratio": fund.sortino_ratio,
+        "alpha": fund.alpha,
+        "beta": fund.beta,
+        "last_updated": fund.last_updated.isoformat() if fund.last_updated else None,
+    }
+    
+    if trigger_background or is_new:
+        try:
+            await redis_client.delete(
+                f"fund:{scheme_code}",
+                f"fund_metrics:{scheme_code}",
+                f"fund_ai:{scheme_code}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear Redis keys for briefing status: {e}")
             
-    if fund.ai_summary == "Generating AI Analysis in the background..." and response is not None:
+    # Cache in Redis split keys
+    try:
+        await redis_client.setex(f"fund:{scheme_code}", OPTIMIZED_METADATA_TTL, json.dumps(meta_dict))
+        await redis_client.setex(f"fund_metrics:{scheme_code}", OPTIMIZED_METRICS_TTL, json.dumps(metrics_dict))
+        
+        ai_ttl = 5 if (trigger_background or is_new or fund.ai_summary == "Generating AI Analysis in the background...") else OPTIMIZED_AI_TTL
+        await redis_client.setex(f"fund_ai:{scheme_code}", ai_ttl, fund.ai_summary or "Generating AI Analysis in the background...")
+        logger.info(f"Cached fund split details for {scheme_code} in Redis")
+    except Exception as e:
+        logger.error(f"Redis set failed for key fund:{scheme_code}: {e}")
+            
+    fund_response = {**meta_dict, **metrics_dict}
+    fund_response["ai_summary"] = fund.ai_summary
+    fund_response["status"] = "discovering" if fund.cagr_1y is None else "ready"
+    
+    if (trigger_background or is_new or fund.ai_summary == "Generating AI Analysis in the background...") and response is not None:
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
-    return response_data
+    return {
+        "fund": fund_response,
+        "nav_history": navs
+    }
 
 @router.post("/sync/{scheme_code}", response_model=SyncResponse)
 async def sync_fund_manual(

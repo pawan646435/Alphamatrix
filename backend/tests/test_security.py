@@ -80,4 +80,8 @@ class Test404Routes:
 
     def test_nonexistent_fund_detail(self, client):
         resp = client.get("/api/v1/funds/999999")
+        assert resp.status_code in (200, 202, 404)
+        
+        # Subsequent call returns 404 since it gets saved as Invalid
+        resp = client.get("/api/v1/funds/999999")
         assert resp.status_code == 404

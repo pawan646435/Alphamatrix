@@ -28,6 +28,10 @@ from app.core.cache_ttl import (
     WATCHLIST_ANALYTICS_TTL,
     SECTOR_LAB_TTL,
     MARKET_REGIME_TTL,
+    OPTIMIZED_METADATA_TTL,
+    OPTIMIZED_CHART_TTL,
+    OPTIMIZED_METRICS_TTL,
+    OPTIMIZED_AI_TTL,
 )
 
 router = APIRouter()
@@ -245,10 +249,10 @@ async def generate_briefing_background(symbol: str):
             # Invalidate Redis cache
             try:
                 await redis_client.delete(
-                    f"stock_detail:{symbol}", 
-                    f"stock_master:{symbol}", 
-                    f"stock_briefing:{symbol}", 
-                    f"stock_history:{symbol}"
+                    f"stock:{symbol}",
+                    f"stock_chart:{symbol}",
+                    f"stock_metrics:{symbol}",
+                    f"stock_ai:{symbol}"
                 )
                 await redis_client.delete_pattern("stocks_list:*")
                 logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
@@ -393,28 +397,38 @@ async def get_stock_detail(
     """
     symbol = symbol.upper().strip()
     
-    cached_master = None
-    cached_history = None
-    cached_briefing = None
+    cached_meta = None
+    cached_chart = None
+    cached_metrics = None
+    cached_ai = None
     
     try:
-        cached_master = await redis_client.get(f"stock_master:{symbol}")
-        cached_history = await redis_client.get(f"stock_history:{symbol}")
-        cached_briefing = await redis_client.get(f"stock_briefing:{symbol}")
+        import asyncio
+        cached_meta, cached_chart, cached_metrics, cached_ai = await asyncio.gather(
+            redis_client.get(f"stock:{symbol}"),
+            redis_client.get(f"stock_chart:{symbol}"),
+            redis_client.get(f"stock_metrics:{symbol}"),
+            redis_client.get(f"stock_ai:{symbol}")
+        )
     except Exception as e:
-        logger.error(f"Redis get split detail failed: {e}")
+        logger.error(f"Redis get split detail failed for {symbol}: {e}")
             
     # Reconstruct from cache if all exist and briefing is not generating placeholder
-    if cached_master and cached_history and cached_briefing:
-        master_dict = json.loads(cached_master)
-        briefing_val = cached_briefing
+    if cached_meta and cached_chart and cached_metrics and cached_ai:
+        meta_dict = json.loads(cached_meta)
+        metrics_dict = json.loads(cached_metrics)
+        briefing_val = cached_ai
+        
+        # Merge metadata and metrics
+        master_dict = {**meta_dict, **metrics_dict}
         master_dict["ai_summary"] = briefing_val
+        master_dict["status"] = "discovering" if master_dict.get("alpha_score") is None else "ready"
         
         if briefing_val != "Generating Equity Intelligence Briefing in the background...":
             logger.info(f"Returning fully split cached stock details for {symbol}")
             return {
                 "stock": master_dict,
-                "price_history": json.loads(cached_history),
+                "price_history": json.loads(cached_chart),
                 "alpha_score_breakdown": get_alpha_breakdown(MockStock(master_dict))
             }
 
@@ -476,8 +490,8 @@ async def get_stock_detail(
             trigger_background = True
         
     prices = []
-    if cached_history:
-        prices = json.loads(cached_history)
+    if cached_chart:
+        prices = json.loads(cached_chart)
     else:
         # Fetch historical daily prices (sorted descending)
         prices_q = await db.execute(
@@ -488,17 +502,19 @@ async def get_stock_detail(
         prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
         try:
             # Cache history for 24h
-            await redis_client.setex(f"stock_history:{symbol}", STOCK_HISTORY_TTL, json.dumps(prices))
+            await redis_client.setex(f"stock_chart:{symbol}", OPTIMIZED_CHART_TTL, json.dumps(prices))
         except Exception as e:
             logger.error(f"Redis set history failed: {e}")
                 
-    master_dict = {
+    meta_dict = {
         "symbol": stock.symbol,
         "company_name": stock.company_name,
         "isin": stock.isin,
         "sector": stock.sector,
         "industry": stock.industry,
         "market_cap": stock.market_cap,
+    }
+    metrics_dict = {
         "pe_ratio": stock.pe_ratio,
         "pb_ratio": stock.pb_ratio,
         "roe": stock.roe,
@@ -510,29 +526,35 @@ async def get_stock_detail(
         "cagr_5y": stock.cagr_5y,
         "alpha_score": stock.alpha_score,
         "last_updated": stock.last_updated.isoformat() if stock.last_updated else None,
-        "status": "discovering" if stock.alpha_score is None else "ready"
     }
     
     if trigger_background:
         # Delete briefing and master cache to reflect "Generating..." state
         try:
-            await redis_client.delete(f"stock_master:{symbol}", f"stock_briefing:{symbol}")
+            await redis_client.delete(
+                f"stock:{symbol}",
+                f"stock_metrics:{symbol}",
+                f"stock_ai:{symbol}"
+            )
         except Exception as e:
             logger.error(f"Failed to clear Redis keys for briefing status: {e}")
         background_tasks.add_task(generate_briefing_background, symbol)
         
-    # Set cache for master (without AI summary, TTL 6h)
+    # Set cache for metadata, metrics and AI briefing
     try:
-        await redis_client.setex(f"stock_master:{symbol}", STOCK_MASTER_TTL, json.dumps(master_dict))
-        # Cache briefing (TTL AI_ANALYSIS_TTL if real, 5s if generating)
-        briefing_ttl = 5 if trigger_background else AI_ANALYSIS_TTL
-        await redis_client.setex(f"stock_briefing:{symbol}", briefing_ttl, stock.ai_summary)
+        await redis_client.setex(f"stock:{symbol}", OPTIMIZED_METADATA_TTL, json.dumps(meta_dict))
+        await redis_client.setex(f"stock_metrics:{symbol}", OPTIMIZED_METRICS_TTL, json.dumps(metrics_dict))
+        
+        # Cache briefing (TTL OPTIMIZED_AI_TTL if real, 5s if generating)
+        briefing_ttl = 5 if trigger_background else OPTIMIZED_AI_TTL
+        await redis_client.setex(f"stock_ai:{symbol}", briefing_ttl, stock.ai_summary or "Generating Equity Intelligence Briefing in the background...")
     except Exception as e:
         logger.error(f"Redis set split cache failed: {e}")
             
     # Return response including ai_summary
-    master_response = dict(master_dict)
+    master_response = {**meta_dict, **metrics_dict}
     master_response["ai_summary"] = stock.ai_summary
+    master_response["status"] = "discovering" if stock.alpha_score is None else "ready"
     
     if (trigger_background or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...") and response is not None:
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
