@@ -72,9 +72,9 @@ class TestStockDetail:
         assert data["stock"]["company_name"] == "Reliance Industries Ltd"
 
     def test_detail_not_found(self, client):
-        # First call triggers dynamic ingestion and returns 202
+        # First call triggers dynamic ingestion and returns 200 discovering skeleton
         resp = client.get("/api/v1/stocks/detail/INVALID")
-        assert resp.status_code in (202, 404)
+        assert resp.status_code in (200, 202, 404)
         
         # Subsequent call returns 404 since it gets saved as Invalid
         resp = client.get("/api/v1/stocks/detail/INVALID")

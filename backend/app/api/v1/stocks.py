@@ -32,6 +32,7 @@ from app.core.cache_ttl import (
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.stocks")
+ingesting_tickers = set()
 
 SECTOR_MAP = {
     "BANKING": ["Financial Services", "Banking"],
@@ -427,38 +428,52 @@ async def get_stock_detail(
             detail=f"Stock {symbol} not found on NSE or BSE exchanges."
         )
 
-    if not stock or (stock.alpha_score is None and stock.sector == "Unknown"):
-        # Trigger dynamic ingestion for any NSE-listed stock not yet in DB
-        logger.info(f"Stock {symbol} not in DB — triggering dynamic ingestion via BackgroundTask")
-        async def _ingest_and_brief(sym: str):
-            from app.core.database import async_session_maker
-            from app.workers.stock_ingestion import dynamic_ingest_stock
-            async with async_session_maker() as ingest_session:
-                result = await dynamic_ingest_stock(sym, ingest_session)
-                if result["status"] == "ingested":
-                    # Trigger AI briefing after ingestion
-                    await generate_briefing_background(sym)
-        background_tasks.add_task(_ingest_and_brief, symbol)
-        # Return a 202 Accepted with discovering state so frontend can poll
-        from fastapi.responses import JSONResponse
-        res = JSONResponse(
-            status_code=202,
-            content={
-                "status": "discovering",
-                "symbol": symbol,
-                "message": f"AlphaMatrix is fetching market data for {symbol} from live exchanges. This takes 10–30 seconds. Please wait..."
-            }
-        )
-        res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        return res
-        
+    is_new = False
+    if not stock:
+        # Create a skeleton StockMaster record immediately to allow instant rendering
+        try:
+            stock = StockMaster(
+                symbol=symbol,
+                company_name=f"Discovering {symbol}...",
+                sector="Unknown",
+                industry="Unknown",
+                ai_summary="Generating Equity Intelligence Briefing in the background..."
+            )
+            db.add(stock)
+            await db.commit()
+            await db.refresh(stock)
+            is_new = True
+        except Exception as e:
+            await db.rollback()
+            stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+            stock = stock_q.scalar_one_or_none()
+            if not stock:
+                raise HTTPException(status_code=500, detail="Failed to initialize stock metadata.")
+
+    if is_new or (stock.alpha_score is None and stock.sector == "Unknown"):
+        if symbol not in ingesting_tickers:
+            ingesting_tickers.add(symbol)
+            logger.info(f"Stock {symbol} is in skeleton/discovering state — scheduling background ingestion")
+            async def _ingest_and_brief(sym: str):
+                from app.core.database import async_session_maker
+                from app.workers.stock_ingestion import dynamic_ingest_stock
+                try:
+                    async with async_session_maker() as ingest_session:
+                        result = await dynamic_ingest_stock(sym, ingest_session)
+                        if result["status"] == "ingested":
+                            await generate_briefing_background(sym)
+                finally:
+                    ingesting_tickers.discard(sym)
+            background_tasks.add_task(_ingest_and_brief, symbol)
+
     # Trigger background AI briefing if missing
     trigger_background = False
-    if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
-        stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
-        await db.commit()
-        await db.refresh(stock)
-        trigger_background = True
+    if stock.alpha_score is not None:
+        if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
+            stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
+            await db.commit()
+            await db.refresh(stock)
+            trigger_background = True
         
     prices = []
     if cached_history:
@@ -494,7 +509,8 @@ async def get_stock_detail(
         "cagr_3y": stock.cagr_3y,
         "cagr_5y": stock.cagr_5y,
         "alpha_score": stock.alpha_score,
-        "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+        "last_updated": stock.last_updated.isoformat() if stock.last_updated else None,
+        "status": "discovering" if stock.alpha_score is None else "ready"
     }
     
     if trigger_background:

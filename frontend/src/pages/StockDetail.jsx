@@ -14,39 +14,24 @@ export default function StockDetail() {
   
   const queryClient = useQueryClient();
   const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol]);
-  const { data: stockDetail, isLoading: loading, error: stockError, refetch } = useStockDetail(symbol, {
-    staleTime: cachedStock?.status === 'discovering' ? 0 : 21600000,
-    refetchInterval: cachedStock?.status === 'discovering' ? 5000 : false,
+  
+  const isDiscovering = cachedStock?.status === 'discovering' || cachedStock?.stock?.status === 'discovering' || cachedStock?.stock?.alpha_score === null;
+  
+  const { data: stockDetail, isLoading: loading, error: stockError } = useStockDetail(symbol, {
+    staleTime: isDiscovering ? 0 : 21600000,
+    refetchInterval: isDiscovering ? 3000 : false, // Poll faster for progressive hydration
   });
+  
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();
   
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
-  const [discoverStep, setDiscoverStep] = useState(0);
 
   const error = stockError ? (stockError.detail || stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
-  const discovering = stockDetail?.status === 'discovering';
+  const currentIsDiscovering = isDiscovering || stockDetail?.status === 'discovering' || stockDetail?.stock?.status === 'discovering' || stockDetail?.stock?.alpha_score === null;
 
-  // Cycle through step labels every 4s during discovery
-  useEffect(() => {
-    if (!discovering) return;
-    const stepInterval = setInterval(() => {
-      setDiscoverStep((prev) => (prev + 1) % 7);
-    }, 4000);
-    return () => clearInterval(stepInterval);
-  }, [discovering]);
-
-  const handleSendChat = (e) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    sendMessage(chatMessage, symbol, messages);
-    setChatMessage('');
-  };
-
-  const isSaved = React.useMemo(() => {
-    return watchlist.some(item => item.symbol === symbol.toUpperCase());
-  }, [watchlist, symbol]);
+  const isSaved = watchlist.some((item) => item.symbol === symbol);
 
   const handleWatchlistToggle = async () => {
     try {
@@ -55,86 +40,37 @@ export default function StockDetail() {
       } else {
         await addToWatchlist(symbol);
       }
-      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     } catch (err) {
       console.error("Watchlist modification failed", err);
     }
   };
 
-  if (loading && !stockDetail && !discovering) {
-    return (
-      <div className="h-[60vh] flex flex-col items-center justify-center text-brand-textMuted font-mono">
-        <RefreshCw className="h-6 w-6 animate-spin text-brand-primary mb-3" />
-        <p className="text-[10px] tracking-wider">RESOLVING STOCK PERFORMANCE PARAMETERS...</p>
-      </div>
-    );
-  }
-
-  // Discovering: new stock being auto-ingested from Yahoo Finance
-  const DISCOVERY_STEPS = [
-    'Connecting to NSE live data feed...',
-    'Fetching 6Y price history from Yahoo Finance...',
-    'Computing CAGR (1Y / 3Y / 5Y) metrics...',
-    'Calculating Beta against NIFTY benchmark...',
-    'Running multi-factor Alpha Score model...',
-    'Persisting to AlphaMatrix intelligence database...',
-    'Running AI equity briefing synthesis...',
-  ];
-
-  if (discovering) {
-    return (
-      <div className="max-w-2xl mx-auto mt-16 px-4 font-mono">
-        <div className="bg-brand-surface border border-brand-border/60 p-8 space-y-6">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Activity className="h-8 w-8 text-brand-primary" />
-              <span className="absolute -top-1 -right-1 h-2.5 w-2.5 bg-brand-primary rounded-full animate-ping" />
-            </div>
-            <div>
-              <p className="text-[9px] text-brand-textMuted tracking-widest uppercase">AlphaMatrix Discovery Engine</p>
-              <h2 className="text-lg font-bold text-white tracking-wide">{symbol}</h2>
-            </div>
-          </div>
-
-          {/* Terminal log */}
-          <div className="bg-black border border-brand-border/30 p-4 space-y-2 text-[10px] font-mono">
-            <p className="text-green-400 text-[9px] tracking-widest mb-3">[ALPHA_MATRIX_DISCOVERY v2.0] INITIATING LIVE STOCK INGESTION</p>
-            {DISCOVERY_STEPS.map((step, i) => (
-              <div key={i} className={`flex items-center gap-2 transition-opacity duration-500 ${
-                i < discoverStep ? 'text-green-400' :
-                i === discoverStep ? 'text-brand-primary' :
-                'text-brand-textMuted/40'
-              }`}>
-                {i < discoverStep ? (
-                  <span className="text-green-500">✓</span>
-                ) : i === discoverStep ? (
-                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                ) : (
-                  <span className="w-2.5">·</span>
-                )}
-                <span>{step}</span>
-              </div>
-            ))}
-            <p className="text-brand-textMuted text-[9px] mt-3 animate-pulse">█ Polling every 6s...</p>
-          </div>
-
-          {/* ETA note */}
-          <div className="border-t border-brand-border/30 pt-4 flex items-center gap-2 text-brand-textMuted text-[10px]">
-            <Zap className="h-3 w-3 text-brand-primary" />
-            <p>This stock is being auto-discovered from live exchanges. Estimated time: <span className="text-white font-bold">15–45 seconds</span>. Page will auto-reload when ready.</p>
-          </div>
-
-          <button
-            onClick={() => navigate('/stocks/explorer')}
-            className="text-[9px] text-brand-textMuted hover:text-brand-primary transition-colors tracking-wider"
-          >
-            ← Return to Stock Explorer
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Safe fallback placeholders for progressive loading
+  const stock = stockDetail?.stock || {
+    symbol: symbol,
+    company_name: `Discovering ${symbol}...`,
+    sector: 'Ingesting...',
+    industry: 'Resolving parameters...',
+    market_cap: null,
+    pe_ratio: null,
+    pb_ratio: null,
+    roe: null,
+    debt_equity: null,
+    dividend_yield: null,
+    beta: null,
+    cagr_1y: null,
+    cagr_3y: null,
+    cagr_5y: null,
+    alpha_score: null,
+    ai_summary: null
+  };
+  const price_history = stockDetail?.price_history || [];
+  const alpha_score_breakdown = stockDetail?.alpha_score_breakdown || {
+    fundamental_score: 0,
+    valuation_score: 0,
+    momentum_score: 0,
+    risk_score: 0
+  };
 
   if (error) {
     return (
@@ -152,7 +88,7 @@ export default function StockDetail() {
     );
   }
 
-  if (!stockDetail || stockDetail.detail) {
+  if (!loading && !currentIsDiscovering && (!stockDetail || stockDetail.detail)) {
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
         <Cpu className="h-10 w-10 text-brand-warning mx-auto" />
@@ -167,8 +103,6 @@ export default function StockDetail() {
       </div>
     );
   }
-
-  const { stock, price_history, alpha_score_breakdown } = stockDetail;
 
   // Map prices for standard InteractiveChart: maps 'close' to 'nav'
   const mappedChartHistory = price_history.map(p => ({
@@ -287,7 +221,7 @@ export default function StockDetail() {
     );
   };
 
-  const isBriefingLoading = stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
+  const isBriefingLoading = !stock.ai_summary || stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
 
   // ── Verdict parsing (mirrors Detail.jsx pattern) ──────────────────────────
   let stockStanceType = 'HOLD';
@@ -316,6 +250,19 @@ export default function StockDetail() {
       if (confMatch) stockConfidence = confMatch[1] + '%';
     }
   }
+
+  const renderMetricVal = (val, formatter, colorClass = "text-white") => {
+    if (currentIsDiscovering || val === null || val === undefined) {
+      return (
+        <div className="h-5 w-16 bg-brand-border/40 animate-pulse rounded mx-auto mt-2" />
+      );
+    }
+    return (
+      <p className={`text-lg font-bold mt-1 font-mono ${colorClass}`}>
+        {formatter(val)}
+      </p>
+    );
+  };
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
@@ -377,9 +324,14 @@ export default function StockDetail() {
                 </h1>
                 <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[10px] text-brand-textMuted font-mono pt-1">
                   <p>SYMBOL: <span className="text-black dark:text-white font-bold">{stock.symbol}</span></p>
+                  {price_history.length > 0 ? (
+                    <p>PRICE: <span className="text-brand-success font-bold">₹{price_history[0].close.toFixed(2)}</span></p>
+                  ) : (
+                    <p>PRICE: <span className="text-brand-textMuted animate-pulse">[INGESTING...]</span></p>
+                  )}
                   {stock.isin && <p>ISIN: <span className="text-black dark:text-white font-bold">{stock.isin}</span></p>}
                   {stock.market_cap && <p>MARKET_CAP: <span className="text-black dark:text-white font-bold">₹{stock.market_cap.toLocaleString('en-IN')} Cr</span></p>}
-                  <p>LAST_SYNC: <span className="text-black dark:text-white">{new Date(stock.last_updated).toLocaleString('en-IN')}</span></p>
+                  <p>LAST_SYNC: <span className="text-black dark:text-white">{stock.last_updated ? new Date(stock.last_updated).toLocaleString('en-IN') : 'Ingesting...'}</span></p>
                 </div>
               </div>
             </div>
@@ -424,47 +376,47 @@ export default function StockDetail() {
       >
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">1Y return</p>
-          <p className="text-lg font-bold text-brand-success mt-1 font-mono">{pct(stock.cagr_1y)}</p>
+          {renderMetricVal(stock.cagr_1y, pct, "text-brand-success")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">3Y CAGR</p>
-          <p className="text-lg font-bold text-black dark:text-white mt-1 font-mono">{pct(stock.cagr_3y)}</p>
+          {renderMetricVal(stock.cagr_3y, pct, "text-black dark:text-white")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">5Y CAGR</p>
-          <p className="text-lg font-bold text-black dark:text-white mt-1 font-mono">{pct(stock.cagr_5y)}</p>
+          {renderMetricVal(stock.cagr_5y, pct, "text-black dark:text-white")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">P/E Ratio</p>
-          <p className="text-lg font-bold text-brand-primary mt-1 font-mono">{num(stock.pe_ratio, 1)}</p>
+          {renderMetricVal(stock.pe_ratio, (v) => num(v, 1), "text-brand-primary")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">P/B Ratio</p>
-          <p className="text-lg font-bold text-brand-primary mt-1 font-mono">{num(stock.pb_ratio, 1)}</p>
+          {renderMetricVal(stock.pb_ratio, (v) => num(v, 1), "text-brand-primary")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">ROE (%)</p>
-          <p className="text-lg font-bold text-brand-success mt-1 font-mono">{stock.roe ? `${stock.roe.toFixed(1)}%` : '—'}</p>
+          {renderMetricVal(stock.roe, (v) => `${v.toFixed(1)}%`, "text-brand-success")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Debt/Equity</p>
-          <p className="text-lg font-bold text-brand-warning mt-1 font-mono">{num(stock.debt_equity)}</p>
+          {renderMetricVal(stock.debt_equity, num, "text-brand-warning")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Beta</p>
-          <p className="text-lg font-bold text-brand-warning mt-1 font-mono">{num(stock.beta)}</p>
+          {renderMetricVal(stock.beta, num, "text-brand-warning")}
         </div>
 
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
           <p className="text-[9px] text-brand-textMuted uppercase font-bold tracking-wider font-display">Alpha Score</p>
-          <p className="text-lg font-bold text-brand-primary mt-1 font-mono">{stock.alpha_score ? Math.round(stock.alpha_score) : '—'}</p>
+          {renderMetricVal(stock.alpha_score, (v) => Math.round(v), "text-brand-primary")}
         </div>
       </div>
 
@@ -473,14 +425,43 @@ export default function StockDetail() {
         className="w-full animate-fade-in-up shadow-xl"
         style={{ animationDelay: '150ms' }}
       >
-        <InteractiveChart navHistory={mappedChartHistory} />
+        {price_history.length === 0 ? (
+          <div className="h-64 w-full bg-brand-surface border border-brand-border/40 animate-pulse flex flex-col items-center justify-center text-[10px] text-brand-textMuted tracking-wider font-mono gap-3">
+            <RefreshCw className="h-5 w-5 animate-spin text-brand-primary/60" />
+            <span>RESOLVING HISTORICAL PRICE SERIES...</span>
+          </div>
+        ) : (
+          <InteractiveChart navHistory={mappedChartHistory} />
+        )}
       </div>
 
       {/* Research Timeline (vertical chronological timeline below chart) */}
-      {!isBriefingLoading && stock.ai_summary && stock.ai_summary.includes('### Research Timeline') && (
-        <div className="animate-fade-in-up" style={{ animationDelay: '180ms' }}>
-          {renderResearchTimeline()}
+      {isBriefingLoading ? (
+        <div className="w-full border border-brand-border bg-brand-surface shadow-xl p-6 md:p-8 space-y-4 animate-pulse">
+          <div className="h-4 w-1/4 bg-brand-border/40 rounded mb-6" />
+          <div className="relative pl-6 border-l border-brand-primary/30 space-y-6 ml-3 py-2">
+            <div className="relative">
+              <div className="absolute -left-[31px] top-1.5 w-2 h-2 bg-brand-primary/45 rounded-full" />
+              <div className="space-y-2">
+                <div className="h-3 w-20 bg-brand-border/45 rounded" />
+                <div className="h-2.5 w-full bg-brand-border/30 rounded" />
+              </div>
+            </div>
+            <div className="relative">
+              <div className="absolute -left-[31px] top-1.5 w-2 h-2 bg-brand-primary/45 rounded-full" />
+              <div className="space-y-2">
+                <div className="h-3 w-24 bg-brand-border/45 rounded" />
+                <div className="h-2.5 w-5/6 bg-brand-border/30 rounded" />
+              </div>
+            </div>
+          </div>
         </div>
+      ) : (
+        stock.ai_summary && stock.ai_summary.includes('### Research Timeline') && (
+          <div className="animate-fade-in-up" style={{ animationDelay: '180ms' }}>
+            {renderResearchTimeline()}
+          </div>
+        )
       )}
 
       {/* Bottom Layout: AI Briefing → Verdict Card → Chat (all full-width stacked) */}
@@ -502,9 +483,23 @@ export default function StockDetail() {
 
           <div className="p-6 md:p-8">
             {isBriefingLoading ? (
-              <div className="py-20 text-center space-y-3 font-mono text-brand-textMuted">
-                <RefreshCw className="h-6 w-6 mx-auto animate-spin text-brand-primary" />
-                <p className="text-[9px] uppercase tracking-wider animate-pulse">Running cognitive analytics models on stock multiples...</p>
+              <div className="space-y-6 py-4 animate-pulse">
+                <div className="space-y-2">
+                  <div className="h-3 w-1/4 bg-brand-border/40 rounded" />
+                  <div className="h-2 w-full bg-brand-border/30 rounded" />
+                  <div className="h-2 w-full bg-brand-border/30 rounded" />
+                  <div className="h-2 w-5/6 bg-brand-border/30 rounded" />
+                </div>
+                <div className="space-y-2 pt-4 border-t border-brand-border/20">
+                  <div className="h-3 w-1/4 bg-brand-border/40 rounded" />
+                  <div className="h-2 w-full bg-brand-border/30 rounded" />
+                  <div className="h-2 w-full bg-brand-border/30 rounded" />
+                </div>
+                <div className="space-y-2 pt-4 border-t border-brand-border/20">
+                  <div className="h-3 w-1/5 bg-brand-border/40 rounded" />
+                  <div className="h-2 w-full bg-brand-border/30 rounded" />
+                  <div className="h-2 w-4/5 bg-brand-border/30 rounded" />
+                </div>
               </div>
             ) : (
               <div className="space-y-6">

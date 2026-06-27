@@ -40,6 +40,7 @@ class StockMasterResponse(StockMasterBase):
     alpha_score: Optional[float] = None
     ai_summary: Optional[str] = None
     last_updated: Optional[datetime] = None
+    status: Optional[str] = "ready"
     
     model_config = ConfigDict(from_attributes=True)
 
