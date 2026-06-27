@@ -4,6 +4,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -28,11 +29,18 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response) {
-      // Unauthorized, redirect or clear token
-      if (error.response.status === 401) {
+      const status = error.response.status;
+      if (status === 401) {
         localStorage.removeItem('alphamatrix_token');
+        window.dispatchEvent(new CustomEvent('auth:expired'));
       }
-      return Promise.reject(error.response.data);
+      if (status === 429) {
+        window.dispatchEvent(new CustomEvent('rate:limited'));
+      }
+      return Promise.reject({ status, detail: error.response.data?.detail || `Request failed with status ${status}` });
+    }
+    if (error.code === 'ECONNABORTED') {
+      return Promise.reject({ detail: 'Request timed out. The backend may be overloaded.' });
     }
     return Promise.reject({ detail: 'Network error. Please check your backend connection.' });
   }

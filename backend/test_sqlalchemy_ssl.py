@@ -1,10 +1,23 @@
 import asyncio
+import sys
+import os
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 
+# Add parent path to allow imports from app
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from app.core.config import settings
+
 async def main():
+    url = settings.DATABASE_URL
+    if url.startswith("sqlite"):
+        print("DATABASE_URL is SQLite. test_sqlalchemy_ssl requires a PostgreSQL URL.")
+        return
+
     # Remove query parameters from URL
-    url = "postgresql+asyncpg://neondb_owner:npg_3rPjc4TBlaoe@ep-twilight-base-atos9mpc-pooler.c-9.us-east-1.aws.neon.tech/neondb"
+    if "?" in url:
+        url = url.split("?")[0]
+
     # Pass ssl=True via connect_args
     engine = create_async_engine(
         url,

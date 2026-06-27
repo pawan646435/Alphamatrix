@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Cpu, RefreshCw, BarChart2, Star, Check } from 'lucide-react';
 import { useGetStockComparison } from '../hooks/useStocks';
+import { getStandardizedSector } from '../hooks/useQueries';
 import StockComparisonChart from '../components/charts/StockComparisonChart';
 import StockLogo from '../components/StockLogo';
 import StockSearchPicker from '../components/StockSearchPicker';
@@ -411,7 +412,7 @@ export default function StockCompare() {
                   <div className="flex gap-2 items-center text-[10px] font-mono text-brand-textMuted uppercase mt-0.5">
                     <span>{comparison.stock1.symbol}</span>
                     <span>•</span>
-                    <span>{comparison.stock1.sector}</span>
+                    <span>{getStandardizedSector(comparison.stock1.sector).label}</span>
                   </div>
                 </div>
               </div>
@@ -426,7 +427,7 @@ export default function StockCompare() {
                   <div className="flex gap-2 items-center text-[10px] font-mono text-brand-textMuted uppercase mt-0.5">
                     <span>{comparison.stock2.symbol}</span>
                     <span>•</span>
-                    <span>{comparison.stock2.sector}</span>
+                    <span>{getStandardizedSector(comparison.stock2.sector).label}</span>
                   </div>
                 </div>
               </div>

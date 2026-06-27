@@ -1,12 +1,12 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, RefreshCw, Cpu, ShieldAlert, Sparkles, XCircle, Search, HelpCircle } from 'lucide-react';
+import { Star, RefreshCw, Cpu, ShieldAlert, Sparkles, XCircle, Search, HelpCircle, AlertCircle } from 'lucide-react';
 import { useWatchlist } from '../hooks/useStocks';
 import StockLogo from '../components/StockLogo';
 
 export default function StockWatchlist() {
   const navigate = useNavigate();
-  const { watchlist, diagnostics, diagLoading, fetchWatchlist, removeFromWatchlist, fetchDiagnostics } = useWatchlist();
+  const { watchlist, diagnostics, loading, diagLoading, error, fetchWatchlist, removeFromWatchlist, fetchDiagnostics } = useWatchlist();
 
   useEffect(() => {
     fetchWatchlist();
@@ -50,7 +50,18 @@ export default function StockWatchlist() {
         <span className="font-mono text-[10px] text-brand-textMuted hidden md:inline">SYSTEM_STATUS: OK // WATCH_SYNCED</span>
       </div>
 
-      {watchlist.length === 0 ? (
+      {loading ? (
+        <div className="border border-brand-border p-16 text-center space-y-4 max-w-2xl mx-auto font-mono bg-brand-surface animate-fade-in-up">
+          <RefreshCw className="h-8 w-8 text-brand-primary mx-auto animate-spin" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Loading Watchlist...</h3>
+        </div>
+      ) : error ? (
+        <div className="border border-brand-border p-16 text-center space-y-4 max-w-2xl mx-auto font-mono bg-brand-surface animate-fade-in-up">
+          <AlertCircle className="h-8 w-8 text-brand-danger mx-auto" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Failed to Load</h3>
+          <p className="text-brand-textMuted text-xs">{error}</p>
+        </div>
+      ) : watchlist.length === 0 ? (
         <div className="border border-brand-border p-16 text-center space-y-4 max-w-2xl mx-auto font-mono bg-brand-surface animate-fade-in-up">
           <Star className="h-12 w-12 text-brand-primary opacity-30 mx-auto animate-pulse-subtle" />
           <h3 className="text-sm font-bold text-white uppercase tracking-wider">Watchlist is Empty</h3>

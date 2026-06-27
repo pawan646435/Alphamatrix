@@ -3,10 +3,10 @@ import json
 import httpx
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.core.database import get_db
 from app.core.security import check_rate_limit
@@ -62,7 +62,7 @@ async def load_master_list_if_empty():
             logger.error(f"Failed to load master fund list: {e}")
 
 @router.get("/search", dependencies=[Depends(check_rate_limit)])
-async def search_funds_master(query: str):
+async def search_funds_master(query: str = Query(..., min_length=1, max_length=100)):
     """
     Search all Indian mutual funds in-memory using the MFapi list cache.
     Matches against schemeName and schemeCode, capped at 50 results.
@@ -143,13 +143,14 @@ async def get_funds(
     if max_pe_ratio is not None:
         query = query.where(FundMaster.pe_ratio <= max_pe_ratio)
         
-    # Apply sorting
+    # Apply sorting with NULLS LAST (non-null values first)
     if sort_by and hasattr(FundMaster, sort_by):
         sort_attr = getattr(FundMaster, sort_by)
+        nulls_expr = case((sort_attr.is_(None), 1), else_=0)
         if sort_order.lower() == "asc":
-            query = query.order_by(sort_attr.asc())
+            query = query.order_by(nulls_expr, sort_attr.asc())
         else:
-            query = query.order_by(sort_attr.desc())
+            query = query.order_by(nulls_expr, sort_attr.desc())
             
     # Apply pagination
     query = query.offset(skip).limit(limit)

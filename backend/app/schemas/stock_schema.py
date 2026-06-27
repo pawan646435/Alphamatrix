@@ -102,10 +102,10 @@ class WatchlistRemoveRequest(BaseModel):
 class WatchlistAnalyticsResponse(BaseModel):
     health_score: float
     ai_summary: str
-    biggest_opportunity: str
-    biggest_risk: str
-    most_volatile_position: str
-    best_performing_position: str
+    strongest_position: str
+    weakest_position: str
+    risk_concentration: str
+    sector_exposure: str
     
     model_config = ConfigDict(from_attributes=True)
 

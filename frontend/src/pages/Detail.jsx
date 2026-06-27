@@ -66,7 +66,21 @@ export default function Detail() {
     );
   }
 
-  if (!fundDetail) return null;
+  if (!fundDetail || fundDetail.detail) {
+    return (
+      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
+        <AlertTriangle className="h-10 w-10 text-brand-warning mx-auto" />
+        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Fund Not Found</h3>
+        <p className="text-brand-textMuted text-xs leading-relaxed">{fundDetail?.detail || 'Fund data is unavailable.'}</p>
+        <button
+          onClick={() => navigate('/explorer')}
+          className="bg-brand-primary hover:bg-[#cc4400] text-white text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
+        >
+          Return to Fund Explorer
+        </button>
+      </div>
+    );
+  }
 
   const { fund, nav_history } = fundDetail;
 

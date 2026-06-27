@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis, Label } from 'recharts';
+import { getStandardizedSector } from '../../hooks/useQueries';
 
 export default function StockRiskScatterplot({ stocks = [] }) {
   const navigate = useNavigate();
@@ -12,7 +13,7 @@ export default function StockRiskScatterplot({ stocks = [] }) {
       .map(s => ({
         symbol: s.symbol,
         name: s.company_name,
-        sector: s.sector,
+        sector: getStandardizedSector(s.sector).label,
         x: s.beta,                                    // Beta on X
         y: Math.round((s.cagr_3y || 0) * 1000) / 10,  // CAGR % on Y
         z: Math.max(10, s.alpha_score || 50),        // Alpha Score for size

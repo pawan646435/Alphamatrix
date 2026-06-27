@@ -1,17 +1,12 @@
-import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Cpu, BookOpen, AlertTriangle } from 'lucide-react';
-import { useGetSectorDetails } from '../hooks/useStocks';
+import { useSectorDetails, getStandardizedSector } from '../hooks/useQueries';
 import StockLogo from '../components/StockLogo';
 
 export default function StockSector() {
   const { sectorName } = useParams();
   const navigate = useNavigate();
-  const { sectorDetails, loading, error, fetchSectorDetails } = useGetSectorDetails();
-
-  useEffect(() => {
-    fetchSectorDetails(sectorName);
-  }, [sectorName, fetchSectorDetails]);
+  const { data: sectorDetails, isLoading: loading, error } = useSectorDetails(sectorName);
 
   const handleStockClick = (symbol) => {
     navigate(`/stocks/detail/${symbol}`);
@@ -27,11 +22,12 @@ export default function StockSector() {
   }
 
   if (error) {
+    const errorMsg = error?.detail || error?.message || 'Network error. Please check your backend connection.';
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
         <AlertTriangle className="h-10 w-10 text-brand-danger mx-auto" />
         <h3 className="text-sm font-bold text-white uppercase tracking-wider">Sector Query Failure</h3>
-        <p className="text-brand-textMuted text-xs leading-relaxed">{error}</p>
+        <p className="text-brand-textMuted text-xs leading-relaxed">{errorMsg}</p>
         <button
           onClick={() => navigate('/stocks')}
           className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
@@ -45,6 +41,7 @@ export default function StockSector() {
   if (!sectorDetails) return null;
 
   const { sector, sector_score, growth_drivers, major_risks, top_stocks, ai_outlook } = sectorDetails;
+  const stdSector = getStandardizedSector(sectorName || sector);
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
@@ -72,10 +69,10 @@ export default function StockSector() {
               [SECTOR_PROFILE]
             </span>
             <h1 className="text-2xl md:text-3xl font-extrabold text-black dark:text-white tracking-wide font-display uppercase">
-              {sector} Sector Lab
+              {stdSector.label} Sector Lab
             </h1>
             <p className="text-[10px] text-brand-textMuted font-mono pt-0.5">
-              SECTOR_OUTLOOK_INDEX: <span className="text-black dark:text-white font-bold">{sector.toUpperCase()}_INDEX</span>
+              SECTOR_OUTLOOK_INDEX: <span className="text-black dark:text-white font-bold">{stdSector.key}_INDEX</span>
             </p>
           </div>
           

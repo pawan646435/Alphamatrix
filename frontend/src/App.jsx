@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Compass, Sun, Moon, Star, RefreshCw, GitCompare, Newspaper, Menu, X, LogOut, LogIn, ChevronDown, User, Settings } from 'lucide-react';
+import { LayoutDashboard, Compass, Sun, Moon, Star, RefreshCw, GitCompare, Newspaper, Menu, X, LogOut, LogIn, ChevronDown, User, Settings, AlertCircle } from 'lucide-react';
 import AlphaMatrixLogo from './components/AlphaMatrixLogo';
 import { AuthProvider } from './context/AuthContext';
 import useAuth from './hooks/useAuth';
@@ -29,6 +29,19 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+function NotFound() {
+  return (
+    <div className="h-[60vh] flex flex-col items-center justify-center text-brand-textMuted font-mono">
+      <AlertCircle className="h-10 w-10 text-brand-warning mb-4" />
+      <h2 className="text-lg font-bold tracking-wider text-black dark:text-white uppercase mb-2">404 — Route Not Found</h2>
+      <p className="text-[10px] tracking-wider mb-6">The requested terminal endpoint does not exist in the matrix.</p>
+      <Link to="/" className="text-[10px] font-bold px-4 py-2 bg-brand-primary text-black hover:bg-brand-primaryHover transition-colors border border-brand-primary uppercase tracking-wider">
+        Return to Base
+      </Link>
+    </div>
+  );
+}
+
 // ── Lazy-loaded Stock Pages ──
 const StockHome = React.lazy(() => import('./pages/StockHome'));
 const StockExplorer = React.lazy(() => import('./pages/StockExplorer'));
@@ -53,6 +66,30 @@ function AppContent() {
     const saved = localStorage.getItem('darkMode');
     return saved ? saved === 'true' : true;
   });
+
+  const [notification, setNotification] = useState(null);
+
+  useEffect(() => {
+    if (!notification) return;
+    const t = setTimeout(() => setNotification(null), 5000);
+    return () => clearTimeout(t);
+  }, [notification]);
+
+  useEffect(() => {
+    const onAuthExpired = () => {
+      setNotification({ type: 'error', text: 'Session expired. Please log in again.' });
+      navigate('/login');
+    };
+    const onRateLimited = () => {
+      setNotification({ type: 'warning', text: 'Too many requests. Please wait before trying again.' });
+    };
+    window.addEventListener('auth:expired', onAuthExpired);
+    window.addEventListener('rate:limited', onRateLimited);
+    return () => {
+      window.removeEventListener('auth:expired', onAuthExpired);
+      window.removeEventListener('rate:limited', onRateLimited);
+    };
+  }, [navigate]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -523,6 +560,15 @@ function AppContent() {
         </div>
       </header>
 
+      {/* Global Notification Banner */}
+      {notification && (
+        <div className={`fixed top-0 left-0 right-0 z-50 font-mono text-[10px] tracking-wider text-center py-2.5 font-bold uppercase ${
+          notification.type === 'error' ? 'bg-brand-danger text-white' : 'bg-brand-warning text-black'
+        }`}>
+          {notification.text}
+        </div>
+      )}
+
       {/* Page Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
         <Suspense fallback={
@@ -551,6 +597,7 @@ function AppContent() {
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </main>

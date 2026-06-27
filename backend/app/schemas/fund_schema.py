@@ -69,6 +69,8 @@ class FundGridItem(BaseModel):
     sharpe_ratio: Optional[float] = None
     alpha: Optional[float] = None
     pe_ratio: Optional[float] = None
+    expense_ratio: Optional[float] = None
+    beta: Optional[float] = None
     
     model_config = ConfigDict(from_attributes=True)
 

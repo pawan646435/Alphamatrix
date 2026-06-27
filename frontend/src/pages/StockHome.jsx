@@ -16,8 +16,8 @@ export default function StockHome() {
   
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
-  const handleSectorClick = (sector) => {
-    navigate(`/stocks/sector/${sector}`);
+  const handleSectorClick = (sectorKey) => {
+    navigate(`/stocks/sector/${sectorKey}`);
   };
 
   const handleSendChat = (e) => {
@@ -29,12 +29,12 @@ export default function StockHome() {
 
   // Sector list configuration
   const sectors = [
-    { name: 'Banking', desc: 'Financial engines driving retail and industrial expansion.', codeCount: 'HDFCBANK, ICICIBANK' },
-    { name: 'IT', desc: 'Software exports and enterprise digital transformation leaders.', codeCount: 'TCS, INFY' },
-    { name: 'Auto', desc: 'Commercial and passenger vehicle compounding growth.', codeCount: 'TATAMOTORS, M&M' },
-    { name: 'Energy', desc: 'Refining, conglomerates, and green transition powerhouses.', codeCount: 'RELIANCE' },
-    { name: 'Defence', desc: 'Indigenization mandates and specialized aerospace manufacturers.', codeCount: 'HAL, BEL' },
-    { name: 'FMCG', desc: 'Resilient consumer staples and diversified conglomerates.', codeCount: 'ITC' },
+    { key: 'BANKING', name: 'Banking', desc: 'Financial engines driving retail and industrial expansion.', codeCount: 'HDFCBANK, ICICIBANK' },
+    { key: 'IT', name: 'IT', desc: 'Software exports and enterprise digital transformation leaders.', codeCount: 'TCS, INFY' },
+    { key: 'AUTO', name: 'Auto', desc: 'Commercial and passenger vehicle compounding growth.', codeCount: 'TATAMOTORS, M&M' },
+    { key: 'ENERGY', name: 'Energy', desc: 'Refining, conglomerates, and green transition powerhouses.', codeCount: 'RELIANCE' },
+    { key: 'DEFENCE', name: 'Defence', desc: 'Indigenization mandates and specialized aerospace manufacturers.', codeCount: 'HAL, BEL' },
+    { key: 'FMCG', name: 'FMCG', desc: 'Resilient consumer staples and diversified conglomerates.', codeCount: 'ITC' },
   ];
 
   // Calculate statistics
@@ -160,8 +160,8 @@ export default function StockHome() {
           <div className="grid grid-cols-1 gap-3">
             {sectors.map((sec) => (
               <button
-                key={sec.name}
-                onClick={() => handleSectorClick(sec.name)}
+                key={sec.key}
+                onClick={() => handleSectorClick(sec.key)}
                 className="w-full text-left p-4 border border-brand-border hover:border-brand-primary text-brand-primary bg-brand-primary/5 hover:shadow-[0_0_15px_rgba(197,168,128,0.15)] transition-all duration-200 hover:-translate-x-1 flex justify-between items-center group"
               >
                 <div className="space-y-1 min-w-0 pr-3">

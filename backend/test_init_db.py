@@ -1,8 +1,10 @@
 import asyncio
+import sys
 import os
 
-# Set DATABASE_URL to Neon for testing
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://neondb_owner:npg_3rPjc4TBlaoe@ep-twilight-base-atos9mpc-pooler.c-9.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+# Add parent path to allow imports from app
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from app.core.config import settings
 
 from app.core.database import init_db, get_engine
 

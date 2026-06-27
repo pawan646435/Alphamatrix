@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Filter, ChevronDown, ChevronUp, AlertCircle, RefreshCw } from 'lucide-react';
-import { useGetStocks } from '../hooks/useStocks';
+import { useStockList, getStandardizedSector } from '../hooks/useQueries';
 import StockLogo from '../components/StockLogo';
 
 export default function StockExplorer() {
@@ -18,24 +18,15 @@ export default function StockExplorer() {
   const [sortBy, setSortBy] = useState('alpha_score');
   const [sortOrder, setSortOrder] = useState('desc');
 
-  const { stocks, loading, fetchStocks } = useGetStocks();
-
-  // Fetch stocks based on filters
-  const loadStocks = React.useCallback(() => {
-    fetchStocks({
-      sector: sector || undefined,
-      min_cagr_3y: minCagr || undefined,
-      min_roe: minRoe || undefined,
-      max_debt_equity: maxDebtEquity || undefined,
-      max_pe_ratio: maxPe || undefined,
-      sort_by: sortBy,
-      sort_order: sortOrder,
-    });
-  }, [fetchStocks, sector, minCagr, minRoe, maxDebtEquity, maxPe, sortBy, sortOrder]);
-
-  useEffect(() => {
-    loadStocks();
-  }, [loadStocks]);
+  const { data: stocks = [], isLoading: loading, error } = useStockList({
+    sector: sector || undefined,
+    min_cagr_3y: minCagr || undefined,
+    min_roe: minRoe || undefined,
+    max_debt_equity: maxDebtEquity || undefined,
+    max_pe_ratio: maxPe || undefined,
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  });
 
   // Toggle sorting
   const handleSort = (field) => {
@@ -97,10 +88,10 @@ export default function StockExplorer() {
               >
                 <option value="">All Sectors</option>
                 <option value="IT">IT</option>
-                <option value="Banking">Banking</option>
-                <option value="Auto">Auto</option>
-                <option value="Defence">Defence</option>
-                <option value="Energy">Energy</option>
+                <option value="BANKING">Banking</option>
+                <option value="AUTO">Auto</option>
+                <option value="DEFENCE">Defence</option>
+                <option value="ENERGY">Energy</option>
                 <option value="FMCG">FMCG</option>
               </select>
             </div>
@@ -199,6 +190,13 @@ export default function StockExplorer() {
                     <p className="mt-3 text-[10px] font-mono">PROCESSING QUANTITATIVE FILTER PIPELINE...</p>
                   </td>
                 </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan="9" className="py-12 text-center text-brand-textMuted font-mono">
+                    <AlertCircle className="h-6 w-6 mx-auto text-brand-danger" />
+                    <p className="mt-2 text-[10px] text-brand-danger">QUERY ENGINE ERROR: {error?.detail || 'Failed to fetch equities'}</p>
+                  </td>
+                </tr>
               ) : stocks.length === 0 ? (
                 <tr>
                   <td colSpan="9" className="py-12 text-center text-brand-textMuted font-mono">
@@ -224,7 +222,7 @@ export default function StockExplorer() {
                     </td>
                     <td className="py-4 px-6">
                       <span className="text-[9px] font-bold px-2 py-0.5 border bg-brand-primary/10 text-brand-primary border-brand-primary/20">
-                        [{s.sector.toUpperCase()}]
+                        [{getStandardizedSector(s.sector).label.toUpperCase()}]
                       </span>
                     </td>
                     <td className="py-4 px-6 text-right font-bold text-brand-success">

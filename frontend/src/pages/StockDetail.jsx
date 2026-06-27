@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
-import { useStockDetail, useWatchlistQuery } from '../hooks/useQueries';
+import { useStockDetail, useWatchlistQuery, getStandardizedSector } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -152,7 +152,21 @@ export default function StockDetail() {
     );
   }
 
-  if (!stockDetail) return null;
+  if (!stockDetail || stockDetail.detail) {
+    return (
+      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
+        <Cpu className="h-10 w-10 text-brand-warning mx-auto" />
+        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Equity Not Found</h3>
+        <p className="text-brand-textMuted text-xs leading-relaxed">{stockDetail?.detail || 'Stock data is unavailable.'}</p>
+        <button
+          onClick={() => navigate('/stocks/explorer')}
+          className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
+        >
+          Return to Stock Explorer
+        </button>
+      </div>
+    );
+  }
 
   const { stock, price_history, alpha_score_breakdown } = stockDetail;
 
@@ -346,7 +360,7 @@ export default function StockDetail() {
           <div className="lg:col-span-2 space-y-4">
             <div className="flex flex-wrap items-center gap-2 font-mono">
               <span className="text-[9px] font-bold bg-brand-primary/10 border border-brand-primary/40 text-brand-primary px-2.5 py-0.5 uppercase">
-                [{stock.sector.toUpperCase()}]
+                [{getStandardizedSector(stock.sector).label.toUpperCase()}]
               </span>
               {stock.industry && (
                 <span className="text-[9px] font-bold bg-brand-border/45 text-brand-textMuted px-2.5 py-0.5 border border-brand-border">

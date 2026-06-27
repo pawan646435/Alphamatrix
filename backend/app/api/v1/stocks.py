@@ -1,10 +1,10 @@
 import logging
 import json
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete
+from sqlalchemy import delete, case
 
 from app.core.database import get_db
 from app.core.security import check_rate_limit, get_current_user_email
@@ -25,13 +25,47 @@ from app.core.cache_ttl import (
     STOCK_HISTORY_TTL,
     AI_ANALYSIS_TTL,
     AI_COMPARISON_TTL,
-    WATCHLIST_DIAGNOSTICS_TTL,
+    WATCHLIST_ANALYTICS_TTL,
     SECTOR_LAB_TTL,
     MARKET_REGIME_TTL,
 )
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.stocks")
+
+SECTOR_MAP = {
+    "BANKING": ["Financial Services", "Banking"],
+    "IT": ["IT", "Technology"],
+    "AUTO": ["Auto", "Consumer Cyclical"],
+    "ENERGY": ["Energy"],
+    "DEFENCE": ["Defence", "Industrials"],
+    "FMCG": ["FMCG", "Consumer Defensive"]
+}
+
+SECTOR_LABELS = {
+    "BANKING": "Banking",
+    "IT": "IT",
+    "AUTO": "Auto",
+    "ENERGY": "Energy",
+    "DEFENCE": "Defence",
+    "FMCG": "FMCG"
+}
+
+def get_db_sectors_for_key(sector_key: str) -> list:
+    if not sector_key:
+        return []
+    key_upper = sector_key.upper().strip()
+    return SECTOR_MAP.get(key_upper, [sector_key])
+
+def get_standardized_label(db_sector: str) -> str:
+    if not db_sector:
+        return "Unknown"
+    db_clean = db_sector.strip().lower()
+    for key, db_sectors in SECTOR_MAP.items():
+        if any(s.lower() == db_clean for s in db_sectors):
+            return SECTOR_LABELS[key]
+    return db_sector
+
 
 def get_alpha_breakdown(stock_obj) -> dict:
     """
@@ -223,7 +257,7 @@ async def generate_briefing_background(symbol: str):
             logger.error(f"Error in background briefing task for stock {symbol}: {e}")
 
 @router.get("/search", dependencies=[Depends(check_rate_limit)])
-async def search_stocks(query: str, db: AsyncSession = Depends(get_db)):
+async def search_stocks(query: str = Query(..., min_length=1, max_length=100), db: AsyncSession = Depends(get_db)):
     """
     Search seeded stocks by symbol or company name.
     """
@@ -280,7 +314,11 @@ async def get_stocks(
     
     # Apply filters
     if sector:
-        query = query.where(StockMaster.sector == sector)
+        db_sectors = get_db_sectors_for_key(sector)
+        if len(db_sectors) == 1:
+            query = query.where(StockMaster.sector == db_sectors[0])
+        else:
+            query = query.where(StockMaster.sector.in_(db_sectors))
     if min_cagr_3y is not None:
         query = query.where(StockMaster.cagr_3y >= (min_cagr_3y / 100.0))
     if min_roe is not None:
@@ -290,13 +328,14 @@ async def get_stocks(
     if max_pe is not None:
         query = query.where(StockMaster.pe_ratio <= max_pe)
         
-    # Apply sorting
+    # Apply sorting with NULLS LAST (non-null values first)
     if sort_by and hasattr(StockMaster, sort_by):
         sort_attr = getattr(StockMaster, sort_by)
+        nulls_expr = case((sort_attr.is_(None), 1), else_=0)
         if sort_order.lower() == "asc":
-            query = query.order_by(sort_attr.asc())
+            query = query.order_by(nulls_expr, sort_attr.asc())
         else:
-            query = query.order_by(sort_attr.desc())
+            query = query.order_by(nulls_expr, sort_attr.desc())
             
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
@@ -309,10 +348,10 @@ async def get_stocks(
 
 @router.get("/detail/{symbol}", response_model=StockDetailResponse, dependencies=[Depends(check_rate_limit)])
 async def get_stock_detail(
-    symbol: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    response: Response = None
+    response: Response = None,
+    symbol: str = Path(..., min_length=1, max_length=20),
 ):
     """
     Retrieve stock metadata, fundamentals, return metrics, and daily close history.
@@ -532,7 +571,7 @@ async def get_watchlist(email: str = Depends(get_current_user_email), db: AsyncS
     return result.scalars().all()
 
 @router.post("/watchlist")
-async def add_to_watchlist(symbol: str, email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
+async def add_to_watchlist(symbol: str = Query(..., min_length=1, max_length=20), email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Add a stock symbol to user's watchlist.
     """
@@ -567,7 +606,7 @@ async def add_to_watchlist(symbol: str, email: str = Depends(get_current_user_em
     return {"status": "success", "message": f"Successfully added {symbol} to watchlist."}
 
 @router.delete("/watchlist/{symbol}")
-async def remove_from_watchlist(symbol: str, email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
+async def remove_from_watchlist(symbol: str = Path(..., min_length=1, max_length=20), email: str = Depends(get_current_user_email), db: AsyncSession = Depends(get_db)):
     """
     Remove stock symbol from user's watchlist.
     """
@@ -623,10 +662,10 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
         return {
             "health_score": 0.0,
             "ai_summary": "Your watchlist is empty. Add stocks to compile diagnostics.",
-            "biggest_opportunity": "None",
-            "biggest_risk": "None",
-            "most_volatile_position": "None",
-            "best_performing_position": "None"
+            "strongest_position": "None",
+            "weakest_position": "None",
+            "risk_concentration": "None",
+            "sector_exposure": "None"
         }
         
     # Serialize stocks for AI consumption
@@ -649,7 +688,7 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
     diagnostics = await generate_watchlist_analytics(stocks_list)
     
     try:
-        await redis_client.setex(cache_key, WATCHLIST_DIAGNOSTICS_TTL, json.dumps(diagnostics))  # Cache diagnostics for 30 mins
+        await redis_client.setex(cache_key, WATCHLIST_ANALYTICS_TTL, json.dumps(diagnostics))  # Cache diagnostics for 30 mins
     except Exception as e:
         logger.error(f"Redis set diagnostics failed: {e}")
             
@@ -658,11 +697,13 @@ async def get_watchlist_diagnostics(email: str = Depends(get_current_user_email)
 # Sector Lab Outlook Endpoints
 
 @router.get("/sector/{sector}", response_model=SectorDetailsResponse, dependencies=[Depends(check_rate_limit)])
-async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
+async def get_sector_lab(sector: str = Path(..., min_length=1, max_length=30), db: AsyncSession = Depends(get_db)):
     """
     Get sector details, score, drivers, risks, top companies, and AI sector outlook.
     """
-    cache_key = f"sector_details:{sector.lower()}"
+    sector_key = sector.upper().strip()
+    sector_label = SECTOR_LABELS.get(sector_key, sector)
+    cache_key = f"sector_details:{sector_key.lower()}"
     try:
         cached = await redis_client.get(cache_key)
         if cached:
@@ -671,17 +712,19 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
         logger.error(f"Redis get sector failed: {e}")
 
     # Query all seeded stocks in this sector
-    result = await db.execute(
-        select(StockMaster)
-        .where(StockMaster.sector.ilike(sector))
-        .order_by(StockMaster.alpha_score.desc())
-    )
+    db_sectors = get_db_sectors_for_key(sector_key)
+    if len(db_sectors) == 1:
+        query = select(StockMaster).where(StockMaster.sector.ilike(db_sectors[0]))
+    else:
+        query = select(StockMaster).where(StockMaster.sector.in_(db_sectors))
+
+    result = await db.execute(query.order_by(StockMaster.alpha_score.desc()))
     stocks = result.scalars().all()
     
     if not stocks:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sector '{sector}' has no seeded companies in our store."
+            detail=f"Sector '{sector_label}' has no seeded companies in our store."
         )
         
     stocks_list = []
@@ -699,11 +742,11 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
         })
         
     from app.services.ai_agent import generate_sector_outlook
-    outlook = await generate_sector_outlook(sector, stocks_list)
+    outlook = await generate_sector_outlook(sector_label, stocks_list)
     
     # Format response mapping top stocks
     response_data = {
-        "sector": outlook.get("sector", sector),
+        "sector": sector_label,
         "sector_score": outlook.get("sector_score", 70.0),
         "growth_drivers": outlook.get("growth_drivers", []),
         "major_risks": outlook.get("major_risks", []),
@@ -719,7 +762,11 @@ async def get_sector_lab(sector: str, db: AsyncSession = Depends(get_db)):
     return response_data
 
 @router.get("/compare", response_model=StockComparisonResponse, dependencies=[Depends(check_rate_limit)])
-async def compare_stocks(s1: str, s2: str, db: AsyncSession = Depends(get_db)):
+async def compare_stocks(
+    s1: str = Query(..., min_length=1, max_length=20),
+    s2: str = Query(..., min_length=1, max_length=20),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Compare side-by-side returns, valuation, risk metrics, and AI verdict for two equities.
     """

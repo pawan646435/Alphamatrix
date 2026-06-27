@@ -39,7 +39,7 @@ export default function Explorer() {
   };
 
   // React Query: auto-fetches when params change, caches between visits
-  const { data: funds = [], isLoading: standardLoading } = useFundList(usingSemantic ? {} : fundParams);
+  const { data: funds = [], isLoading: standardLoading, error: standardError } = useFundList(usingSemantic ? {} : fundParams);
 
   const {
     matchedFunds: aiFunds,
@@ -63,7 +63,11 @@ export default function Explorer() {
     e.preventDefault();
     if (!semanticQueryText.trim()) return;
     setUsingSemantic(true);
-    await executeSemanticQuery(semanticQueryText);
+    try {
+      await executeSemanticQuery(semanticQueryText);
+    } catch (err) {
+      console.error("Semantic query failed:", err);
+    }
   };
 
   const handleClearSemantic = () => {
@@ -266,6 +270,13 @@ export default function Explorer() {
                   <td colSpan="9" className="py-16 text-center text-brand-textMuted">
                     <RefreshCw className="h-6 w-6 mx-auto animate-spin text-brand-primary" />
                     <p className="mt-3 text-[10px] font-mono">PROCESSING ANALYTICS PIPELINE...</p>
+                  </td>
+                </tr>
+              ) : standardError ? (
+                <tr>
+                  <td colSpan="9" className="py-12 text-center text-brand-textMuted font-mono">
+                    <AlertCircle className="h-6 w-6 mx-auto text-brand-danger" />
+                    <p className="mt-2 text-[10px] text-brand-danger">QUERY ENGINE ERROR: {standardError?.detail || 'Failed to fetch funds'}</p>
                   </td>
                 </tr>
               ) : activeFunds.length === 0 ? (

@@ -501,6 +501,20 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         db.add_all(prices_to_insert)
 
     await db.commit()
+    
+    # Invalidate Redis cache for this stock after dynamic ingestion
+    try:
+        from app.core.redis import redis_client
+        await redis_client.delete(
+            f"stock_detail:{symbol}",
+            f"stock_master:{symbol}",
+            f"stock_history:{symbol}",
+            f"stock_briefing:{symbol}",
+            f"stock_search:{symbol.lower()}",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to invalidate Redis cache for {symbol}: {e}")
+    
     logger.info(
         f"[DynamicIngest] Successfully ingested {symbol} ({company_name}) "
         f"with {len(prices_to_insert)} price records. Alpha Score: {alpha_score}"
@@ -538,13 +552,17 @@ async def seed_stocks_data(db: AsyncSession):
     for s_info in SEEDED_STOCKS:
         symbol = s_info["symbol"]
         
-        # Check if already seeded
+        # Check if already seeded with real data
         check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
         existing_stock = check_q.scalar_one_or_none()
         
-        if existing_stock:
-            logger.info(f"Stock {symbol} already exists. Skipping database seeding.")
+        if existing_stock and existing_stock.sector != "Unknown" and existing_stock.roe is not None:
+            logger.info(f"Stock {symbol} already seeded with financial data. Skipping.")
             continue
+        elif existing_stock:
+            logger.info(f"Stock {symbol} exists as skeleton (sector={existing_stock.sector}). Overwriting with seed data...")
+            await db.delete(existing_stock)
+            await db.flush()
             
         logger.info(f"Seeding stock data for symbol: {symbol}...")
         
@@ -768,6 +786,19 @@ async def seed_stocks_data(db: AsyncSession):
                 )
         except Exception as e:
             logger.error(f"Failed to sync stock {symbol} to search index: {e}")
+        
+        # Invalidate Redis cache for this stock after seeding
+        try:
+            from app.core.redis import redis_client
+            await redis_client.delete(
+                f"stock_detail:{symbol}",
+                f"stock_master:{symbol}",
+                f"stock_history:{symbol}",
+                f"stock_briefing:{symbol}",
+                f"stock_search:{symbol.lower()}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to invalidate Redis cache for {symbol}: {e}")
         
     await db.commit()
     logger.info("Stock seeding background task finished successfully.")

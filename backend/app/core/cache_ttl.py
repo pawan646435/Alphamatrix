@@ -36,7 +36,7 @@ NEWS_FEED_TTL = 300           # 5 minutes  — live news feed from yfinance
 # ---------------------------------------------------------------------------
 AI_ANALYSIS_TTL = 86_400      # 24 hours   — stock briefing and AI summaries
 AI_COMPARISON_TTL = 86_400    # 24 hours   — AI stock comparison verdicts
-WATCHLIST_DIAGNOSTICS_TTL = 86_400  # 24 hours — AI watchlist portfolio analysis
+
 
 # ---------------------------------------------------------------------------
 # Fund Data

@@ -114,9 +114,11 @@ async def get_current_user_email(credentials: Optional[HTTPAuthorizationCredenti
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
         if not kid or kid not in firebase_keys:
-            # Fallback to simple decode if signature check can't be resolved or if we are local testing
-            payload = jwt.decode(token, "", options={"verify_signature": False})
-            return payload.get("email") or default_email
+            # Firebase keys are not available — reject non-mock token
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Firebase authentication is not configured. Use mock tokens for development."
+            )
             
         # Verify signature using correct certificate key
         certificate = firebase_keys[kid]
@@ -125,14 +127,12 @@ async def get_current_user_email(credentials: Optional[HTTPAuthorizationCredenti
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token: missing email")
         return email
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"Firebase JWT decode failed: {e}. Trying unverified decode.")
-        try:
-            payload = jwt.decode(token, "", options={"verify_signature": False})
-            return payload.get("email") or default_email
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired access credentials."
-            )
+        logger.warning(f"Firebase JWT decode failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access credentials."
+        )
 

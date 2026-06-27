@@ -16,6 +16,29 @@
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../services/api';
 
+// ─── SECTOR STANDARDIZATION REGISTRY ─────────────────────────────────────────
+export const SECTORS = {
+  BANKING: { key: 'BANKING', label: 'Banking', dbSectors: ['Financial Services', 'Banking'] },
+  IT: { key: 'IT', label: 'IT', dbSectors: ['IT', 'Technology'] },
+  AUTO: { key: 'AUTO', label: 'Auto', dbSectors: ['Auto', 'Consumer Cyclical'] },
+  ENERGY: { key: 'ENERGY', label: 'Energy', dbSectors: ['Energy'] },
+  DEFENCE: { key: 'DEFENCE', label: 'Defence', dbSectors: ['Defence', 'Industrials'] },
+  FMCG: { key: 'FMCG', label: 'FMCG', dbSectors: ['FMCG', 'Consumer Defensive'] },
+};
+
+export function getStandardizedSector(dbSector) {
+  if (!dbSector) return { key: 'UNKNOWN', label: 'Unknown' };
+  const sectorClean = dbSector.trim();
+  const sectorLower = sectorClean.toLowerCase();
+  
+  for (const info of Object.values(SECTORS)) {
+    if (info.dbSectors.some(s => s.toLowerCase() === sectorLower)) {
+      return { key: info.key, label: info.label };
+    }
+  }
+  return { key: 'UNKNOWN', label: sectorClean };
+}
+
 // ─── STALE TIME CONSTANTS ────────────────────────────────────────────────────
 export const STALE = {
   LIVE:    60_000,          // 1 min — live prices
