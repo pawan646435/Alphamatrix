@@ -95,7 +95,7 @@ async def get_current_user_email(credentials: Optional[HTTPAuthorizationCredenti
         return default_email
 
     token = credentials.credentials
-    if not token:
+    if not token or token.strip() == "" or token.lower() in ("null", "undefined"):
         return default_email
 
     # Handle developer fallback mock tokens
@@ -109,6 +109,10 @@ async def get_current_user_email(credentials: Optional[HTTPAuthorizationCredenti
 
     # Real Firebase verification
     try:
+        # If the token is not mock and doesn't look like a JWT, treat it as guest fallback
+        if len(token.split(".")) != 3:
+            return default_email
+
         await fetch_firebase_keys()
         # Decode without verification first to get kid from header
         unverified_header = jwt.get_unverified_header(token)

@@ -789,10 +789,9 @@ async def get_sector_lab(sector: str = Path(..., min_length=1, max_length=30), d
 
     # Query all seeded stocks in this sector
     db_sectors = get_db_sectors_for_key(sector_key)
-    if len(db_sectors) == 1:
-        query = select(StockMaster).where(StockMaster.sector.ilike(db_sectors[0]))
-    else:
-        query = select(StockMaster).where(StockMaster.sector.in_(db_sectors))
+    from sqlalchemy import func
+    db_sectors_lower = [s.lower() for s in db_sectors]
+    query = select(StockMaster).where(func.lower(StockMaster.sector).in_(db_sectors_lower))
     query = query.where(StockMaster.sector != "Invalid")
 
     result = await db.execute(query.order_by(StockMaster.alpha_score.desc()))
