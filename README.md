@@ -1,121 +1,534 @@
-# 💎 AlphaMatrix — Quantitative Analytics & AI Intelligence Terminal
+# AlphaMatrix — Quantitative Analytics & AI Intelligence Terminal
 
-[![Deployed Live Link](https://img.shields.io/badge/Deployed%20Link-Live-brightgreen)](https://alphamatrix-alpha.vercel.app/)
+[![Live](https://img.shields.io/badge/Live-alphamatrix--alpha.vercel.app-brightgreen?style=flat-square&logo=vercel)](https://alphamatrix-alpha.vercel.app/)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20PostgreSQL-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![AI](https://img.shields.io/badge/AI-Llama%203.3%2070B-7C3AED?style=flat-square)](https://groq.com/)
+[![License](https://img.shields.io/badge/License-Private-red?style=flat-square)]()
 
-**Live Production Link**: [https://alphamatrix-alpha.vercel.app/](https://alphamatrix-alpha.vercel.app/)
+**Production URL**: [https://alphamatrix-alpha.vercel.app/](https://alphamatrix-alpha.vercel.app/)
 
-AlphaMatrix is a premium, high-performance quantitative intelligence terminal for Indian Mutual Funds and Equities. Designed with a luxury minimalist dark-mode aesthetic, the platform integrates multi-factor Llama 3.3 models, timeseries performance mathematics, dynamic stock auto-ingestion, and macro-financial risk overlays into a unified desktop dashboard.
-
-For a full structural specification, see the [Complete System Architecture Blueprint & Audit Report](file:///Users/pawan/.gemini/antigravity/brain/4cd66675-7883-4b1b-88b9-74019e4d3999/complete_architecture_blueprint.md).
-
----
-
-## 🎨 Visual Identity & Theme
-
-AlphaMatrix features a custom-engineered design system that prioritizes structural grids, fine lines, and clean typographic hierarchy:
-* **Light Mode (Warm Ivory)**: Warm Ivory base background (`#E8DDC9`) with charcoal text (`#0A0908`) and dark gold lines.
-* **Dark Mode (Charcoal Black)**: Deep charcoal-black background (`#0A0908`) with warm ivory text (`#E8DDC9`) and gold accents (`#C9A56B`).
-* **Bespoke Vector Monograms**: 
-  * **AMCs (Mutual Funds)**: Auto-detects Asset Management Companies (SBI, Quant, Axis, HDFC, Nippon, etc.) to render vector logos (e.g., the keyhole for SBI, summation Sigma for Quant, and chevron vectors for Axis).
-  * **Equities (Stocks)**: Dynamic lettermark generation mapped to stock ticker prefixes, maintaining absolute design cohesion.
+AlphaMatrix is a premium institutional-grade quantitative research platform for Indian Mutual Funds and Equities. It combines deterministic multi-factor scoring engines, real-time multi-source news aggregation, AI-powered investment briefings, historical backtesting, and a Bloomberg Terminal–inspired UI into a unified desktop research environment.
 
 ---
 
-## ⚡ Core Platform Capabilities
+## Table of Contents
 
-### 1. Cross-Asset Experience
-A unified interface structure where Mutual Funds and Equities share a single design language, card system, AI-briefing layout, and interactive charts.
-
-### 2. Unified Global Search & Discovery
-* **Dual-Class Router**: A unified search experience. Users can search for tickers (e.g., `TCS`, `RELIANCE`) or scheme names (e.g., `Parag Parikh Flexi Cap`, `HDFC Mid Cap Fund`) and the router automatically classifies and routes the request.
-* **Portal-Based Suggestions**: The search dropdown is rendered using React Portals (`createPortal`) directly on `document.body` to completely bypass parent container clipping and CSS stacking context issues.
-* **Self-Expanding Database**: If a queried ticker does not exist in the local database, the search system initiates a quick Yahoo Finance verification. If valid, the frontend presents a **⚡ DISCOVER** option to auto-ingest the equity.
-
-### 3. Dynamic Auto-Ingestion & Fallbacks
-* **Ingestion Pipeline**: When an unindexed stock is requested, the backend triggers an asynchronous background ingestion task. It pulls up to 6 years of historical price data from Yahoo Finance, falling back sequentially (`6y` → `max` → `3y` → `2y` → `1y`) for newer listings (like `SWIGGY` or `ZOMATO`).
-* **Exchange Fallbacks**: Automatically checks NSE (`.NS`) first, falling back to BSE (`.BO`) if the ticker is only listed on the secondary exchange.
-* **Quantitative Math**: Calculates 3-Year CAGR, rolling return metrics, volatility coefficients (Beta vs Nifty 50), and calculates a multi-factor **Alpha Score (0-100)** incorporating valuation, debt-equity, return on equity, and momentum.
-
-### 4. Interactive Analytics & Charts
-* **Timeseries Visualization**: High-performance SVG area charts showing performance over customizable periods (1M, 6M, 1Y, 3Y, 5Y, MAX).
-* **Risk/Return Scatter Matrix**: Coordinate mapping plots of Sharpe Ratio vs. CAGR for Mutual Funds, and Volatility vs. CAGR for Stocks, to visually identify efficient frontier candidates.
-* **Multi-Stock Comparison**: Interactive comparison overlay mapping relative returns of multiple stocks on a single timeseries axis.
-* **Geopolitical & Regime Intelligence**: Incorporates macro market regime classifiers (**BULLISH** / **BEARISH** / **SIDEWAYS**) and generates macro geopolitical briefings contextually.
-* **AI Watchlist Diagnostics**: Modern portfolio analysis calculating portfolio Beta, expected returns, and sector concentration risks using Llama 3.3.
+1. [Platform Overview](#platform-overview)
+2. [Core Engines](#core-engines)
+   - [Stock Institutional Rating Engine v2](#stock-institutional-rating-engine-v2)
+   - [Fund Rating Engine v1](#fund-rating-engine-v1)
+   - [Multi-Source News Intelligence Engine](#multi-source-news-intelligence-engine)
+   - [Backtesting Engine v3](#backtesting-engine-v3)
+3. [Feature Set](#feature-set)
+4. [Technology Stack](#technology-stack)
+5. [Architecture](#architecture)
+6. [API Reference](#api-reference)
+7. [Design System](#design-system)
+8. [Local Setup](#local-setup)
+9. [Environment Variables](#environment-variables)
 
 ---
 
-## 🛠️ Technology Stack
+## Platform Overview
 
-### Backend
-* **FastAPI**: Asynchronous high-performance API gateway.
-* **SQLAlchemy & Asyncpg**: Database mapping utilizing asynchronous drivers.
-* **Neon PostgreSQL**: Serverless PostgreSQL cloud database with transaction pooling.
-* **Yahoo Finance API & MFAPI**: Ingestion pipelines for stock prices, fund NAVs, and metadata.
-* **Groq Llama 3.3**: Dynamic AI summarization, investment briefings, semantic query parsing, and conversational stock/fund chatbots targeting the `llama-3.3-70b-versatile` model.
-* **Upstash Redis (REST & TCP)**: Asynchronous serverless Redis caching for global search suggestions and analytics.
+AlphaMatrix is designed around a single principle: **AI explains the verdict, the engine decides the verdict.** Every investment rating is generated by a deterministic, rule-based scoring engine — not by a language model. AI is used exclusively to explain the numbers in plain language after the score is computed.
 
-### Frontend
-* **Vite + React (v19)**: Rapid HMR frontend build tooling.
-* **Tailwind CSS**: Utility-first CSS framework mapped to custom design token variables.
-* **Recharts**: Responsive chart rendering matching light/dark SVGs.
-* **Lucide Icons**: Minimalist vector icons.
-* **Firebase Auth**: JWT authentication token integration with a built-in mock fallback environment.
+### Key Principles
+- **No optimistic AI ratings** — BUY verdicts are rare and earned; HOLD is the default neutral state
+- **Deterministic scoring** — same inputs always produce the same output
+- **Institutional depth** — multi-factor analysis matching the rigor of sell-side research
+- **Zero hallucination risk on verdicts** — language models cannot override quantitative scores
 
 ---
 
-## Setup & Local Execution
+## Core Engines
 
-### Prerequisites
-* **Python**: Version 3.10 or higher
-* **Node.js**: Version 18 or higher (LTS recommended)
+### Stock Institutional Rating Engine v2
 
-### 1. Environment Configuration
-Create a `.env` file inside the `backend/` directory:
-```env
-GROQ_API_KEY=your_groq_api_key
-DATABASE_URL=postgresql+asyncpg://neondb_owner:***@ep-twilight.aws.neon.tech/neondb
-SECRET_KEY=your_jwt_signing_secret
-UPSTASH_REDIS_REST_URL=your_upstash_redis_rest_url
-UPSTASH_REDIS_REST_TOKEN=your_upstash_redis_rest_token
+A 5-factor composite scoring model for equities producing a final score (0–100) and verdict.
+
+#### Scoring Formula
+```
+Final Score = (
+    fundamental_score  × 0.30   +   # P/E, P/B, EPS growth, D/E ratio
+    valuation_score    × 0.20   +   # DCF discount, margin of safety
+    technical_score    × 0.20   +   # 52W momentum, RSI, trend
+    risk_score         × 0.15   +   # Beta, volatility, drawdown
+    sector_score       × 0.15       # Peer-relative rank within sector
+)
 ```
 
-### 2. Backend Installation & Server Start
-From the project root:
+#### Investor Verdict Mapping
+| Score | Verdict |
+|:------|:--------|
+| 75–100 | **STRONG BUY** |
+| 60–74 | **BUY** |
+| 45–59 | **HOLD** |
+| 30–44 | **REDUCE** |
+| 0–29 | **AVOID** |
+
+#### Trader Verdict Mapping (Momentum-biased)
+| Score | Verdict |
+|:------|:--------|
+| 72+ | **STRONG BUY** |
+| 58–71 | **BUY** |
+| 43–57 | **HOLD** |
+| 28–42 | **REDUCE** |
+| 0–27 | **AVOID** |
+
+#### Features
+- Sector-relative scoring (stocks ranked against NIFTY sector peers)
+- Confidence score indicating data completeness
+- Separate investor (fundamentals-biased) and trader (momentum-biased) verdicts
+- AI-generated explanation of the score — does **not** generate the score
+- Alpha Score ring visual on stock detail page
+
+---
+
+### Fund Rating Engine v1
+
+A 6-factor deterministic composite scoring engine for mutual funds, mirroring the architecture of the Stock Rating Engine v2.
+
+#### Scoring Formula
+```
+Fund Score = (
+    cagr_score         × 0.25   +   # 1Y/3Y/5Y CAGR vs category benchmark
+    consistency_score  × 0.15   +   # Rolling return consistency
+    risk_score         × 0.20   +   # Sharpe + Sortino + Max Drawdown
+    quality_score      × 0.15   +   # Expense ratio + AUM strength
+    alpha_score        × 0.15   +   # Alpha vs Nifty 50
+    peer_score         × 0.10       # Category rank (Top X%)
+)
+```
+
+#### Verdict Mapping
+| Score | Verdict |
+|:------|:--------|
+| 90–100 | **Elite** |
+| 75–89 | **Strong** |
+| 60–74 | **Good** |
+| 45–59 | **Average** |
+| 0–44 | **Avoid** |
+
+#### Category CAGR Benchmarks
+| Category | 1Y Benchmark | 3Y Benchmark | 5Y Benchmark |
+|:---------|:-------------|:-------------|:-------------|
+| Large Cap | 12% | 12% | 12% |
+| Mid Cap | 15% | 16% | 16% |
+| Small Cap | 18% | 20% | 20% |
+| Index | 10% | 11% | 11% |
+
+#### Features
+- Animated SVG Fund Score Ring on fund detail page
+- Category rank progress bar (best → worst)
+- AI-generated Bull Case / Bear Case / Rating Rationale cards
+- Category peer comparison endpoint
+- Auto-scored during background ingestion
+
+---
+
+### Multi-Source News Intelligence Engine
+
+A legal RSS-based multi-source news aggregator replacing single-source Yahoo Finance.
+
+#### India Market Sources
+| Source | Credibility Score |
+|:-------|:-----------------|
+| Economic Times Markets | 0.82 |
+| Moneycontrol | 0.80 |
+| Business Standard | 0.80 |
+| Livemint | 0.78 |
+| Yahoo Finance (fallback) | 0.70 |
+
+#### Global Market Sources
+| Source | Credibility Score |
+|:-------|:-----------------|
+| Reuters Business | 0.95 |
+| CNBC Finance | 0.85 |
+| Yahoo Finance (fallback) | 0.70 |
+
+#### Intelligence Features
+- **Jaccard Deduplication**: Merges near-identical headlines from multiple sources (threshold 0.65) — shows "+N more reporting" badge instead of duplicate cards
+- **Event Classification**: Detects POSITIVE (order win, capacity expansion, regulatory approval, earnings beat, product launch) vs NEGATIVE (earnings miss, promoter selling, debt concern, investigation, downgrade) events
+- **Source Credibility Dot**: Green (≥90%) / Amber (≥80%) / Grey (<80%) indicator per article
+- **Event Direction Chips**: ▲ ORDER WIN / ▼ EARNINGS MISS overlays on news cards
+- **Category Filtering**: `stocks`, `mutual_funds`, `economy`, `policy`, `earnings`
+- **Redis Caching**: 10-minute TTL per source/category combination
+- **yfinance Fallback**: Automatic fallback if all RSS sources fail
+
+---
+
+### Backtesting Engine v3
+
+A historical verdict accuracy engine that measures how well past verdicts predicted actual stock performance.
+
+#### Methodology
+1. Uses first 60% of stored `StockPriceHistory` as the "training" window
+2. Generates a retrospective verdict using metrics available at that historical date
+3. Measures actual stock returns at T+30, T+90, T+180, T+365 days
+4. Compares against NIFTY 50 proxy (12% annualized)
+
+#### Accuracy Definitions
+| Verdict | Success Condition |
+|:--------|:-----------------|
+| BUY / STRONG BUY | Actual return > NIFTY 50 at T+365 |
+| HOLD | Actual return within ±5% of NIFTY 50 at T+365 |
+| AVOID / REDUCE | Actual return < NIFTY 50 at T+365 |
+
+#### Output Metrics
+- BUY accuracy rate (% outperformed benchmark)
+- HOLD accuracy rate (% within ±5% band)
+- AVOID accuracy rate (% correctly avoided underperformers)
+- Average return by verdict
+- 90-day and 365-day win rates
+- Average max drawdown
+
+#### UI Integration
+- **StockHome**: Verdict Accuracy Engine v3 section — live accuracy cards per verdict
+- **StockDetail**: Per-stock Verdict Backtest panel showing T+30/90/180/365 returns vs Nifty with Beat/Miss indicators
+
+---
+
+## Feature Set
+
+### Mutual Funds
+- **Fund Explorer**: Grid of 100+ funds with score, verdict, CAGR, Sharpe, expense ratio
+- **Fund Detail**: NAV interactive chart, 9-metric grid, Fund Score Ring, category rank bar, AI briefing, Bull/Bear/Rationale cards, Interactive Analyst Terminal (chat)
+- **Category Peers**: Sorted comparison of funds within the same category
+- **Fund Rating Breakdown**: Per-factor score breakdown via API
+- **AI Chat**: Contextual Llama 3.3 chatbot pre-loaded with fund data
+
+### Equities (Stocks)
+- **Stock Explorer**: All seeded stocks with Alpha Score, verdict badges, sector filter
+- **Stock Detail**: Price chart, fundamental metrics grid, Rating Engine v2 score breakdown, verdict history, AI briefing, watchlist, backtesting panel
+- **Sector Intelligence Matrix**: 15 sectors — Banking, IT, Auto, Energy, Defence, FMCG, Pharma, Metals, Infrastructure, Chemicals, Consumer Durables, Realty, Telecom, PSU, Capital Goods
+- **Risk/Return Scatterplot**: Sharpe Ratio vs CAGR coordinate mapping
+- **Market Regime**: Automated BULLISH/BEARISH/SIDEWAYS classification with confidence score
+- **Stock Compare**: Multi-stock overlaid timeseries comparison
+- **Watchlist**: Portfolio-level AI analysis — Beta, expected return, sector concentration
+- **Auto-Discovery**: Search for unlisted tickers → auto-ingest via Yahoo Finance pipeline
+
+### News Intelligence
+- **India Market Stream**: ET Markets + Moneycontrol + Business Standard + Livemint
+- **Global Market Stream**: Reuters + CNBC + Yahoo Finance
+- **AI Analysis**: On-demand Llama 3.3 impact analysis per article
+- **Event Detection**: Real-time classification of POSITIVE/NEGATIVE market events
+- **Multi-Source Deduplication**: Merged headlines shown with source count badge
+
+### Platform
+- **Dark/Light Mode**: Charcoal black / Warm ivory toggle
+- **Firebase Authentication**: Email/password login with JWT token flow
+- **Global Search**: Unified search across stocks and funds with auto-routing
+- **Redis Caching**: Multi-layer caching for news (10min), stock data (60s), fund data (1hr), backtesting (24hr)
+- **Progressive Loading**: Skeleton states → data hydration → AI enrichment in background
+
+---
+
+## Technology Stack
+
+### Backend
+| Technology | Purpose |
+|:-----------|:--------|
+| **FastAPI** | Asynchronous API gateway |
+| **SQLAlchemy + Asyncpg** | Async ORM with PostgreSQL driver |
+| **Neon PostgreSQL** | Serverless cloud PostgreSQL with connection pooling |
+| **Upstash Redis** | Serverless Redis (REST + TCP) for multi-layer caching |
+| **Groq Llama 3.3 70B** | AI briefings, chatbots, news analysis, market regime |
+| **Yahoo Finance (yfinance)** | Stock price history, real-time quotes, fallback news |
+| **MFAPI.in** | Indian Mutual Fund NAV data |
+| **httpx** | Async HTTP client for RSS feed fetching |
+| **feedparser** | RSS/Atom feed parsing |
+
+### Frontend
+| Technology | Purpose |
+|:-----------|:--------|
+| **Vite + React 19** | Build tooling with fast HMR |
+| **Tailwind CSS** | Utility-first styling with custom design tokens |
+| **React Query (TanStack)** | Server state, caching, background refetch |
+| **Recharts** | SVG chart library (area, scatter, line) |
+| **Lucide React** | Icon system |
+| **Firebase Auth** | JWT authentication |
+| **React Router v6** | Client-side routing |
+
+### Typography
+| Role | Font | Weight |
+|:-----|:-----|:-------|
+| Body / UI | **Inter** | 300–700 |
+| Display headers | **Sora** | 600–800 |
+| Data / Numbers / Mono | **JetBrains Mono** | 400–700 |
+
+---
+
+## Architecture
+
+```
+alphamatrix/
+├── backend/
+│   ├── app/
+│   │   ├── api/v1/
+│   │   │   ├── auth.py          # JWT authentication
+│   │   │   ├── funds.py         # Fund CRUD + rating + peers endpoints
+│   │   │   ├── stocks.py        # Stock CRUD + regime + backtest endpoints
+│   │   │   ├── news.py          # Multi-source news aggregation endpoints
+│   │   │   ├── ai.py            # AI chat and analysis endpoints
+│   │   │   └── search.py        # Global search + discovery endpoint
+│   │   ├── models/
+│   │   │   ├── fund.py          # FundMaster + FundNAVHistory ORM models
+│   │   │   └── stock.py         # StockMaster + StockPriceHistory ORM models
+│   │   ├── schemas/
+│   │   │   ├── fund_schema.py   # Pydantic response schemas for funds
+│   │   │   └── stock_schema.py  # Pydantic response schemas for stocks
+│   │   ├── services/
+│   │   │   ├── fund_rating_engine.py    # Deterministic 6-factor fund scoring
+│   │   │   ├── rating_engine.py         # Deterministic 5-factor stock scoring
+│   │   │   ├── news_aggregator.py       # Multi-source RSS aggregator
+│   │   │   ├── backtesting.py           # Historical verdict accuracy engine
+│   │   │   ├── ai_agent.py              # Groq LLM integration
+│   │   │   └── cache_service.py         # Upstash Redis abstraction layer
+│   │   ├── workers/
+│   │   │   ├── ingestion.py             # Fund data ingestion pipeline
+│   │   │   └── stock_ingestion.py       # Stock data ingestion pipeline
+│   │   └── core/
+│   │       ├── database.py              # Async SQLAlchemy engine
+│   │       ├── security.py             # JWT + rate limiting
+│   │       └── config.py               # Settings via pydantic-settings
+│   └── requirements.txt
+│
+└── frontend/
+    └── src/
+        ├── pages/
+        │   ├── Home.jsx          # Platform landing page
+        │   ├── Explorer.jsx      # Mutual Fund explorer grid
+        │   ├── Detail.jsx        # Mutual Fund detail (score ring, AI, chat)
+        │   ├── StockHome.jsx     # Stock platform home + backtesting accuracy
+        │   ├── StockExplorer.jsx # Stock grid
+        │   ├── StockDetail.jsx   # Stock detail (alpha ring, backtesting, AI)
+        │   ├── StockSector.jsx   # Sector drill-down
+        │   ├── StockCompare.jsx  # Multi-stock comparison
+        │   ├── StockWatchlist.jsx# Portfolio + AI diagnostics
+        │   └── News.jsx          # Multi-source news intelligence
+        ├── components/
+        │   ├── charts/
+        │   │   ├── InteractiveChart.jsx     # Area chart with period tabs
+        │   │   └── StockRiskScatterplot.jsx # Risk/return coordinate plot
+        │   ├── GlobalSearch.jsx             # Unified search with portal
+        │   ├── FundLogo.jsx                 # AMC vector monogram renderer
+        │   ├── StockLogo.jsx                # Equity lettermark renderer
+        │   └── AnalystResponseCard.jsx      # AI chat message renderer
+        ├── hooks/
+        │   ├── useQueries.js    # All React Query hooks
+        │   ├── useFunds.js      # Fund-specific mutations
+        │   └── useStocks.js     # Stock-specific mutations + chat
+        └── index.css            # Design system + Tailwind config
+```
+
+---
+
+## API Reference
+
+### Funds
+
+| Method | Endpoint | Description | Cache |
+|:-------|:---------|:------------|:------|
+| `GET` | `/api/v1/funds/` | List all funds | 5 min |
+| `GET` | `/api/v1/funds/{scheme_code}` | Fund detail with NAV history | 1 hr |
+| `GET` | `/api/v1/funds/{scheme_code}/rating` | Rating factor breakdown | Live |
+| `GET` | `/api/v1/funds/category/{category}/peers` | Category sorted comparison | Live |
+| `POST` | `/api/v1/funds/{scheme_code}/sync` | Trigger manual data refresh | — |
+| `POST` | `/api/v1/funds/{scheme_code}/chat` | AI chat for fund | — |
+
+### Stocks
+
+| Method | Endpoint | Description | Cache |
+|:-------|:---------|:------------|:------|
+| `GET` | `/api/v1/stocks/list` | All stocks with scores | 6 hr |
+| `GET` | `/api/v1/stocks/{symbol}` | Stock detail + history | 6 hr |
+| `GET` | `/api/v1/stocks/market-regime` | Macro regime classification | 1 hr |
+| `GET` | `/api/v1/stocks/sector/{sector}` | Sector stocks with peers | 30 min |
+| `GET` | `/api/v1/stocks/backtest/summary` | Aggregate verdict accuracy | 24 hr |
+| `GET` | `/api/v1/stocks/backtest/{symbol}` | Per-stock backtest T+30/90/180/365 | 12 hr |
+| `POST` | `/api/v1/stocks/{symbol}/chat` | AI chat for stock | — |
+| `POST` | `/api/v1/stocks/{symbol}/watchlist` | Add to watchlist | — |
+
+### News
+
+| Method | Endpoint | Description | Cache |
+|:-------|:---------|:------------|:------|
+| `GET` | `/api/v1/news/india` | India market news (multi-source) | 10 min |
+| `GET` | `/api/v1/news/global` | Global market news (multi-source) | 10 min |
+| `GET` | `/api/v1/news/list` | Legacy endpoint (redirects to india/global) | 10 min |
+| `POST` | `/api/v1/news/analyze` | AI impact analysis for an article | — |
+
+#### News Query Parameters
+```
+GET /api/v1/news/india?category=all|stocks|mutual_funds|economy|policy|earnings
+GET /api/v1/news/global?category=all|stocks|mutual_funds|economy|policy|earnings
+```
+
+### Search & Auth
+
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| `GET` | `/api/v1/search/` | Unified fund + stock search |
+| `POST` | `/api/v1/auth/register` | User registration |
+| `POST` | `/api/v1/auth/login` | JWT login |
+| `GET` | `/api/v1/auth/me` | Authenticated user profile |
+
+---
+
+## Design System
+
+### Color Palette
+
+| Token | Light Mode | Dark Mode | Usage |
+|:------|:-----------|:----------|:------|
+| `brand-bg` | `#E8DDC9` (Warm Ivory) | `#0A0908` (Charcoal) | Page background |
+| `brand-surface` | `#D4C5A9` | `#111010` | Cards, panels |
+| `brand-border` | `#B8A898` | `#2A2928` | Borders, dividers |
+| `brand-primary` | `#C9A56B` | `#C9A56B` | Gold accent (unchanged) |
+| `brand-success` | `#4caf50` | `#4caf50` | Positive / BUY |
+| `brand-danger` | `#ef5350` | `#ef5350` | Negative / AVOID |
+| `brand-warning` | `#ffb74d` | `#ffb74d` | Caution / HOLD |
+
+### Verdict Color Mapping
+
+| Verdict | Color |
+|:--------|:------|
+| STRONG BUY / Elite | `brand-success` (#4caf50) |
+| BUY / Strong | `brand-primary` (#C9A56B) |
+| HOLD / Good | `brand-warning` (#ffb74d) |
+| REDUCE / Average | `brand-textMuted` (#BFB2A0) |
+| AVOID | `brand-danger` (#ef5350) |
+
+### Component Patterns
+- **Terminal Cards**: `border border-brand-border bg-brand-surface` with corner crosshair decorations
+- **Score Rings**: SVG circle progress (`stroke-dasharray` / `stroke-dashoffset`) with 1s ease-out animation
+- **Verdict Badges**: Monospace pill with border, background tint, and matching text color
+- **Skeleton States**: `animate-pulse` placeholder blocks during data loading
+- **Hover Effects**: `hover:border-brand-primary hover:shadow-[0_4px_20px_-5px_rgba(201,165,107,0.12)]`
+
+---
+
+## Local Setup
+
+### Prerequisites
+- Python 3.10+
+- Node.js 18+ (LTS)
+- PostgreSQL (or Neon serverless account)
+- Redis (or Upstash serverless account)
+
+### 1. Clone the Repository
 ```bash
-# Navigate to backend directory
+git clone https://github.com/pawan646435/Alphamatrix.git
+cd Alphamatrix
+```
+
+### 2. Backend Setup
+```bash
 cd backend
 
-# Create and activate virtual environment
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Start the FastAPI server
-.venv/bin/uvicorn app.main:app --port 8000
-```
-*Note: On startup, the backend automatically initializes database tables and seeds base records.*
+# Configure environment (see Environment Variables section)
+cp .env.example .env
+# Edit .env with your credentials
 
-### 3. Frontend Installation & Client Start
-In a new terminal window from the project root:
+# Start the backend server
+uvicorn app.main:app --reload --port 8000
+```
+
+The backend auto-initializes all database tables and seeds base records on first startup.
+
+### 3. Frontend Setup
 ```bash
-# Navigate to frontend directory
+# In a new terminal
 cd frontend
 
-# Install package dependencies
 npm install
-
-# Start Vite dev server
 npm run dev
 ```
 
-Open your browser to **`http://localhost:5173/`** to view the platform.
+Open **http://localhost:5173** (or 5174 if 5173 is in use).
 
-### 4. Running the Test Suite
-Ensure the backend virtual environment is active, then run:
+### 4. Run Tests
 ```bash
 cd backend
+source .venv/bin/activate
 PYTHONPATH=. pytest
 ```
+
+---
+
+## Environment Variables
+
+Create `backend/.env` with the following:
+
+```env
+# ── Database ────────────────────────────────────────────────────────
+DATABASE_URL=postgresql+asyncpg://user:password@host/dbname
+
+# ── Redis (Upstash) ─────────────────────────────────────────────────
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
+
+# ── AI (Groq) ───────────────────────────────────────────────────────
+GROQ_API_KEY=your_groq_api_key
+
+# ── Security ────────────────────────────────────────────────────────
+SECRET_KEY=your_jwt_secret_key_min_32_chars
+
+# ── Firebase (optional — for Auth UI) ───────────────────────────────
+FIREBASE_API_KEY=your_firebase_web_api_key
+```
+
+> **Note:** If `GROQ_API_KEY` is not set, the platform gracefully falls back to deterministic mock AI responses — all scoring engines continue to function normally.
+
+---
+
+## Changelog
+
+### v3.0.0 — July 2026
+- **Fund Rating Engine v1**: Deterministic 6-factor fund scoring (Elite/Strong/Good/Average/Avoid)
+- **Multi-Source News Engine**: RSS aggregation from ET Markets, Moneycontrol, Business Standard, Livemint, Reuters, CNBC with deduplication and event detection
+- **Backtesting Engine v3**: Historical verdict accuracy at T+30/90/180/365 vs NIFTY 50
+- **Fund Score Ring**: Animated SVG progress ring on fund detail page
+- **Category Rank Bar**: Peer percentile visualization
+- **Bull/Bear/Rationale Cards**: AI explanation cards on fund detail
+- **Verdict Accuracy Section**: Live backtest stats on stock home page
+- **Per-Stock Backtest Panel**: T+30/90/180/365 returns vs benchmark on stock detail
+- **Typography Refresh**: Inter + Sora + JetBrains Mono font stack
+
+### v2.0.0 — June 2026
+- **Stock Institutional Rating Engine v2**: 5-factor deterministic scoring with investor/trader verdicts
+- **Sector Relative Scoring**: Peer-relative rank within NIFTY sectors
+- **Confidence Score**: Data completeness indicator
+- **Market Regime Classifier**: BULLISH/BEARISH/SIDEWAYS with confidence %
+- **Stock Comparison**: Multi-stock overlaid chart
+- **Watchlist AI Diagnostics**: Portfolio Beta, expected return, sector concentration
+- **Firebase Authentication**: Full JWT auth flow
+
+### v1.0.0 — May 2026
+- Initial platform launch
+- Mutual Fund explorer with NAV charts
+- Yahoo Finance stock ingestion pipeline
+- Groq Llama 3.3 AI briefings
+- Dark/Light mode design system
+- Global search with portal-based dropdown
+- Redis caching layer
+
+---
+
+## Contributing
+
+This is a private project. For access or collaboration inquiries, contact the repository owner.
+
+---
+
+<div align="center">
+  <sub>Built with precision by the AlphaMatrix team · Powered by Groq Llama 3.3</sub>
+</div>
