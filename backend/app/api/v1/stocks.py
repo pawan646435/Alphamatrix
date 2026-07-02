@@ -318,10 +318,14 @@ async def search_stocks(query: str = Query(..., min_length=1, max_length=100), d
     """
     Search seeded stocks by symbol or company name.
     """
+    import time
+    start_time = time.perf_counter()
     cache_key = f"stock_search:{query.strip().lower()}"
     try:
         cached = await redis_client.get(cache_key)
         if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] Search resolution for query '{query}' took {elapsed_ms:.2f}ms (Cache: HIT)")
             return json.loads(cached)
     except Exception as e:
         logger.error(f"Redis get search failed: {e}")
@@ -348,6 +352,8 @@ async def search_stocks(query: str = Query(..., min_length=1, max_length=100), d
     except Exception as e:
         logger.error(f"Redis set search failed: {e}")
             
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] Search resolution for query '{query}' took {elapsed_ms:.2f}ms (Cache: MISS)")
     return response_data
 
 @router.get("/list", response_model=List[StockGridItem], dependencies=[Depends(check_rate_limit)])
@@ -623,6 +629,333 @@ async def get_stock_detail(
         "price_history": prices,
         "alpha_score_breakdown": get_alpha_breakdown(stock)
     }
+
+@router.get("/detail/{symbol}/meta", dependencies=[Depends(check_rate_limit)])
+async def get_stock_meta_split(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    symbol: str = Path(..., min_length=1, max_length=20),
+):
+    """
+    Split endpoint: returns only metadata (symbol, company_name, isin, sector, industry, market_cap, status)
+    TTL: 24h (86400s)
+    """
+    import time
+    start_time = time.perf_counter()
+    symbol = symbol.upper().strip()
+    cache_key = f"stock_meta_split:{symbol}"
+    
+    # 1. Try Redis cache
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock_meta_split failed: {e}")
+        
+    # 2. Fetch from DB
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    
+    if stock and stock.sector == "Invalid":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+        )
+        
+    is_new = False
+    if not stock:
+        # Create skeleton StockMaster record immediately to allow instant rendering
+        try:
+            stock = StockMaster(
+                symbol=symbol,
+                company_name=f"Discovering {symbol}...",
+                sector="Unknown",
+                industry="Unknown",
+                ai_summary="Generating Equity Intelligence Briefing in the background..."
+            )
+            db.add(stock)
+            await db.commit()
+            await db.refresh(stock)
+            is_new = True
+        except Exception as e:
+            await db.rollback()
+            stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+            stock = stock_q.scalar_one_or_none()
+            if not stock:
+                raise HTTPException(status_code=500, detail="Failed to initialize stock metadata.")
+                
+    if is_new or (stock.alpha_score is None and stock.sector == "Unknown"):
+        if symbol not in ingesting_tickers:
+            ingesting_tickers.add(symbol)
+            logger.info(f"Stock {symbol} is in skeleton/discovering state — scheduling background ingestion")
+            async def _ingest_and_brief(sym: str):
+                from app.core.database import async_session_maker
+                from app.workers.stock_ingestion import dynamic_ingest_stock
+                try:
+                    async with async_session_maker() as ingest_session:
+                        result = await dynamic_ingest_stock(sym, ingest_session)
+                        if result["status"] == "ingested":
+                            await generate_briefing_background(sym)
+                finally:
+                    ingesting_tickers.discard(sym)
+            background_tasks.add_task(_ingest_and_brief, symbol)
+
+    res_data = {
+        "symbol": stock.symbol,
+        "company_name": stock.company_name,
+        "isin": stock.isin,
+        "sector": stock.sector,
+        "industry": stock.industry,
+        "market_cap": stock.market_cap,
+        "status": "discovering" if stock.alpha_score is None else "ready"
+    }
+    
+    # 3. Cache results for 24h
+    try:
+        ttl = 5 if res_data["status"] == "discovering" else 86400
+        await redis_client.setex(cache_key, ttl, json.dumps(res_data))
+    except Exception as e:
+        logger.error(f"Redis set stock_meta_split failed: {e}")
+        
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    return res_data
+
+
+@router.get("/detail/{symbol}/metrics", dependencies=[Depends(check_rate_limit)])
+async def get_stock_metrics_split(
+    db: AsyncSession = Depends(get_db),
+    symbol: str = Path(..., min_length=1, max_length=20),
+):
+    """
+    Split endpoint: returns only fundamental ratios, scores and alpha breakdown
+    TTL: 24h (86400s)
+    """
+    import time
+    start_time = time.perf_counter()
+    symbol = symbol.upper().strip()
+    cache_key = f"stock_metrics_split:{symbol}"
+    
+    # 1. Try Redis cache
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] Metrics fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock_metrics_split failed: {e}")
+        
+    # 2. Fetch from DB
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+        
+    res_data = {
+        "pe_ratio": stock.pe_ratio,
+        "pb_ratio": stock.pb_ratio,
+        "roe": stock.roe,
+        "debt_equity": stock.debt_equity,
+        "dividend_yield": stock.dividend_yield,
+        "beta": stock.beta,
+        "cagr_1y": stock.cagr_1y,
+        "cagr_3y": stock.cagr_3y,
+        "cagr_5y": stock.cagr_5y,
+        "alpha_score": stock.alpha_score,
+        "fundamental_score": stock.fundamental_score,
+        "valuation_score": stock.valuation_score,
+        "technical_score": stock.technical_score,
+        "risk_score": stock.risk_score,
+        "sector_relative_score": stock.sector_relative_score,
+        "confidence_score": stock.confidence_score,
+        "investor_verdict": stock.investor_verdict,
+        "trader_verdict": stock.trader_verdict,
+        "last_updated": stock.last_updated.isoformat() if stock.last_updated else None,
+        "alpha_score_breakdown": get_alpha_breakdown(stock)
+    }
+    
+    # 3. Cache results for 24h
+    try:
+        ttl = 5 if stock.alpha_score is None else 86400
+        await redis_client.setex(cache_key, ttl, json.dumps(res_data))
+    except Exception as e:
+        logger.error(f"Redis set stock_metrics_split failed: {e}")
+        
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] Metrics fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    return res_data
+
+
+@router.get("/detail/{symbol}/chart", dependencies=[Depends(check_rate_limit)])
+async def get_stock_chart_split(
+    db: AsyncSession = Depends(get_db),
+    symbol: str = Path(..., min_length=1, max_length=20),
+):
+    """
+    Split endpoint: returns only historical price series (date, close)
+    TTL: 1h (3600s)
+    """
+    import time
+    start_time = time.perf_counter()
+    symbol = symbol.upper().strip()
+    cache_key = f"stock_chart_split:{symbol}"
+    
+    # 1. Try Redis cache
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] Historical data fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock_chart_split failed: {e}")
+        
+    # 2. Fetch from DB
+    prices_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == symbol)
+        .order_by(StockPriceHistory.date.desc())
+    )
+    prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
+    
+    # 3. Cache results for 1h (3600 seconds)
+    try:
+        await redis_client.setex(cache_key, 3600, json.dumps(prices))
+    except Exception as e:
+        logger.error(f"Redis set stock_chart_split failed: {e}")
+        
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] Historical data fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    return prices
+
+
+@router.get("/detail/{symbol}/briefing", dependencies=[Depends(check_rate_limit)])
+async def get_stock_briefing_split(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    symbol: str = Path(..., min_length=1, max_length=20),
+):
+    """
+    Split endpoint: returns only AI summary/briefing sections.
+    Triggers AI briefing in background if not present.
+    """
+    import time
+    start_time = time.perf_counter()
+    symbol = symbol.upper().strip()
+    cache_key = f"stock_briefing_split:{symbol}"
+    
+    # 1. Try Redis cache
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] AI report generation fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock_briefing_split failed: {e}")
+        
+    # 2. Fetch from DB
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+        
+    trigger_background = False
+    if stock.alpha_score is not None:
+        if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
+            stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
+            await db.commit()
+            await db.refresh(stock)
+            trigger_background = True
+            
+    if trigger_background:
+        background_tasks.add_task(generate_briefing_background, symbol)
+        
+    res_data = {
+        "ai_summary": stock.ai_summary or "Generating Equity Intelligence Briefing in the background...",
+        "bull_case": stock.bull_case,
+        "bear_case": stock.bear_case,
+        "verdict_rationale": stock.verdict_rationale,
+        "status": "generating" if (trigger_background or not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...") else "completed"
+    }
+    
+    # 3. Cache results (short if generating, 24h if completed)
+    try:
+        ttl = 5 if res_data["status"] == "generating" else 86400
+        await redis_client.setex(cache_key, ttl, json.dumps(res_data))
+    except Exception as e:
+        logger.error(f"Redis set stock_briefing_split failed: {e}")
+        
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] AI report generation fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    return res_data
+
+
+@router.get("/detail/{symbol}/news", dependencies=[Depends(check_rate_limit)])
+async def get_stock_news_split(
+    symbol: str = Path(..., min_length=1, max_length=20),
+):
+    """
+    Split endpoint: returns recent news for the stock from yfinance
+    TTL: 15 min (900s)
+    """
+    import time
+    start_time = time.perf_counter()
+    symbol = symbol.upper().strip()
+    cache_key = f"stock_news_split:{symbol}"
+    
+    # 1. Try Redis cache
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"[PERF] News fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock_news_split failed: {e}")
+        
+    # 2. Fetch from yfinance
+    import yfinance as yf
+    import asyncio
+    news_list = []
+    
+    try:
+        yf_symbol = f"{symbol}.NS"
+        ticker = yf.Ticker(yf_symbol)
+        
+        def fetch_news():
+            return ticker.news or []
+            
+        raw_news = await asyncio.to_thread(fetch_news)
+        if raw_news:
+            for item in raw_news[:5]:
+                content = item.get("content", {})
+                if content:
+                    news_list.append({
+                        "title": content.get("title"),
+                        "summary": content.get("summary") or "",
+                        "pubDate": content.get("pubDate") or content.get("displayTime") or "",
+                        "provider": content.get("provider", {}).get("displayName") or "Unknown"
+                    })
+    except Exception as e:
+        logger.warning(f"Failed to fetch live yfinance news for {symbol}: {e}")
+        
+    # 3. Cache results for 15 min (900 seconds)
+    try:
+        await redis_client.setex(cache_key, 900, json.dumps(news_list))
+    except Exception as e:
+        logger.error(f"Redis set stock_news_split failed: {e}")
+        
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[PERF] News fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    return news_list
+
 
 @router.post("/chat", response_model=AIChatResponse, dependencies=[Depends(check_rate_limit)])
 async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_db)):

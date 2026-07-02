@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle, Target } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
-import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest } from '../hooks/useQueries';
+import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest, useStockMeta, useStockMetrics, useStockChart, useStockBriefing, useStockNews } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -13,14 +13,51 @@ export default function StockDetail() {
   const navigate = useNavigate();
   
   const queryClient = useQueryClient();
-  const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol]);
+  const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol, 'meta']);
   
-  const isDiscovering = cachedStock?.status === 'discovering' || cachedStock?.stock?.status === 'discovering' || cachedStock?.stock?.alpha_score === null;
+  const isDiscovering = !cachedStock || cachedStock?.status === 'discovering';
   
-  const { data: stockDetail, isLoading: loading, error: stockError } = useStockDetail(symbol, {
-    staleTime: isDiscovering ? 0 : 21600000,
-    refetchInterval: isDiscovering ? 3000 : false, // Poll faster for progressive hydration
+  // 1. Fetch metadata first (fast)
+  const { data: metaData, isLoading: metaLoading, error: metaError } = useStockMeta(symbol, {
+    staleTime: isDiscovering ? 0 : 86400000,
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      return (data?.status === 'discovering' || !data) ? 3000 : false;
+    }
   });
+  
+  const currentIsDiscovering = metaLoading || !metaData || metaData?.status === 'discovering';
+  
+  // 2. Fetch metrics in parallel
+  const { data: metricsData, isLoading: metricsLoading } = useStockMetrics(symbol, {
+    enabled: !currentIsDiscovering && !!symbol,
+    staleTime: 86400000
+  });
+  
+  // 3. Fetch chart in parallel
+  const { data: chartData, isLoading: chartLoading } = useStockChart(symbol, {
+    enabled: !currentIsDiscovering && !!symbol,
+    staleTime: 3600000
+  });
+  
+  // 4. Fetch briefing in parallel
+  const { data: briefingData, isLoading: briefingFetchLoading } = useStockBriefing(symbol, {
+    enabled: !currentIsDiscovering && !!symbol,
+    staleTime: 86400000,
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      return (data?.status === 'generating' || !data?.ai_summary) ? 3000 : false;
+    }
+  });
+  
+  // 5. Fetch yfinance news in parallel
+  const { data: newsData } = useStockNews(symbol, {
+    enabled: !currentIsDiscovering && !!symbol,
+    staleTime: 900000
+  });
+  
+  const loading = metaLoading;
+  const stockError = metaError;
   
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();
@@ -29,7 +66,6 @@ export default function StockDetail() {
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
   const error = stockError ? (stockError.detail || stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
-  const currentIsDiscovering = isDiscovering || stockDetail?.status === 'discovering' || stockDetail?.stock?.status === 'discovering' || stockDetail?.stock?.alpha_score === null;
 
   const isSaved = watchlist.some((item) => item.symbol === symbol);
 
@@ -53,26 +89,44 @@ export default function StockDetail() {
   };
 
   // Safe fallback placeholders for progressive loading
-  const stock = stockDetail?.stock || {
+  const stock = {
     symbol: symbol,
-    company_name: `Discovering ${symbol}...`,
-    sector: 'Ingesting...',
-    industry: 'Resolving parameters...',
-    market_cap: null,
-    pe_ratio: null,
-    pb_ratio: null,
-    roe: null,
-    debt_equity: null,
-    dividend_yield: null,
-    beta: null,
-    cagr_1y: null,
-    cagr_3y: null,
-    cagr_5y: null,
-    alpha_score: null,
-    ai_summary: null
+    company_name: metaData?.company_name || `Discovering ${symbol}...`,
+    sector: metaData?.sector || 'Ingesting...',
+    industry: metaData?.industry || 'Resolving parameters...',
+    market_cap: metaData?.market_cap || null,
+    status: metaData?.status || 'discovering',
+    
+    // Metrics
+    pe_ratio: metricsData?.pe_ratio ?? null,
+    pb_ratio: metricsData?.pb_ratio ?? null,
+    roe: metricsData?.roe ?? null,
+    debt_equity: metricsData?.debt_equity ?? null,
+    dividend_yield: metricsData?.dividend_yield ?? null,
+    beta: metricsData?.beta ?? null,
+    cagr_1y: metricsData?.cagr_1y ?? null,
+    cagr_3y: metricsData?.cagr_3y ?? null,
+    cagr_5y: metricsData?.cagr_5y ?? null,
+    alpha_score: metricsData?.alpha_score ?? null,
+    fundamental_score: metricsData?.fundamental_score ?? null,
+    valuation_score: metricsData?.valuation_score ?? null,
+    technical_score: metricsData?.technical_score ?? null,
+    risk_score: metricsData?.risk_score ?? null,
+    sector_relative_score: metricsData?.sector_relative_score ?? null,
+    confidence_score: metricsData?.confidence_score ?? null,
+    investor_verdict: metricsData?.investor_verdict ?? null,
+    trader_verdict: metricsData?.trader_verdict ?? null,
+    last_updated: metricsData?.last_updated ?? null,
+    
+    // Briefing
+    ai_summary: briefingData?.ai_summary ?? null,
+    bull_case: briefingData?.bull_case ?? null,
+    bear_case: briefingData?.bear_case ?? null,
+    verdict_rationale: briefingData?.verdict_rationale ?? null
   };
-  const price_history = stockDetail?.price_history || [];
-  const alpha_score_breakdown = stockDetail?.alpha_score_breakdown || {
+  
+  const price_history = chartData || [];
+  const alpha_score_breakdown = metricsData?.alpha_score_breakdown || {
     fundamental_score: 0,
     valuation_score: 0,
     momentum_score: 0,
@@ -228,7 +282,7 @@ export default function StockDetail() {
     );
   };
 
-  const isBriefingLoading = !stock.ai_summary || stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
+  const isBriefingLoading = currentIsDiscovering || briefingFetchLoading || !stock.ai_summary || stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
 
   // ── Verdict parsing (mirrors Detail.jsx pattern) ──────────────────────────
   let investorVerdict = stock.investor_verdict || 'HOLD';
@@ -276,7 +330,7 @@ export default function StockDetail() {
   }
 
   const renderMetricVal = (val, formatter, colorClass = "text-white") => {
-    if (currentIsDiscovering || val === null || val === undefined) {
+    if (currentIsDiscovering || metricsLoading || val === null || val === undefined) {
       return (
         <div className="h-5 w-16 bg-brand-border/40 animate-pulse rounded mx-auto mt-2" />
       );
@@ -461,7 +515,7 @@ export default function StockDetail() {
         className="w-full animate-fade-in-up shadow-xl"
         style={{ animationDelay: '150ms' }}
       >
-        {price_history.length === 0 ? (
+        {chartLoading || price_history.length === 0 ? (
           <div className="h-64 w-full bg-brand-surface border border-brand-border/40 animate-pulse flex flex-col items-center justify-center text-[10px] text-brand-textMuted tracking-wider font-mono gap-3">
             <RefreshCw className="h-5 w-5 animate-spin text-brand-primary/60" />
             <span>RESOLVING HISTORICAL PRICE SERIES...</span>
@@ -737,6 +791,28 @@ export default function StockDetail() {
             </button>
           </form>
         </div>
+
+        {/* Live Ticker Stream */}
+        {newsData && newsData.length > 0 && (
+          <div className="border border-brand-border bg-brand-surface p-5 sm:p-6 space-y-4 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
+            <div className="flex items-center gap-2 border-b border-brand-border pb-3">
+              <Activity className="h-4 w-4 text-brand-primary animate-pulse" />
+              <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">Live Ticker Stream</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {newsData.slice(0, 4).map((item, idx) => (
+                <div key={idx} className="border border-brand-border/40 p-4 rounded hover:border-brand-primary/55 transition-all">
+                  <div className="flex justify-between items-center gap-2 mb-1.5">
+                    <span className="font-mono text-[9px] text-brand-textMuted uppercase">{item.provider}</span>
+                    <span className="font-mono text-[8px] text-brand-textMuted/60">{item.pubDate}</span>
+                  </div>
+                  <h4 className="text-xs font-bold text-black dark:text-white line-clamp-2">{item.title}</h4>
+                  <p className="text-[11px] text-brand-textMuted/80 line-clamp-2 mt-1.5 font-sans leading-relaxed">{item.summary}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Verdict Backtest Panel */}
         <StockBacktestPanel symbol={symbol} />

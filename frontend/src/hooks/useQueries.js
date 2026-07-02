@@ -107,7 +107,85 @@ export function useStockDetail(symbol, options = {}) {
     enabled: !!symbol,
     staleTime: 3600000, // 1 hour
     gcTime: 86400000,    // 24 hours
-    cacheTime: 86400000, // 24 hours compatibility
+    retry: 1,
+    ...options
+  });
+}
+
+/** Split React Query hooks for optimized parallel stock details load */
+
+export function useStockMeta(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'detail', symbol, 'meta'],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/meta`, {
+        validateStatus: (s) => s < 500,
+      });
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 86400000, // 24 hours
+    gcTime: 86400000,
+    retry: 1,
+    ...options
+  });
+}
+
+export function useStockMetrics(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'detail', symbol, 'metrics'],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/metrics`);
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 86400000, // 24 hours
+    gcTime: 86400000,
+    retry: 1,
+    ...options
+  });
+}
+
+export function useStockChart(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'detail', symbol, 'chart'],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/chart`);
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 3600000, // 1 hour
+    gcTime: 3600000,
+    retry: 1,
+    ...options
+  });
+}
+
+export function useStockBriefing(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'detail', symbol, 'briefing'],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/briefing`);
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 86400000, // 24 hours
+    gcTime: 86400000,
+    retry: 1,
+    ...options
+  });
+}
+
+export function useStockNews(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'detail', symbol, 'news'],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/news`);
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 900000, // 15 minutes
+    gcTime: 900000,
     retry: 1,
     ...options
   });
