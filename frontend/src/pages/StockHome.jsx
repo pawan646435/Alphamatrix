@@ -33,8 +33,17 @@ export default function StockHome() {
     { key: 'IT', name: 'IT', desc: 'Software exports and enterprise digital transformation leaders.', codeCount: 'TCS, INFY' },
     { key: 'AUTO', name: 'Auto', desc: 'Commercial and passenger vehicle compounding growth.', codeCount: 'TATAMOTORS, M&M' },
     { key: 'ENERGY', name: 'Energy', desc: 'Refining, conglomerates, and green transition powerhouses.', codeCount: 'RELIANCE' },
-    { key: 'DEFENCE', name: 'Defence', desc: 'Indigenization mandates and specialized aerospace manufacturers.', codeCount: 'HAL, BEL' },
-    { key: 'FMCG', name: 'FMCG', desc: 'Resilient consumer staples and diversified conglomerates.', codeCount: 'ITC' },
+    { key: 'DEFENCE', name: 'Defence', desc: 'Indigenization mandates and specialized aerospace manufacturers.', codeCount: 'HAL, BEL, BDL, MAZDOCK' },
+    { key: 'FMCG', name: 'FMCG', desc: 'Resilient consumer staples and diversified conglomerates.', codeCount: 'HINDUNILVR, ITC, NESTLEIND' },
+    { key: 'PHARMA', name: 'Pharma', desc: 'Pioneering healthcare, generic formulations, and active ingredients.', codeCount: 'SUNPHARMA, DRREDDY' },
+    { key: 'METALS', name: 'Metals', desc: 'Foundational materials driving steel, manufacturing, and heavy extraction.', codeCount: 'TATASTEEL, JSWSTEEL' },
+    { key: 'INFRASTRUCTURE', name: 'Infrastructure', desc: 'Civil engineering, roads, ports, and national building structures.', codeCount: 'LT' },
+    { key: 'CHEMICALS', name: 'Chemicals', desc: 'Specialty chemicals, adhesives, and raw industrial compounds.', codeCount: 'PIDILITIND' },
+    { key: 'CONSUMER_DURABLES', name: 'Consumer Durables', desc: 'Premium consumer goods, electronics, and lifestyle compounders.', codeCount: 'TITAN, VOLTAS' },
+    { key: 'REALTY', name: 'Realty', desc: 'Residential real estate and commercial property developers.', codeCount: 'DLF' },
+    { key: 'TELECOM', name: 'Telecom', desc: 'High-speed network backbones and digital infrastructure.', codeCount: 'BHARTIARTL' },
+    { key: 'PSU', name: 'PSU', desc: 'Public sector enterprises spanning energy, mining, and state utilities.', codeCount: 'ONGC, NTPC' },
+    { key: 'CAPITAL_GOODS', name: 'Capital Goods', desc: 'Heavy machinery and equipment powering industrial capacity.', codeCount: 'BHEL' },
   ];
 
   // Calculate statistics

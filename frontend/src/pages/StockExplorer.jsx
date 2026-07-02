@@ -93,6 +93,15 @@ export default function StockExplorer() {
                 <option value="DEFENCE">Defence</option>
                 <option value="ENERGY">Energy</option>
                 <option value="FMCG">FMCG</option>
+                <option value="PHARMA">Pharma</option>
+                <option value="METALS">Metals</option>
+                <option value="INFRASTRUCTURE">Infrastructure</option>
+                <option value="CHEMICALS">Chemicals</option>
+                <option value="CONSUMER_DURABLES">Consumer Durables</option>
+                <option value="REALTY">Realty</option>
+                <option value="TELECOM">Telecom</option>
+                <option value="PSU">PSU</option>
+                <option value="CAPITAL_GOODS">Capital Goods</option>
               </select>
             </div>
 

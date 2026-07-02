@@ -22,8 +22,17 @@ export const SECTORS = {
   IT: { key: 'IT', label: 'IT', dbSectors: ['IT', 'Technology'] },
   AUTO: { key: 'AUTO', label: 'Auto', dbSectors: ['Auto', 'Consumer Cyclical'] },
   ENERGY: { key: 'ENERGY', label: 'Energy', dbSectors: ['Energy'] },
-  DEFENCE: { key: 'DEFENCE', label: 'Defence', dbSectors: ['Defence', 'Industrials'] },
-  FMCG: { key: 'FMCG', label: 'FMCG', dbSectors: ['FMCG', 'Consumer Defensive'] },
+  DEFENCE: { key: 'DEFENCE', label: 'Defence', dbSectors: ['Defence'] },
+  FMCG: { key: 'FMCG', label: 'FMCG', dbSectors: ['FMCG'] },
+  PHARMA: { key: 'PHARMA', label: 'Pharma', dbSectors: ['Pharma', 'Healthcare'] },
+  METALS: { key: 'METALS', label: 'Metals', dbSectors: ['Metals', 'Basic Materials'] },
+  INFRASTRUCTURE: { key: 'INFRASTRUCTURE', label: 'Infrastructure', dbSectors: ['Infrastructure'] },
+  CHEMICALS: { key: 'CHEMICALS', label: 'Chemicals', dbSectors: ['Chemicals'] },
+  CONSUMER_DURABLES: { key: 'CONSUMER_DURABLES', label: 'Consumer Durables', dbSectors: ['Consumer Durables'] },
+  REALTY: { key: 'REALTY', label: 'Realty', dbSectors: ['Realty', 'Real Estate'] },
+  TELECOM: { key: 'TELECOM', label: 'Telecom', dbSectors: ['Telecom', 'Communication Services'] },
+  PSU: { key: 'PSU', label: 'PSU', dbSectors: ['PSU'] },
+  CAPITAL_GOODS: { key: 'CAPITAL_GOODS', label: 'Capital Goods', dbSectors: ['Capital Goods'] },
 };
 
 export function getStandardizedSector(dbSector) {

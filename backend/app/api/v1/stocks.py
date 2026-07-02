@@ -43,8 +43,17 @@ SECTOR_MAP = {
     "IT": ["IT", "Technology"],
     "AUTO": ["Auto", "Consumer Cyclical"],
     "ENERGY": ["Energy"],
-    "DEFENCE": ["Defence", "Industrials"],
-    "FMCG": ["FMCG", "Consumer Defensive"]
+    "DEFENCE": ["Defence"],
+    "FMCG": ["FMCG"],
+    "PHARMA": ["Pharma", "Healthcare"],
+    "METALS": ["Metals", "Basic Materials"],
+    "INFRASTRUCTURE": ["Infrastructure"],
+    "CHEMICALS": ["Chemicals"],
+    "CONSUMER_DURABLES": ["Consumer Durables"],
+    "REALTY": ["Realty", "Real Estate"],
+    "TELECOM": ["Telecom", "Communication Services"],
+    "PSU": ["PSU"],
+    "CAPITAL_GOODS": ["Capital Goods"]
 }
 
 SECTOR_LABELS = {
@@ -53,7 +62,16 @@ SECTOR_LABELS = {
     "AUTO": "Auto",
     "ENERGY": "Energy",
     "DEFENCE": "Defence",
-    "FMCG": "FMCG"
+    "FMCG": "FMCG",
+    "PHARMA": "Pharma",
+    "METALS": "Metals",
+    "INFRASTRUCTURE": "Infrastructure",
+    "CHEMICALS": "Chemicals",
+    "CONSUMER_DURABLES": "Consumer Durables",
+    "REALTY": "Realty",
+    "TELECOM": "Telecom",
+    "PSU": "PSU",
+    "CAPITAL_GOODS": "Capital Goods"
 }
 
 def get_db_sectors_for_key(sector_key: str) -> list:
@@ -798,10 +816,14 @@ async def get_sector_lab(sector: str = Path(..., min_length=1, max_length=30), d
     stocks = result.scalars().all()
     
     if not stocks:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sector '{sector_label}' has no seeded companies in our store."
-        )
+        return {
+            "sector": sector_label,
+            "sector_score": 0.0,
+            "growth_drivers": ["No growth drivers available yet."],
+            "major_risks": ["No risk assessment available yet."],
+            "top_stocks": [],
+            "ai_outlook": "No companies available yet for this sector."
+        }
         
     stocks_list = []
     for s in stocks:

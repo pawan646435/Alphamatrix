@@ -14,6 +14,44 @@ from app.models.fund import NAVHistory
 
 logger = logging.getLogger("app.workers.stock_ingestion")
 
+SECTOR_OVERRIDES = {
+    # IT
+    "TCS": "IT", "INFY": "IT",
+    # Banking
+    "HDFCBANK": "Banking", "ICICIBANK": "Banking",
+    # Auto
+    "TATAMOTORS": "Auto", "M&M": "Auto",
+    # Energy
+    "RELIANCE": "Energy",
+    # Defence
+    "HAL": "Defence", "BEL": "Defence", "BDL": "Defence", 
+    "MAZDOCK": "Defence", "COCHINSHIP": "Defence", 
+    "DATAPATTNS": "Defence", "PARAS": "Defence", 
+    "GRSE": "Defence", "SOLARINDS": "Defence", "ASTRAMICRO": "Defence",
+    # FMCG
+    "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", 
+    "BRITANNIA": "FMCG", "DABUR": "FMCG", "GODREJCP": "FMCG", 
+    "MARICO": "FMCG", "COLPAL": "FMCG", "TATACONSUM": "FMCG", "EMAMILTD": "FMCG",
+    # Pharma
+    "SUNPHARMA": "Pharma", "DRREDDY": "Pharma",
+    # Metals
+    "TATASTEEL": "Metals", "JSWSTEEL": "Metals",
+    # Infrastructure
+    "LT": "Infrastructure",
+    # Chemicals
+    "PIDILITIND": "Chemicals",
+    # Consumer Durables
+    "TITAN": "Consumer Durables", "VOLTAS": "Consumer Durables",
+    # Realty
+    "DLF": "Realty",
+    # Telecom
+    "BHARTIARTL": "Telecom",
+    # PSU
+    "ONGC": "PSU", "NTPC": "PSU",
+    # Capital Goods
+    "BHEL": "Capital Goods"
+}
+
 # Seed stock metadata definition
 SEEDED_STOCKS = [
     {
@@ -161,6 +199,134 @@ SEEDED_STOCKS = [
         "base_price": 100.0
     },
     {
+        "symbol": "BDL",
+        "company_name": "Bharat Dynamics Limited",
+        "isin": "INE171Z01018",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 35000.0,
+        "pe_ratio": 65.4,
+        "pb_ratio": 15.2,
+        "roe": 22.8,
+        "debt_equity": 0.05,
+        "dividend_yield": 1.20,
+        "target_beta": 1.15,
+        "target_cagr": 0.40,
+        "base_price": 600.0
+    },
+    {
+        "symbol": "MAZDOCK",
+        "company_name": "Mazagon Dock Shipbuilders Limited",
+        "isin": "INE249Z01012",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 42000.0,
+        "pe_ratio": 45.8,
+        "pb_ratio": 12.5,
+        "roe": 25.4,
+        "debt_equity": 0.01,
+        "dividend_yield": 0.90,
+        "target_beta": 1.25,
+        "target_cagr": 0.55,
+        "base_price": 1800.0
+    },
+    {
+        "symbol": "COCHINSHIP",
+        "company_name": "Cochin Shipyard Limited",
+        "isin": "INE704P01017",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 22000.0,
+        "pe_ratio": 42.1,
+        "pb_ratio": 10.8,
+        "roe": 23.5,
+        "debt_equity": 0.12,
+        "dividend_yield": 1.40,
+        "target_beta": 1.20,
+        "target_cagr": 0.48,
+        "base_price": 1200.0
+    },
+    {
+        "symbol": "DATAPATTNS",
+        "company_name": "Data Patterns (India) Limited",
+        "isin": "INE0IXN01010",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 11000.0,
+        "pe_ratio": 55.6,
+        "pb_ratio": 9.4,
+        "roe": 18.9,
+        "debt_equity": 0.08,
+        "dividend_yield": 0.50,
+        "target_beta": 1.10,
+        "target_cagr": 0.38,
+        "base_price": 1500.0
+    },
+    {
+        "symbol": "PARAS",
+        "company_name": "Paras Defence and Space Technologies Limited",
+        "isin": "INE045601015",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 2800.0,
+        "pe_ratio": 72.3,
+        "pb_ratio": 6.8,
+        "roe": 9.5,
+        "debt_equity": 0.15,
+        "dividend_yield": 0.20,
+        "target_beta": 1.30,
+        "target_cagr": 0.28,
+        "base_price": 600.0
+    },
+    {
+        "symbol": "GRSE",
+        "company_name": "Garden Reach Shipbuilders & Engineers Limited",
+        "isin": "INE265D01015",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 18000.0,
+        "pe_ratio": 38.5,
+        "pb_ratio": 8.2,
+        "roe": 21.3,
+        "debt_equity": 0.04,
+        "dividend_yield": 1.50,
+        "target_beta": 1.22,
+        "target_cagr": 0.42,
+        "base_price": 1000.0
+    },
+    {
+        "symbol": "SOLARINDS",
+        "company_name": "Solar Industries India Limited",
+        "isin": "INE343H01029",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 65000.0,
+        "pe_ratio": 55.4,
+        "pb_ratio": 14.6,
+        "roe": 28.9,
+        "debt_equity": 0.22,
+        "dividend_yield": 0.40,
+        "target_beta": 0.95,
+        "target_cagr": 0.32,
+        "base_price": 7000.0
+    },
+    {
+        "symbol": "ASTRAMICRO",
+        "company_name": "Astra Microwave Products Limited",
+        "isin": "INE386C01029",
+        "sector": "Defence",
+        "industry": "Aerospace & Defence",
+        "market_cap": 5800.0,
+        "pe_ratio": 48.9,
+        "pb_ratio": 7.3,
+        "roe": 15.6,
+        "debt_equity": 0.18,
+        "dividend_yield": 0.60,
+        "target_beta": 1.18,
+        "target_cagr": 0.30,
+        "base_price": 600.0
+    },
+    {
         "symbol": "ITC",
         "company_name": "ITC Ltd.",
         "isin": "INE154A01025",
@@ -175,6 +341,358 @@ SEEDED_STOCKS = [
         "target_beta": 0.55,
         "target_cagr": 0.18,
         "base_price": 190.0
+    },
+    {
+        "symbol": "HINDUNILVR",
+        "company_name": "Hindustan Unilever Limited",
+        "isin": "INE030A01027",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 580000.0,
+        "pe_ratio": 62.4,
+        "pb_ratio": 18.5,
+        "roe": 29.5,
+        "debt_equity": 0.03,
+        "dividend_yield": 1.65,
+        "target_beta": 0.60,
+        "target_cagr": 0.12,
+        "base_price": 2400.0
+    },
+    {
+        "symbol": "NESTLEIND",
+        "company_name": "Nestle India Limited",
+        "isin": "INE239A01016",
+        "sector": "FMCG",
+        "industry": "Packaged Foods",
+        "market_cap": 240000.0,
+        "pe_ratio": 78.3,
+        "pb_ratio": 22.4,
+        "roe": 105.4,
+        "debt_equity": 0.02,
+        "dividend_yield": 1.25,
+        "target_beta": 0.55,
+        "target_cagr": 0.14,
+        "base_price": 2400.0
+    },
+    {
+        "symbol": "BRITANNIA",
+        "company_name": "Britannia Industries Limited",
+        "isin": "INE216A01030",
+        "sector": "FMCG",
+        "industry": "Packaged Foods",
+        "market_cap": 110000.0,
+        "pe_ratio": 55.4,
+        "pb_ratio": 16.8,
+        "roe": 48.9,
+        "debt_equity": 0.45,
+        "dividend_yield": 1.55,
+        "target_beta": 0.62,
+        "target_cagr": 0.15,
+        "base_price": 4500.0
+    },
+    {
+        "symbol": "DABUR",
+        "company_name": "Dabur India Limited",
+        "isin": "INE016A01026",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 95000.0,
+        "pe_ratio": 52.4,
+        "pb_ratio": 9.8,
+        "roe": 19.5,
+        "debt_equity": 0.05,
+        "dividend_yield": 1.10,
+        "target_beta": 0.65,
+        "target_cagr": 0.10,
+        "base_price": 520.0
+    },
+    {
+        "symbol": "GODREJCP",
+        "company_name": "Godrej Consumer Products Limited",
+        "isin": "INE102D01028",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 105000.0,
+        "pe_ratio": 58.2,
+        "pb_ratio": 11.2,
+        "roe": 18.5,
+        "debt_equity": 0.12,
+        "dividend_yield": 1.00,
+        "target_beta": 0.68,
+        "target_cagr": 0.13,
+        "base_price": 1000.0
+    },
+    {
+        "symbol": "MARICO",
+        "company_name": "Marico Limited",
+        "isin": "INE196A01026",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 68000.0,
+        "pe_ratio": 48.5,
+        "pb_ratio": 12.3,
+        "roe": 35.4,
+        "debt_equity": 0.02,
+        "dividend_yield": 1.80,
+        "target_beta": 0.63,
+        "target_cagr": 0.11,
+        "base_price": 500.0
+    },
+    {
+        "symbol": "COLPAL",
+        "company_name": "Colgate Palmolive India Limited",
+        "isin": "INE259A01022",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 62000.0,
+        "pe_ratio": 42.8,
+        "pb_ratio": 15.6,
+        "roe": 72.3,
+        "debt_equity": 0.00,
+        "dividend_yield": 2.10,
+        "target_beta": 0.58,
+        "target_cagr": 0.13,
+        "base_price": 2000.0
+    },
+    {
+        "symbol": "TATACONSUM",
+        "company_name": "Tata Consumer Products Limited",
+        "isin": "INE192A01025",
+        "sector": "FMCG",
+        "industry": "Packaged Foods",
+        "market_cap": 92000.0,
+        "pe_ratio": 68.4,
+        "pb_ratio": 8.5,
+        "roe": 12.8,
+        "debt_equity": 0.18,
+        "dividend_yield": 0.95,
+        "target_beta": 0.70,
+        "target_cagr": 0.16,
+        "base_price": 850.0
+    },
+    {
+        "symbol": "EMAMILTD",
+        "company_name": "Emami Limited",
+        "isin": "INE273H01015",
+        "sector": "FMCG",
+        "industry": "Household & Personal Products",
+        "market_cap": 22000.0,
+        "pe_ratio": 28.4,
+        "pb_ratio": 6.5,
+        "roe": 22.8,
+        "debt_equity": 0.05,
+        "dividend_yield": 2.00,
+        "target_beta": 0.72,
+        "target_cagr": 0.09,
+        "base_price": 450.0
+    },
+    {
+        "symbol": "SUNPHARMA",
+        "company_name": "Sun Pharmaceutical Industries Limited",
+        "isin": "INE044A01037",
+        "sector": "Pharma",
+        "industry": "Pharmaceuticals",
+        "market_cap": 360000.0,
+        "pe_ratio": 35.0,
+        "pb_ratio": 4.5,
+        "roe": 14.5,
+        "debt_equity": 0.05,
+        "dividend_yield": 0.85,
+        "target_beta": 0.70,
+        "target_cagr": 0.15,
+        "base_price": 1500.0
+    },
+    {
+        "symbol": "DRREDDY",
+        "company_name": "Dr. Reddy's Laboratories Limited",
+        "isin": "INE089A01023",
+        "sector": "Pharma",
+        "industry": "Pharmaceuticals",
+        "market_cap": 100000.0,
+        "pe_ratio": 20.0,
+        "pb_ratio": 3.2,
+        "roe": 16.0,
+        "debt_equity": 0.08,
+        "dividend_yield": 1.20,
+        "target_beta": 0.65,
+        "target_cagr": 0.11,
+        "base_price": 5000.0
+    },
+    {
+        "symbol": "TATASTEEL",
+        "company_name": "Tata Steel Limited",
+        "isin": "INE081A01020",
+        "sector": "Metals",
+        "industry": "Steel",
+        "market_cap": 18000.0,
+        "pe_ratio": 15.0,
+        "pb_ratio": 1.8,
+        "roe": 12.0,
+        "debt_equity": 0.95,
+        "dividend_yield": 2.50,
+        "target_beta": 1.20,
+        "target_cagr": 0.08,
+        "base_price": 150.0
+    },
+    {
+        "symbol": "JSWSTEEL",
+        "company_name": "JSW Steel Limited",
+        "isin": "INE019A01030",
+        "sector": "Metals",
+        "industry": "Steel",
+        "market_cap": 200000.0,
+        "pe_ratio": 22.0,
+        "pb_ratio": 2.5,
+        "roe": 11.5,
+        "debt_equity": 1.20,
+        "dividend_yield": 1.10,
+        "target_beta": 1.25,
+        "target_cagr": 0.10,
+        "base_price": 800.0
+    },
+    {
+        "symbol": "LT",
+        "company_name": "Larsen & Toubro Limited",
+        "isin": "INE018A01030",
+        "sector": "Infrastructure",
+        "industry": "Engineering & Construction",
+        "market_cap": 480000.0,
+        "pe_ratio": 32.0,
+        "pb_ratio": 4.8,
+        "roe": 15.0,
+        "debt_equity": 1.50,
+        "dividend_yield": 0.80,
+        "target_beta": 1.10,
+        "target_cagr": 0.18,
+        "base_price": 3500.0
+    },
+    {
+        "symbol": "PIDILITIND",
+        "company_name": "Pidilite Industries Limited",
+        "isin": "INE318A01026",
+        "sector": "Chemicals",
+        "industry": "Specialty Chemicals",
+        "market_cap": 150000.0,
+        "pe_ratio": 65.0,
+        "pb_ratio": 18.0,
+        "roe": 28.0,
+        "debt_equity": 0.02,
+        "dividend_yield": 0.40,
+        "target_beta": 0.60,
+        "target_cagr": 0.16,
+        "base_price": 2800.0
+    },
+    {
+        "symbol": "TITAN",
+        "company_name": "Titan Company Limited",
+        "isin": "INE280A01028",
+        "sector": "Consumer Durables",
+        "industry": "Consumer Durables",
+        "market_cap": 310000.0,
+        "pe_ratio": 85.0,
+        "pb_ratio": 22.0,
+        "roe": 26.0,
+        "debt_equity": 0.15,
+        "dividend_yield": 0.30,
+        "target_beta": 0.85,
+        "target_cagr": 0.22,
+        "base_price": 3500.0
+    },
+    {
+        "symbol": "VOLTAS",
+        "company_name": "Voltas Limited",
+        "isin": "INE226A01021",
+        "sector": "Consumer Durables",
+        "industry": "Consumer Durables",
+        "market_cap": 50000.0,
+        "pe_ratio": 45.0,
+        "pb_ratio": 5.5,
+        "roe": 12.0,
+        "debt_equity": 0.10,
+        "dividend_yield": 0.90,
+        "target_beta": 1.05,
+        "target_cagr": 0.14,
+        "base_price": 1500.0
+    },
+    {
+        "symbol": "DLF",
+        "company_name": "DLF Limited",
+        "isin": "INE271C01023",
+        "sector": "Realty",
+        "industry": "Real Estate",
+        "market_cap": 220000.0,
+        "pe_ratio": 55.0,
+        "pb_ratio": 4.2,
+        "roe": 8.5,
+        "debt_equity": 0.35,
+        "dividend_yield": 0.45,
+        "target_beta": 1.30,
+        "target_cagr": 0.25,
+        "base_price": 900.0
+    },
+    {
+        "symbol": "BHARTIARTL",
+        "company_name": "Bharti Airtel Limited",
+        "isin": "INE397D01024",
+        "sector": "Telecom",
+        "industry": "Telecommunications",
+        "market_cap": 850000.0,
+        "pe_ratio": 50.0,
+        "pb_ratio": 6.8,
+        "roe": 13.5,
+        "debt_equity": 1.80,
+        "dividend_yield": 0.60,
+        "target_beta": 0.90,
+        "target_cagr": 0.20,
+        "base_price": 1400.0
+    },
+    {
+        "symbol": "ONGC",
+        "company_name": "Oil & Natural Gas Corporation Limited",
+        "isin": "INE213A01029",
+        "sector": "PSU",
+        "industry": "Oil & Gas Exploration",
+        "market_cap": 320000.0,
+        "pe_ratio": 8.5,
+        "pb_ratio": 1.1,
+        "roe": 14.0,
+        "debt_equity": 0.45,
+        "dividend_yield": 4.50,
+        "target_beta": 1.15,
+        "target_cagr": 0.12,
+        "base_price": 260.0
+    },
+    {
+        "symbol": "NTPC",
+        "company_name": "NTPC Limited",
+        "isin": "INE733E01010",
+        "sector": "PSU",
+        "industry": "Power Generation",
+        "market_cap": 350000.0,
+        "pe_ratio": 16.5,
+        "pb_ratio": 2.1,
+        "roe": 13.0,
+        "debt_equity": 1.60,
+        "dividend_yield": 3.25,
+        "target_beta": 0.95,
+        "target_cagr": 0.24,
+        "base_price": 360.0
+    },
+    {
+        "symbol": "BHEL",
+        "company_name": "Bharat Heavy Electricals Limited",
+        "isin": "INE257A01026",
+        "sector": "Capital Goods",
+        "industry": "Heavy Electrical Equipment",
+        "market_cap": 100000.0,
+        "pe_ratio": 120.0,
+        "pb_ratio": 4.5,
+        "roe": 3.5,
+        "debt_equity": 0.30,
+        "dividend_yield": 0.40,
+        "target_beta": 1.40,
+        "target_cagr": 0.38,
+        "base_price": 280.0
     }
 ]
 
@@ -352,7 +870,7 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         info.get("shortName") or
         symbol
     )
-    sector = info.get("sector") or "Unknown"
+    sector = SECTOR_OVERRIDES.get(symbol, info.get("sector") or "Unknown")
     industry = info.get("industry") or "Unknown"
     isin = info.get("isin")
 
@@ -634,6 +1152,9 @@ async def seed_stocks_data(db: AsyncSession):
             if beta_val is not None:
                 real_info["beta"] = round(beta_val, 2)
                 computed_beta = real_info["beta"]
+
+        if symbol in SECTOR_OVERRIDES:
+            real_info["sector"] = SECTOR_OVERRIDES[symbol]
 
         if hist is not None and not hist.empty:
             logger.info(f"Successfully loaded real market prices for {symbol}. Mapping historical price series...")

@@ -42,6 +42,7 @@ export default function StockSector() {
 
   const { sector, sector_score, growth_drivers, major_risks, top_stocks, ai_outlook } = sectorDetails;
   const stdSector = getStandardizedSector(sectorName || sector);
+  const isEmpty = !top_stocks || top_stocks.length === 0;
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
@@ -82,101 +83,120 @@ export default function StockSector() {
           </div>
         </div>
       </div>
-
-      {/* Drivers and Risks Matrices */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-        {/* Growth Drivers */}
-        <div className="terminal-card space-y-4">
-          <div className="flex items-center gap-2 border-b border-brand-border pb-2">
-            <BookOpen className="h-4 w-4 text-brand-success" />
-            <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">Key Growth Drivers</h3>
+      {isEmpty ? (
+        <div className="terminal-card text-center py-12 space-y-4 max-w-lg mx-auto font-mono bg-brand-surface shadow-xl border border-brand-border">
+          <AlertTriangle className="h-8 w-8 text-brand-primary mx-auto" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Sector Data Pending</h3>
+          <p className="text-brand-textMuted text-xs leading-relaxed px-6">
+            No companies are currently available yet for this sector.
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={() => navigate('/stocks')}
+              className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
+            >
+              Return to Dashboard
+            </button>
           </div>
-          <ul className="space-y-3 text-[11px] font-mono leading-relaxed text-brand-textMuted">
-            {growth_drivers.map((driver, idx) => (
-              <li key={idx} className="flex gap-2">
-                <span className="text-brand-success font-bold shrink-0">[+]</span>
-                <span>{driver}</span>
-              </li>
-            ))}
-          </ul>
         </div>
-
-        {/* Major Risks */}
-        <div className="terminal-card space-y-4">
-          <div className="flex items-center gap-2 border-b border-brand-border pb-2">
-            <AlertTriangle className="h-4 w-4 text-brand-danger" />
-            <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">Sector Risks & Headwinds</h3>
-          </div>
-          <ul className="space-y-3 text-[11px] font-mono leading-relaxed text-brand-textMuted">
-            {major_risks.map((risk, idx) => (
-              <li key={idx} className="flex gap-2">
-                <span className="text-brand-danger font-bold shrink-0">[-]</span>
-                <span>{risk}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* AI Outlook and Top Stocks Stack */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Outlook */}
-        <div className="lg:col-span-5 border border-brand-border bg-brand-surface p-6 shadow-xl space-y-4 animate-fade-in-up h-full flex flex-col justify-between" style={{ animationDelay: '150ms' }}>
-          <div>
-            <div className="flex items-center gap-2 border-b border-brand-border pb-3 text-brand-primary">
-              <Cpu className="h-4 w-4 animate-pulse-subtle" />
-              <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">AI Sector Outlook</h3>
+      ) : (
+        <>
+          {/* Drivers and Risks Matrices */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+            {/* Growth Drivers */}
+            <div className="terminal-card space-y-4 bg-brand-surface border border-brand-border p-6 shadow-xl">
+              <div className="flex items-center gap-2 border-b border-brand-border pb-2">
+                <BookOpen className="h-4 w-4 text-brand-success" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider font-display">Key Growth Drivers</h3>
+              </div>
+              <ul className="space-y-3 text-[11px] font-mono leading-relaxed text-brand-textMuted">
+                {growth_drivers.map((driver, idx) => (
+                  <li key={idx} className="flex gap-2">
+                    <span className="text-brand-success font-bold shrink-0">[+]</span>
+                    <span>{driver}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <p className="text-xs leading-relaxed text-brand-textMuted font-sans pt-4">
-              {ai_outlook}
-            </p>
-          </div>
-          <div className="text-[8px] font-mono text-brand-textMuted pt-4 border-t border-brand-border/40">
-            [GENERATOR: Llama-3.3-70b-versatile // COMPILED: on-demand]
-          </div>
-        </div>
 
-        {/* Top Stocks */}
-        <div className="lg:col-span-7 space-y-4 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-          <div className="flex justify-between items-center border-b border-brand-border pb-2">
-            <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider">Top Seeded Stocks</h3>
-            <span className="font-mono text-[9px] text-brand-textMuted">SORTED: Alpha Score</span>
+            {/* Major Risks */}
+            <div className="terminal-card space-y-4 bg-brand-surface border border-brand-border p-6 shadow-xl">
+              <div className="flex items-center gap-2 border-b border-brand-border pb-2">
+                <AlertTriangle className="h-4 w-4 text-brand-danger" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider font-display">Sector Risks & Headwinds</h3>
+              </div>
+              <ul className="space-y-3 text-[11px] font-mono leading-relaxed text-brand-textMuted">
+                {major_risks.map((risk, idx) => (
+                  <li key={idx} className="flex gap-2">
+                    <span className="text-brand-danger font-bold shrink-0">[-]</span>
+                    <span>{risk}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
 
-          <div className="bg-brand-surface border border-brand-border shadow-xl divide-y divide-brand-border">
-            {top_stocks.map((s) => (
-              <button
-                key={s.symbol}
-                onClick={() => handleStockClick(s.symbol)}
-                className="w-full text-left p-4 hover:bg-brand-border/20 transition-colors flex items-center justify-between gap-4 group"
-              >
-                <div className="flex items-center gap-3 min-w-0 pr-3">
-                  <StockLogo symbol={s.symbol} size="sm" />
-                  <div className="truncate">
-                    <span className="font-bold text-xs text-brand-primary block group-hover:underline">{s.symbol}</span>
-                    <span className="text-[10px] text-brand-textMuted truncate block font-sans">{s.company_name}</span>
-                  </div>
+          {/* AI Outlook and Top Stocks Stack */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            {/* Outlook */}
+            <div className="lg:col-span-5 border border-brand-border bg-brand-surface p-6 shadow-xl space-y-4 animate-fade-in-up h-full flex flex-col justify-between" style={{ animationDelay: '150ms' }}>
+              <div>
+                <div className="flex items-center gap-2 border-b border-brand-border pb-3 text-brand-primary">
+                  <Cpu className="h-4 w-4 animate-pulse-subtle" />
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider font-display">AI Sector Outlook</h3>
                 </div>
+                <p className="text-xs leading-relaxed text-brand-textMuted font-sans pt-4">
+                  {ai_outlook}
+                </p>
+              </div>
+              <div className="text-[8px] font-mono text-brand-textMuted pt-4 border-t border-brand-border/40">
+                [GENERATOR: Llama-3.3-70b-versatile // COMPILED: on-demand]
+              </div>
+            </div>
 
-                <div className="flex gap-3 sm:gap-6 font-mono text-[10px] shrink-0 text-right">
-                  <div>
-                    <span className="text-brand-textMuted block text-[8px] uppercase font-bold">3Y CAGR</span>
-                    <span className="text-black dark:text-white font-bold">{s.cagr_3y ? `${(s.cagr_3y * 100).toFixed(1)}%` : '—'}</span>
-                  </div>
-                  <div className="hidden sm:block">
-                    <span className="text-brand-textMuted block text-[8px] uppercase font-bold">PE</span>
-                    <span className="text-black dark:text-white font-bold">{s.pe_ratio ? s.pe_ratio.toFixed(1) : '—'}</span>
-                  </div>
-                  <div className="bg-brand-bg px-2.5 py-1 border border-brand-border/60 rounded flex flex-col items-center min-w-[42px]">
-                    <span className="text-[7px] text-brand-textMuted uppercase font-bold">ALPHA</span>
-                    <span className="text-brand-primary font-bold text-xs">{s.alpha_score ? Math.round(s.alpha_score) : '—'}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
+            {/* Top Stocks */}
+            <div className="lg:col-span-7 space-y-4 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+              <div className="flex justify-between items-center border-b border-brand-border pb-2">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Top Seeded Stocks</h3>
+                <span className="font-mono text-[9px] text-brand-textMuted">SORTED: Alpha Score</span>
+              </div>
+
+              <div className="bg-brand-surface border border-brand-border shadow-xl divide-y divide-brand-border">
+                {top_stocks.map((s) => (
+                  <button
+                    key={s.symbol}
+                    onClick={() => handleStockClick(s.symbol)}
+                    className="w-full text-left p-4 hover:bg-brand-border/20 transition-colors flex items-center justify-between gap-4 group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 pr-3">
+                      <StockLogo symbol={s.symbol} size="sm" />
+                      <div className="truncate">
+                        <span className="font-bold text-xs text-brand-primary block group-hover:underline">{s.symbol}</span>
+                        <span className="text-[10px] text-brand-textMuted truncate block font-sans">{s.company_name}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3 sm:gap-6 font-mono text-[10px] shrink-0 text-right">
+                      <div>
+                        <span className="text-brand-textMuted block text-[8px] uppercase font-bold">3Y CAGR</span>
+                        <span className="text-white font-bold">{s.cagr_3y ? `${(s.cagr_3y * 100).toFixed(1)}%` : '—'}</span>
+                      </div>
+                      <div className="hidden sm:block">
+                        <span className="text-brand-textMuted block text-[8px] uppercase font-bold">PE</span>
+                        <span className="text-white font-bold">{s.pe_ratio ? s.pe_ratio.toFixed(1) : '—'}</span>
+                      </div>
+                      <div className="bg-brand-bg px-2.5 py-1 border border-brand-border/60 rounded flex flex-col items-center min-w-[42px]">
+                        <span className="text-[7px] text-brand-textMuted uppercase font-bold">ALPHA</span>
+                        <span className="text-brand-primary font-bold text-xs">{s.alpha_score ? Math.round(s.alpha_score) : '—'}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
