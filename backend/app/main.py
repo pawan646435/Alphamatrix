@@ -2,7 +2,7 @@ import os
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import asyncio
 import logging
-from fastapi import FastAPI, BackgroundTasks, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -12,9 +12,6 @@ from app.middleware.timing import TimingMiddleware
 from app.core.config import settings
 from app.core.database import init_db, async_session_maker
 from app.api.api import api_router
-from app.workers.ingestion import ingest_fund
-
-from app.workers.stock_ingestion import seed_stocks_data, populate_search_indices
 
 # Setup logging
 logging.basicConfig(
@@ -154,6 +151,8 @@ async def seed_data_background():
     and stock market equities on initial startup.
     """
     logger.info("Starting background database seeding...")
+    from app.workers.ingestion import ingest_fund
+    from app.workers.stock_ingestion import seed_stocks_data, populate_search_indices
     
     # 1. Ensure tables are created and search indices populated
     try:

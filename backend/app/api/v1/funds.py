@@ -15,9 +15,6 @@ from app.schemas.fund_schema import (
     FundGridItem, FundDetailResponse, FundMasterResponse, 
     NAVHistoryBase, SyncResponse
 )
-from app.workers.ingestion import ingest_fund
-from app.workers.cron_jobs import run_overnight_sync
-
 from app.core.config import settings
 from app.core.redis import redis_client
 from app.core.cache_ttl import (
@@ -543,6 +540,8 @@ async def sync_fund_manual(
         logger.error(f"Failed to delete Redis cache key for {scheme_code}: {e}")
             
     try:
+        from app.workers.ingestion import ingest_fund
+
         res = await ingest_fund(db, scheme_code, force_recompute=True, background_tasks=background_tasks)
         return {
             "status": "success",
@@ -566,5 +565,7 @@ async def trigger_all_funds_sync(background_tasks: BackgroundTasks, db: AsyncSes
         await redis_client.delete_pattern("funds_list:*")
     except Exception as e:
         logger.error(f"Failed to delete Redis cache keys for sync-all: {e}")
+    from app.workers.cron_jobs import run_overnight_sync
+
     background_tasks.add_task(run_overnight_sync, db)
     return {"status": "accepted", "message": "Overnight batch update task launched in the background."}
