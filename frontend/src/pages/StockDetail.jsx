@@ -149,12 +149,12 @@ export default function StockDetail() {
     );
   }
 
-  if (!loading && !currentIsDiscovering && (!stockDetail || stockDetail.detail)) {
+  if (!loading && !currentIsDiscovering && (!metaData || metaData.detail || metaError)) {
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
         <Cpu className="h-10 w-10 text-brand-warning mx-auto" />
         <h3 className="text-sm font-bold text-white uppercase tracking-wider">Equity Not Found</h3>
-        <p className="text-brand-textMuted text-xs leading-relaxed">{stockDetail?.detail || 'Stock data is unavailable.'}</p>
+        <p className="text-brand-textMuted text-xs leading-relaxed">{metaData?.detail || metaError?.message || 'Stock data is unavailable.'}</p>
         <button
           onClick={() => navigate('/stocks/explorer')}
           className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
