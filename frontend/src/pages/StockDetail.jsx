@@ -65,6 +65,106 @@ export default function StockDetail() {
   const [chatMessage, setChatMessage] = useState('');
   const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
+  const [timings, setTimings] = useState({
+    start: null,
+    resolution: null,
+    metadata: null,
+    historical: null,
+    fundamentals: null,
+    alphaScore: null,
+    aiReport: null,
+    news: null,
+    total: null
+  });
+  const [showPerfPanel, setShowPerfPanel] = useState(false);
+
+  useEffect(() => {
+    if (!symbol) return;
+    setTimings({
+      start: performance.now(),
+      resolution: null,
+      metadata: null,
+      historical: null,
+      fundamentals: null,
+      alphaScore: null,
+      aiReport: null,
+      news: null,
+      total: null
+    });
+  }, [symbol]);
+
+  useEffect(() => {
+    if (metaData && timings.start && !timings.metadata) {
+      const elapsed = performance.now() - timings.start;
+      setTimings(prev => ({
+        ...prev,
+        metadata: elapsed,
+        resolution: elapsed
+      }));
+    }
+  }, [metaData, timings.start]);
+
+  useEffect(() => {
+    if (metricsData && timings.start && !timings.fundamentals) {
+      const elapsed = performance.now() - timings.start;
+      setTimings(prev => ({
+        ...prev,
+        fundamentals: elapsed,
+        alphaScore: elapsed
+      }));
+    }
+  }, [metricsData, timings.start]);
+
+  useEffect(() => {
+    if (chartData && timings.start && !timings.historical) {
+      const elapsed = performance.now() - timings.start;
+      setTimings(prev => ({
+        ...prev,
+        historical: elapsed
+      }));
+    }
+  }, [chartData, timings.start]);
+
+  useEffect(() => {
+    if (briefingData && timings.start && !timings.aiReport) {
+      const elapsed = performance.now() - timings.start;
+      setTimings(prev => ({
+        ...prev,
+        aiReport: elapsed
+      }));
+    }
+  }, [briefingData, timings.start]);
+
+  useEffect(() => {
+    if (newsData && timings.start && !timings.news) {
+      const elapsed = performance.now() - timings.start;
+      setTimings(prev => ({
+        ...prev,
+        news: elapsed
+      }));
+    }
+  }, [newsData, timings.start]);
+
+  useEffect(() => {
+    const { start, metadata, fundamentals, historical, aiReport, news, total } = timings;
+    if (start && metadata && fundamentals && historical && aiReport && news && !total) {
+      const elapsed_total = performance.now() - start;
+      setTimings(prev => ({ ...prev, total: elapsed_total }));
+      
+      console.log(
+        `%c[PERF]\n` +
+        `Symbol Resolution: ${metadata.toFixed(1)} ms\n` +
+        `Metadata Fetch: ${metadata.toFixed(1)} ms\n` +
+        `Historical Data: ${historical.toFixed(1)} ms\n` +
+        `Fundamentals: ${fundamentals.toFixed(1)} ms\n` +
+        `Alpha Score: ${fundamentals.toFixed(1)} ms\n` +
+        `AI Report: ${aiReport.toFixed(1)} ms\n` +
+        `Total: ${elapsed_total.toFixed(1)} ms`,
+        "color: #c9a56b; font-weight: bold; font-family: monospace;"
+      );
+    }
+  }, [timings]);
+
   const error = stockError ? (stockError.detail || stockError.response?.data?.detail || stockError.message || 'Failed to fetch stock details.') : null;
 
   const isSaved = watchlist.some((item) => item.symbol === symbol);
@@ -816,6 +916,51 @@ export default function StockDetail() {
 
         {/* Verdict Backtest Panel */}
         <StockBacktestPanel symbol={symbol} />
+
+        {/* Developer Performance Panel */}
+        <div className="fixed bottom-4 left-4 z-50 font-mono text-[9px]">
+          <button
+            onClick={() => setShowPerfPanel(!showPerfPanel)}
+            className="bg-black/90 border border-brand-primary text-brand-primary px-3 py-1.5 hover:bg-brand-primary/10 transition-colors uppercase font-bold"
+          >
+            {showPerfPanel ? '[- Close Perf Panel]' : '[+ Dev Perf Panel]'}
+          </button>
+          {showPerfPanel && (
+            <div className="mt-2 bg-black/95 border border-brand-border p-4 w-64 space-y-2 text-brand-textMuted shadow-2xl">
+              <p className="text-white font-bold border-b border-brand-border pb-1">PERFORMANCE METRICS</p>
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span>Symbol Resolution:</span>
+                  <span className="text-white font-bold">{timings.resolution ? `${timings.resolution.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Metadata Fetch:</span>
+                  <span className="text-white font-bold">{timings.metadata ? `${timings.metadata.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Historical Data:</span>
+                  <span className="text-white font-bold">{timings.historical ? `${timings.historical.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Fundamentals:</span>
+                  <span className="text-white font-bold">{timings.fundamentals ? `${timings.fundamentals.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Alpha Score:</span>
+                  <span className="text-white font-bold">{timings.alphaScore ? `${timings.alphaScore.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>AI Report:</span>
+                  <span className="text-white font-bold">{timings.aiReport ? `${timings.aiReport.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+                <div className="flex justify-between border-t border-brand-border/40 pt-1 text-brand-primary font-bold">
+                  <span>Total Load:</span>
+                  <span>{timings.total ? `${timings.total.toFixed(1)}ms` : 'loading...'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
       </div>
     </div>
