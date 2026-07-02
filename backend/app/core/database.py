@@ -225,3 +225,39 @@ async def init_db():
             mig_logger.error(f"Failed to execute stock_masters column migrations: {e}")
             raise e
 
+    # Run column migrations for fund_masters (Fund Rating Engine v2)
+    async with async_session_maker() as session:
+        try:
+            from sqlalchemy import text
+            fund_columns_to_add = {
+                "fund_score": "DOUBLE PRECISION",
+                "fund_verdict": "VARCHAR(20)",
+                "std_deviation": "DOUBLE PRECISION",
+                "max_drawdown": "DOUBLE PRECISION",
+                "aum": "DOUBLE PRECISION",
+                "consistency_score": "DOUBLE PRECISION",
+                "category_rank": "INTEGER",
+                "category_count": "INTEGER",
+                "category_avg_cagr_3y": "DOUBLE PRECISION",
+                "category_avg_sharpe": "DOUBLE PRECISION",
+                "category_avg_alpha": "DOUBLE PRECISION",
+                "bull_case": "TEXT",
+                "bear_case": "TEXT",
+                "fund_rationale": "TEXT",
+            }
+            if is_sqlite:
+                res = await session.execute(text("PRAGMA table_info(fund_masters)"))
+                existing = [row[1] for row in res.fetchall()]
+                for col_name, col_type in fund_columns_to_add.items():
+                    if col_name not in existing:
+                        await session.execute(text(f"ALTER TABLE fund_masters ADD COLUMN {col_name} {col_type}"))
+                        mig_logger.info(f"SQLite migration: Added column {col_name} to fund_masters")
+            else:
+                for col_name, col_type in fund_columns_to_add.items():
+                    await session.execute(text(f"ALTER TABLE fund_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                    mig_logger.info(f"PostgreSQL migration: Assured column {col_name} in fund_masters")
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            mig_logger.error(f"Failed to execute fund_masters column migrations: {e}")
+            # Don't raise — fund migrations shouldn't block startup

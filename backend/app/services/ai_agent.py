@@ -10,16 +10,22 @@ logger = logging.getLogger("app.services.ai_agent")
 
 AI_MODEL = "llama-3.3-70b-versatile"
 
-# Configure Groq if API Key is available
+# Lazy Groq client — instantiated on first call, not at import time
 groq_configured = False
 groq_client = None
-if settings.GROQ_API_KEY:
-    try:
-        groq_client = Groq(api_key=settings.GROQ_API_KEY)
-        groq_configured = True
-        logger.info("Groq API configured successfully.")
-    except Exception as e:
-        logger.error(f"Error configuring Groq API: {e}")
+
+def _init_groq():
+    global groq_client, groq_configured
+    if groq_configured:
+        return groq_client
+    if settings.GROQ_API_KEY:
+        try:
+            groq_client = Groq(api_key=settings.GROQ_API_KEY)
+            groq_configured = True
+            logger.info("Groq API configured successfully.")
+        except Exception as e:
+            logger.error(f"Error configuring Groq API: {e}")
+    return groq_client
 
 def clean_r1_response(text: str) -> str:
     """
@@ -38,8 +44,10 @@ async def parse_semantic_query(query: str) -> Dict[str, Any]:
     "Show me high-yield mid-caps with low risk"
     and maps it to structured database filters.
     """
+    _init_groq()
     if not groq_configured:
         return _mock_parse_semantic_query(query)
+
         
     prompt = f"""
 You are a Fintech AI database search assistant. Your job is to translate a user's natural language request for mutual funds into structured JSON search filters.
@@ -104,6 +112,7 @@ async def generate_fund_summary(
     Generates a professional 3-bullet point investment analysis of a mutual fund
     based on its calculated database metrics, live holdings, AUM, manager info, and NAV history milestones.
     """
+    _init_groq()
     if not groq_configured:
         return _generate_mock_fund_summary(fund_data)
         
@@ -173,6 +182,7 @@ async def run_ai_chat(message: str, history: List[ChatMessage], fund_data: Optio
     """
     Conversational chatbot for mutual funds with optional context injection.
     """
+    _init_groq()
     if not groq_configured:
         return _mock_chat_response(message, fund_data)
         
@@ -576,6 +586,7 @@ async def generate_stock_briefing(
     Generates a comprehensive Markdown equity research report briefing
     using Llama 3.3 via Groq, incorporating live news and corporate actions.
     """
+    _init_groq()
     if not groq_configured:
         return _generate_mock_stock_briefing(stock_data)
         
@@ -747,6 +758,7 @@ async def run_stock_chat(message: str, history: List[ChatMessage], stock_data: O
     """
     Conversational chatbot for stocks with context injection.
     """
+    _init_groq()
     if not groq_configured:
         return _mock_stock_chat_response(message, stock_data)
         
@@ -812,6 +824,7 @@ async def generate_watchlist_analytics(stocks: List[Dict[str, Any]]) -> Dict[str
             "best_performing_position": "N/A"
         }
         
+    _init_groq()
     if not groq_configured:
         return _generate_mock_watchlist_analytics(stocks)
         
@@ -858,6 +871,7 @@ async def generate_sector_outlook(sector: str, stocks: List[Dict[str, Any]]) -> 
     """
     Generates a sectoral health score, growth drivers, risks, and AI outlook using Llama 3.3 via Groq.
     """
+    _init_groq()
     if not groq_configured:
         return _generate_mock_sector_outlook(sector, stocks)
         
@@ -1079,6 +1093,7 @@ async def get_market_regime_diagnostics() -> Dict[str, Any]:
     to determine the current Market Regime (RISK ON, RISK OFF, or NEUTRAL).
     Returns a dictionary with 'regime', 'confidence', and 'explanation'.
     """
+    _init_groq()
     if not groq_configured:
         return _generate_mock_market_regime()
         
@@ -1127,6 +1142,7 @@ async def generate_stock_comparison(s1_data: Dict[str, Any], s2_data: Dict[str, 
     """
     Generates a comparative research analysis between two equities using Llama 3.3 via Groq.
     """
+    _init_groq()
     if not groq_configured:
         return _generate_mock_stock_comparison(s1_data, s2_data)
         

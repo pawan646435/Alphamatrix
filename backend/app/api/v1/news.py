@@ -4,10 +4,10 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-import yfinance as yf
+# yfinance is imported lazily inside functions (curl_cffi native dep must not block startup)
 
 from app.core.security import check_rate_limit
-from app.services.ai_agent import groq_client, groq_configured
+from app.services.ai_agent import groq_client, groq_configured, _init_groq
 from app.services.cache_service import CacheService
 
 router = APIRouter()
@@ -144,6 +144,7 @@ async def get_india_news(category: str = "all"):
     }
     query = queries_map.get(category_val, "Nifty")
     try:
+        import yfinance as yf  # lazy import — curl_cffi must not block startup
         search = await asyncio.to_thread(yf.Search, query)
         raw_news = search.news or []
         articles = []
@@ -203,6 +204,7 @@ async def get_global_news(category: str = "all"):
     }
     query = queries_map.get(category_val, "Nasdaq")
     try:
+        import yfinance as yf  # lazy import — curl_cffi must not block startup
         search = await asyncio.to_thread(yf.Search, query)
         raw_news = search.news or []
         articles = []
@@ -249,6 +251,7 @@ async def analyze_news_article(payload: NewsArticleRequest):
     Generate professional, structured market impact analysis using Groq Llama 3.3.
     Falls back to intelligent local keyword mapping if Groq is not configured or fails.
     """
+    _init_groq()
     if not groq_configured:
         logger.info("Groq is not configured. Returning rich mock news intelligence analysis.")
         return get_mock_analysis(payload.title, payload.publisher, payload.link)

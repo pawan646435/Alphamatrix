@@ -87,7 +87,41 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Bulletproof health check — never crashes, always returns 200."""
+    status_payload = {
+        "status": "ok",
+        "database": "unknown",
+        "redis": "unknown",
+        "ai": "not_configured",
+    }
+
+    # Database check
+    try:
+        from sqlalchemy import text
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+        status_payload["database"] = "connected"
+    except Exception as e:
+        status_payload["database"] = f"disconnected ({type(e).__name__})"
+
+    # Redis check
+    try:
+        from app.core.redis import redis_client
+        result = await redis_client.get("health_probe")
+        status_payload["redis"] = "connected"
+    except Exception as e:
+        status_payload["redis"] = f"disconnected ({type(e).__name__})"
+
+    # AI check (Groq)
+    try:
+        import app.services.ai_agent as ai_agent_module
+        ai_agent_module._init_groq()
+        status_payload["ai"] = "configured" if ai_agent_module.groq_configured else "not_configured"
+    except Exception:
+        status_payload["ai"] = "error"
+
+    return status_payload
+
 
 @app.get("/api/v1/db-health")
 async def db_health():
