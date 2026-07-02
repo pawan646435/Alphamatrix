@@ -300,10 +300,12 @@ async def generate_briefing_background(symbol: str):
             # Invalidate Redis cache
             try:
                 await redis_client.delete(
-                    f"stock:{symbol}",
-                    f"stock_chart:{symbol}",
-                    f"stock_metrics:{symbol}",
-                    f"stock_ai:{symbol}"
+                    f"stock_meta_split:{symbol}",
+                    f"stock_briefing_split:{symbol}",
+                    f"stock_metrics_split:{symbol}",
+                    f"stock_chart_split:3y:{symbol}",
+                    f"stock_chart_split:5y:{symbol}",
+                    f"stock_chart_split:max:{symbol}"
                 )
                 await redis_client.delete_pattern("stocks_list:*")
                 logger.info(f"Invalidated Redis split caches for stock {symbol} after AI briefing completion")
@@ -651,6 +653,8 @@ async def get_stock_meta_split(
         if cached:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            # DETAILED DIAGNOSTIC LOG
+            logger.info(f"[DIAGNOSTIC] Symbol Requested: {symbol} | Cache Result: HIT | DB Result: SKIPPED | Provider Result: SKIPPED | Final Response: Cached Meta")
             return json.loads(cached)
     except Exception as e:
         logger.error(f"Redis get stock_meta_split failed: {e}")
@@ -659,50 +663,41 @@ async def get_stock_meta_split(
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
     
+    # DETAILED DIAGNOSTIC LOG
+    logger.info(f"[DIAGNOSTIC] Symbol Requested: {symbol} | Cache Result: MISS | DB Result: {'Found' if stock else 'Not Found'}")
+    
     if stock and stock.sector == "Invalid":
+        logger.info(f"[DIAGNOSTIC] Symbol Requested: {symbol} | Final Response: HTTP 404 (Sector is Invalid)")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stock {symbol} not found on NSE or BSE exchanges."
         )
         
-    is_new = False
-    if not stock:
-        # Create skeleton StockMaster record immediately to allow instant rendering
+    if not stock or (stock.alpha_score is None and stock.sector == "Unknown"):
+        from app.workers.stock_ingestion import dynamic_ingest_stock
+        logger.info(f"[DIAGNOSTIC] Stock {symbol} is in skeleton/missing state — triggering dynamic ingestion inline")
         try:
-            stock = StockMaster(
-                symbol=symbol,
-                company_name=f"Discovering {symbol}...",
-                sector="Unknown",
-                industry="Unknown",
-                ai_summary="Generating Equity Intelligence Briefing in the background..."
-            )
-            db.add(stock)
-            await db.commit()
-            await db.refresh(stock)
-            is_new = True
+            logger.info(f"[DIAGNOSTIC] Provider Request: yfinance fetch for symbol {symbol}")
+            result = await dynamic_ingest_stock(symbol, db)
+            logger.info(f"[DIAGNOSTIC] Provider Response: {result}")
+            
+            if result["status"] == "ingested":
+                # Refresh db record
+                stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+                stock = stock_q.scalar_one_or_none()
+            elif result["status"] == "not_found":
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+                )
         except Exception as e:
-            await db.rollback()
-            stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
-            stock = stock_q.scalar_one_or_none()
-            if not stock:
-                raise HTTPException(status_code=500, detail="Failed to initialize stock metadata.")
+            logger.error(f"Dynamic ingestion failed for {symbol}: {e}")
+            if isinstance(e, HTTPException):
+                raise e
                 
-    if is_new or (stock.alpha_score is None and stock.sector == "Unknown"):
-        if symbol not in ingesting_tickers:
-            ingesting_tickers.add(symbol)
-            logger.info(f"Stock {symbol} is in skeleton/discovering state — scheduling background ingestion")
-            async def _ingest_and_brief(sym: str):
-                from app.core.database import async_session_maker
-                from app.workers.stock_ingestion import dynamic_ingest_stock
-                try:
-                    async with async_session_maker() as ingest_session:
-                        result = await dynamic_ingest_stock(sym, ingest_session)
-                        if result["status"] == "ingested":
-                            await generate_briefing_background(sym)
-                finally:
-                    ingesting_tickers.discard(sym)
-            background_tasks.add_task(_ingest_and_brief, symbol)
-
+    if not stock:
+        raise HTTPException(status_code=500, detail="Failed to retrieve or ingest stock metadata.")
+        
     res_data = {
         "symbol": stock.symbol,
         "company_name": stock.company_name,
@@ -710,18 +705,19 @@ async def get_stock_meta_split(
         "sector": stock.sector,
         "industry": stock.industry,
         "market_cap": stock.market_cap,
-        "status": "discovering" if stock.alpha_score is None else "ready"
+        "status": "ready"
     }
     
     # 3. Cache results for 24h
     try:
-        ttl = 5 if res_data["status"] == "discovering" else 86400
-        await redis_client.setex(cache_key, ttl, json.dumps(res_data))
+        await redis_client.setex(cache_key, 86400, json.dumps(res_data))
     except Exception as e:
         logger.error(f"Redis set stock_meta_split failed: {e}")
         
     elapsed_ms = (time.perf_counter() - start_time) * 1000
     logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    # DETAILED DIAGNOSTIC LOG
+    logger.info(f"[DIAGNOSTIC] Symbol Requested: {symbol} | Cache Result: MISS | DB Result: Resolved | Provider Result: Successful | Final Response: {res_data}")
     return res_data
 
 
@@ -891,7 +887,7 @@ async def get_stock_briefing_split(
 ):
     """
     Split endpoint: returns only AI summary/briefing sections.
-    Triggers AI briefing in background if not present.
+    Triggers AI briefing inline synchronously if not present.
     """
     import time
     start_time = time.perf_counter()
@@ -915,23 +911,26 @@ async def get_stock_briefing_split(
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
         
-    trigger_background = False
-    if stock.alpha_score is not None:
-        if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
-            stock.ai_summary = "Generating Equity Intelligence Briefing in the background..."
-            await db.commit()
+    trigger_generation = False
+    if not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...":
+        trigger_generation = True
+        
+    if trigger_generation:
+        logger.info(f"[DIAGNOSTIC] AI briefing for {symbol} is missing/generating — running generation inline")
+        try:
+            await generate_briefing_background(symbol)
+            # Refresh db session to pick up the updated briefing columns
             await db.refresh(stock)
-            trigger_background = True
-            
-    if trigger_background:
-        background_tasks.add_task(generate_briefing_background, symbol)
+            trigger_generation = False
+        except Exception as e:
+            logger.error(f"Inline briefing generation failed for {symbol}: {e}")
         
     res_data = {
         "ai_summary": stock.ai_summary or "Generating Equity Intelligence Briefing in the background...",
         "bull_case": stock.bull_case,
         "bear_case": stock.bear_case,
         "verdict_rationale": stock.verdict_rationale,
-        "status": "generating" if (trigger_background or not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background...") else "completed"
+        "status": "completed" if (stock.ai_summary and stock.ai_summary != "Generating Equity Intelligence Briefing in the background...") else "generating"
     }
     
     # 3. Cache results (short if generating, 24h if completed)
