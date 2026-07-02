@@ -795,34 +795,83 @@ async def get_stock_metrics_split(
 async def get_stock_chart_split(
     db: AsyncSession = Depends(get_db),
     symbol: str = Path(..., min_length=1, max_length=20),
+    period: str = Query("3y", min_length=1, max_length=10),
 ):
     """
-    Split endpoint: returns only historical price series (date, close)
+    Split endpoint: returns only historical price series (date, close) for the requested period.
     TTL: 1h (3600s)
     """
     import time
     start_time = time.perf_counter()
     symbol = symbol.upper().strip()
-    cache_key = f"stock_chart_split:{symbol}"
+    period = period.lower().strip()
+    cache_key = f"stock_chart_split:{period}:{symbol}"
     
     # 1. Try Redis cache
     try:
         cached = await redis_client.get(cache_key)
         if cached:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[PERF] Historical data fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+            logger.info(f"[PERF] Historical data fetch for {symbol} ({period}) took {elapsed_ms:.2f}ms (Cache: HIT)")
             return json.loads(cached)
     except Exception as e:
-        logger.error(f"Redis get stock_chart_split failed: {e}")
+        logger.error(f"Redis get stock_chart_split failed for {symbol}:{period}: {e}")
         
-    # 2. Fetch from DB
-    prices_q = await db.execute(
-        select(StockPriceHistory.date, StockPriceHistory.close)
-        .where(StockPriceHistory.symbol == symbol)
-        .order_by(StockPriceHistory.date.desc())
-    )
-    prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
+    prices = []
     
+    # 2. Fetch from DB if 3y, else fetch from yfinance
+    if period in ("3y", "3years"):
+        prices_q = await db.execute(
+            select(StockPriceHistory.date, StockPriceHistory.close)
+            .where(StockPriceHistory.symbol == symbol)
+            .order_by(StockPriceHistory.date.desc())
+        )
+        prices = [{"date": row.date.isoformat(), "close": row.close} for row in prices_q.all()]
+    else:
+        # Fetch dynamically from yfinance for 5y / max
+        import yfinance as yf
+        import pandas as pd
+        import requests
+        import asyncio
+        
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0"})
+        class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+            def __init__(self, timeout_val=3.0, *args, **kwargs):
+                self.timeout_val = timeout_val
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs['timeout'] = self.timeout_val
+                return super().send(request, **kwargs)
+        adapter = TimeoutHTTPAdapter(timeout_val=4.0)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        try:
+            yf_symbol = f"{symbol}.NS"
+            ticker = yf.Ticker(yf_symbol, session=session)
+            
+            def fetch_history():
+                p_val = "5y" if period == "5y" else "max"
+                return ticker.history(period=p_val)
+                
+            hist = await asyncio.to_thread(fetch_history)
+            if hist.empty and period == "5y":
+                # BO fallback
+                ticker_bo = yf.Ticker(f"{symbol}.BO", session=session)
+                hist = await asyncio.to_thread(lambda: ticker_bo.history(period="5y"))
+                
+            if not hist.empty:
+                prices = []
+                for timestamp, row in hist.iterrows():
+                    import numpy as np
+                    close_val = float(row["Close"])
+                    if not np.isnan(close_val):
+                        prices.append({"date": timestamp.date().isoformat(), "close": round(close_val, 2)})
+                prices.sort(key=lambda x: x["date"], reverse=True)
+        except Exception as e:
+            logger.error(f"yfinance dynamic historical fetch failed for {symbol} ({period}): {e}")
+            
     # 3. Cache results for 1h (3600 seconds)
     try:
         await redis_client.setex(cache_key, 3600, json.dumps(prices))
@@ -830,7 +879,7 @@ async def get_stock_chart_split(
         logger.error(f"Redis set stock_chart_split failed: {e}")
         
     elapsed_ms = (time.perf_counter() - start_time) * 1000
-    logger.info(f"[PERF] Historical data fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS)")
+    logger.info(f"[PERF] Historical data fetch for {symbol} ({period}) took {elapsed_ms:.2f}ms (Cache: MISS)")
     return prices
 
 

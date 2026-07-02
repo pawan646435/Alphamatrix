@@ -146,11 +146,13 @@ export function useStockMetrics(symbol, options = {}) {
   });
 }
 
-export function useStockChart(symbol, options = {}) {
+export function useStockChart(symbol, period = "3y", options = {}) {
   return useQuery({
-    queryKey: ['stocks', 'detail', symbol, 'chart'],
+    queryKey: ['stocks', 'detail', symbol, 'chart', period],
     queryFn: async () => {
-      const { data } = await apiClient.get(`/stocks/detail/${symbol}/chart`);
+      const { data } = await apiClient.get(`/stocks/detail/${symbol}/chart`, {
+        params: { period }
+      });
       return data;
     },
     enabled: !!symbol,

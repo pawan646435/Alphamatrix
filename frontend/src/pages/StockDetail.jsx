@@ -34,8 +34,11 @@ export default function StockDetail() {
     staleTime: 86400000
   });
   
+  const [chartRange, setChartRange] = useState('3Y');
+  const chartPeriod = (chartRange === '5Y' ? '5y' : chartRange === 'MAX' ? 'max' : '3y');
+  
   // 3. Fetch chart in parallel
-  const { data: chartData, isLoading: chartLoading } = useStockChart(symbol, {
+  const { data: chartData, isLoading: chartLoading } = useStockChart(symbol, chartPeriod, {
     enabled: !currentIsDiscovering && !!symbol,
     staleTime: 3600000
   });
@@ -621,7 +624,7 @@ export default function StockDetail() {
             <span>RESOLVING HISTORICAL PRICE SERIES...</span>
           </div>
         ) : (
-          <InteractiveChart navHistory={mappedChartHistory} />
+          <InteractiveChart navHistory={mappedChartHistory} range={chartRange} onRangeChange={setChartRange} />
         )}
       </div>
 

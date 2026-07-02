@@ -1116,42 +1116,68 @@ def calculate_alpha_score(stock: Dict[str, Any], cagr_1y: float, cagr_3y: float)
     ratings = calculate_institutional_ratings(stock_dict, prices, sector_avgs)
     return ratings["final_score"]
 
-def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]]]:
+def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]], Optional[List[Any]]]:
     """
     Downloads historical close prices and stock metadata from Yahoo Finance.
     Handles NSE suffix (.NS) for Indian equities.
-    Tries multiple period lengths to handle newer listings that don't have 6Y history.
+    Parallelizes calls using ThreadPoolExecutor and enforces a strict 4.0s timeout.
     """
     import yfinance as yf
+    import requests
+    import concurrent.futures
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    
+    class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+        def __init__(self, timeout_val=3.0, *args, **kwargs):
+            self.timeout_val = timeout_val
+            super().__init__(*args, **kwargs)
+            
+        def send(self, request, **kwargs):
+            kwargs['timeout'] = self.timeout_val
+            return super().send(request, **kwargs)
+            
+    adapter = TimeoutHTTPAdapter(timeout_val=4.0)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
     try:
         yf_symbol = f"{symbol}.NS"
         logger.info(f"Querying yfinance for symbol {yf_symbol}...")
-        ticker = yf.Ticker(yf_symbol)
+        ticker = yf.Ticker(yf_symbol, session=session)
         
-        # Try progressively shorter periods to accommodate newer listings
-        hist = pd.DataFrame()
-        for period in ("6y", "max", "3y", "2y", "1y"):
-            hist = ticker.history(period=period)
-            if not hist.empty:
-                logger.info(f"Got {len(hist)} rows for {yf_symbol} with period={period}")
-                break
-            logger.debug(f"No data for {yf_symbol} with period={period}, trying shorter period...")
-        
-        if hist.empty:
-            logger.warning(f"No history returned from yfinance for {yf_symbol} across all tried periods.")
-            return None, None, None
+        # Parallel fetch using concurrent.futures to fetch hist (3y max), info, and news concurrently!
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            def get_hist():
+                for period in ("3y", "2y", "1y"):
+                    h = ticker.history(period=period)
+                    if not h.empty:
+                        logger.info(f"Got {len(h)} rows for {yf_symbol} with period={period}")
+                        return h
+                return pd.DataFrame()
             
-        try:
-            info = ticker.info
-        except Exception as info_err:
-            logger.warning(f"Could not retrieve ticker info for {yf_symbol}: {info_err}")
-            info = {}
+            def get_info():
+                try:
+                    return ticker.info
+                except Exception as info_err:
+                    logger.warning(f"Could not retrieve ticker info for {yf_symbol}: {info_err}")
+                    return {}
             
-        try:
-            news = ticker.news or []
-        except Exception as news_err:
-            logger.warning(f"Could not retrieve ticker news for {yf_symbol}: {news_err}")
-            news = []
+            def get_news():
+                try:
+                    return ticker.news or []
+                except Exception as news_err:
+                    logger.warning(f"Could not retrieve ticker news for {yf_symbol}: {news_err}")
+                    return []
+                    
+            future_hist = executor.submit(get_hist)
+            future_info = executor.submit(get_info)
+            future_news = executor.submit(get_news)
+            
+            hist = future_hist.result()
+            info = future_info.result()
+            news = future_news.result()
             
         return hist, info, news
     except Exception as e:
@@ -1174,14 +1200,35 @@ def parse_briefing_sections(briefing: str) -> Tuple[Optional[str], Optional[str]
     
     return bull, bear, rat
 
+# Single-flight registry to deduplicate concurrent dynamic ingestions
+in_flight_ingestions: Dict[str, asyncio.Event] = {}
+
 async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    import asyncio
+    symbol = symbol.upper().strip()
+    
+    if symbol in in_flight_ingestions:
+        logger.info(f"[SingleFlight] Wait for ongoing dynamic ingestion of {symbol}...")
+        await in_flight_ingestions[symbol].wait()
+        logger.info(f"[SingleFlight] Ongoing ingestion for {symbol} finished. Returning.")
+        return {"status": "already_exists", "symbol": symbol}
+        
+    event = asyncio.Event()
+    in_flight_ingestions[symbol] = event
+    
+    try:
+        return await _dynamic_ingest_stock_internal(symbol, db)
+    finally:
+        in_flight_ingestions.pop(symbol, None)
+        event.set()
+
+async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     """
     Dynamically fetches, computes, and persists a stock record for any NSE-listed symbol.
     Called when a user searches or navigates to a stock not in the local database.
 
     Returns a dict with status: 'ingested' | 'already_exists' | 'not_found' | 'error'
     """
-    symbol = symbol.upper().strip()
     logger.info(f"[DynamicIngest] Starting dynamic ingestion for symbol: {symbol}")
 
     # 1. Check if already exists with history (safety check — if fully ingested, skip)
@@ -1212,28 +1259,52 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         logger.warning(f"[DynamicIngest] NSE lookup failed for {symbol}. Trying BSE suffix (.BO)...")
         def fetch_bse():
             import yfinance as yf
+            import requests
+            import concurrent.futures
+            
+            session = requests.Session()
+            session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            
+            class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
+                def __init__(self, timeout_val=3.0, *args, **kwargs):
+                    self.timeout_val = timeout_val
+                    super().__init__(*args, **kwargs)
+                    
+                def send(self, request, **kwargs):
+                    kwargs['timeout'] = self.timeout_val
+                    return super().send(request, **kwargs)
+                    
+            adapter = TimeoutHTTPAdapter(timeout_val=4.0)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            
             try:
-                ticker = yf.Ticker(f"{symbol}.BO")
-                h = pd.DataFrame()
-                for period in ("6y", "max", "3y", "2y", "1y"):
-                    h = ticker.history(period=period)
-                    if not h.empty:
-                        break
-                if h.empty:
-                    return None, None, None
-                try:
-                    i = ticker.info
-                except Exception:
-                    i = {}
-                try:
-                    n = ticker.news or []
-                except Exception:
-                    n = []
+                ticker = yf.Ticker(f"{symbol}.BO", session=session)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                    def get_hist_bse():
+                        for period in ("3y", "2y", "1y"):
+                            h = ticker.history(period=period)
+                            if not h.empty:
+                                return h
+                        return pd.DataFrame()
+                    def get_info_bse():
+                        try: return ticker.info
+                        except Exception: return {}
+                    def get_news_bse():
+                        try: return ticker.news or []
+                        except Exception: return []
+                    
+                    fut_h = executor.submit(get_hist_bse)
+                    fut_i = executor.submit(get_info_bse)
+                    fut_n = executor.submit(get_news_bse)
+                    
+                    h = fut_h.result()
+                    i = fut_i.result()
+                    n = fut_n.result()
                 return h, i, n
             except Exception as e:
                 logger.error(f"[DynamicIngest] BSE fallback failed for {symbol}: {e}")
                 return None, None, None
-
 
         hist, info, news = await loop.run_in_executor(None, fetch_bse)
 
@@ -1319,7 +1390,7 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
 
     # 4. Build price history from historical data
     end_date = date.today()
-    start_date = end_date - timedelta(days=int(5.5 * 365.25))
+    start_date = end_date - timedelta(days=int(3.0 * 365.25))
 
     prices_to_insert = []
     for timestamp, row in hist.iterrows():
@@ -1521,7 +1592,7 @@ async def seed_stocks_data(db: AsyncSession):
     
     # 5.5 years historical price range
     end_date = date.today()
-    start_date = end_date - timedelta(days=int(5.5 * 365.25))
+    start_date = end_date - timedelta(days=int(3.0 * 365.25))
     
     # Fetch benchmark NIFTY NAVs for Beta calculations
     logger.info("Fetching Nifty index NAVs for stock Beta alignment...")

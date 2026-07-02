@@ -270,7 +270,7 @@ def _parse_rss_xml(xml_text: str, source_meta: Dict[str, Any]) -> List[Dict[str,
 async def _fetch_source(
     client: httpx.AsyncClient,
     source: Dict[str, Any],
-    timeout: float = 8.0
+    timeout: float = 4.0
 ) -> List[Dict[str, Any]]:
     """Fetches and parses one RSS source. Returns empty list on any failure."""
     try:

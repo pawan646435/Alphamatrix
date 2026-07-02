@@ -1,8 +1,17 @@
 import { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-export default function InteractiveChart({ navHistory = [] }) {
-  const [range, setRange] = useState('3Y'); // 1M, 6M, 1Y, 3Y, 5Y, MAX
+export default function InteractiveChart({ navHistory = [], range: externalRange, onRangeChange }) {
+  const [internalRange, setInternalRange] = useState('3Y'); // 1M, 6M, 1Y, 3Y, 5Y, MAX
+  
+  const range = externalRange || internalRange;
+  const setRange = (r) => {
+    if (onRangeChange) {
+      onRangeChange(r);
+    } else {
+      setInternalRange(r);
+    }
+  };
 
   // Filter history based on range selector
   const filteredData = useMemo(() => {
