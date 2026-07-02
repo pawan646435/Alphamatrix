@@ -1,21 +1,12 @@
 {
-  "builds": [
+  "rewrites": [
     {
-      "src": "vercel_app.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "vercel_app.py"
+      "source": "/(.*)",
+      "destination": "/api/index"
     }
   ],
   "functions": {
-    "vercel_app.py": {
+    "api/index.py": {
       "maxDuration": 30
     }
   }
