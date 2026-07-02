@@ -211,11 +211,6 @@ async def startup_event():
     # Do not execute background seeding inside Vercel serverless environments
     if "VERCEL" in os.environ:
         logger.info("Server running inside Vercel Serverless. Bypassing background seed queue.")
-        # Ensure database tables exist
-        try:
-            await init_db()
-        except Exception as e:
-            logger.error(f"Failed to initialize tables in Vercel: {e}")
         return
 
     # Run seeding in background after server start locally
