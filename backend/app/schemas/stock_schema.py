@@ -38,6 +38,14 @@ class StockMasterResponse(StockMasterBase):
     cagr_3y: Optional[float] = None
     cagr_5y: Optional[float] = None
     alpha_score: Optional[float] = None
+    fundamental_score: Optional[float] = None
+    valuation_score: Optional[float] = None
+    technical_score: Optional[float] = None
+    risk_score: Optional[float] = None
+    sector_relative_score: Optional[float] = None
+    confidence_score: Optional[float] = None
+    investor_verdict: Optional[str] = None
+    trader_verdict: Optional[str] = None
     ai_summary: Optional[str] = None
     last_updated: Optional[datetime] = None
     status: Optional[str] = "ready"

@@ -28,6 +28,18 @@ class StockMaster(Base):
     # Proprietary Alpha Score
     alpha_score = Column(Float, nullable=True)   # 0 to 100
     
+    # Intermediate scores from Institutional Scoring Engine v2
+    fundamental_score = Column(Float, nullable=True)
+    valuation_score = Column(Float, nullable=True)
+    technical_score = Column(Float, nullable=True)
+    risk_score = Column(Float, nullable=True)
+    sector_relative_score = Column(Float, nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    
+    # Mode-based Stances
+    investor_verdict = Column(String(50), nullable=True)
+    trader_verdict = Column(String(50), nullable=True)
+    
     # AI Analyst Synthesis
     ai_summary = Column(Text, nullable=True)     # detailed briefing markdown cached in DB
     

@@ -231,9 +231,11 @@ export default function StockDetail() {
   const isBriefingLoading = !stock.ai_summary || stock.ai_summary === "Generating Equity Intelligence Briefing in the background...";
 
   // ── Verdict parsing (mirrors Detail.jsx pattern) ──────────────────────────
-  let stockStanceType = 'HOLD';
+  let investorVerdict = stock.investor_verdict || 'HOLD';
+  let traderVerdict = stock.trader_verdict || 'HOLD';
+  let stockConfidence = stock.confidence_score ? `${Math.round(stock.confidence_score)}%` : '';
+  let stockStanceType = investorVerdict;
   let stockStanceText = '';
-  let stockConfidence = '';
 
   if (!isBriefingLoading && stock.ai_summary) {
     // Parse Final Verdict section
@@ -244,18 +246,33 @@ export default function StockDetail() {
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/^-\s*(.*)$/gm, '• $1<br/>')
         .split('\n').filter(l => l.trim()).join('<br/>');
+        
       const lower = verdictContent.toLowerCase();
-      if (/\bstrong buy\b|\baccumulate\b|\boutperform\b|\bbuy\b/.test(lower)) stockStanceType = 'BUY';
-      else if (/\bavoid\b|\bsell\b|\bunderperform\b|\bhigh risk\b|\breduce\b/.test(lower)) stockStanceType = 'AVOID';
-      else stockStanceType = 'HOLD';
+      if (!stock.investor_verdict || !stock.trader_verdict) {
+        let parsedStance = 'HOLD';
+        if (/\bstrong buy\b|\baccumulate\b|\boutperform\b|\bbuy\b/.test(lower)) parsedStance = 'BUY';
+        else if (/\bavoid\b|\bsell\b|\bunderperform\b|\bhigh risk\b|\breduce\b/.test(lower)) parsedStance = 'AVOID';
+        investorVerdict = parsedStance;
+        traderVerdict = parsedStance;
+      }
     }
-    // Parse Confidence Score section for a percentage
-    const confParts = stock.ai_summary.split('### Confidence Score');
-    if (confParts.length >= 2) {
-      const confContent = confParts[1].split('###')[0];
-      const confMatch = confContent.match(/(\d{1,3})%/);
-      if (confMatch) stockConfidence = confMatch[1] + '%';
+    // Parse Confidence Score fallback
+    if (!stockConfidence) {
+      const confParts = stock.ai_summary.split('### Confidence Score');
+      if (confParts.length >= 2) {
+        const confContent = confParts[1].split('###')[0];
+        const confMatch = confContent.match(/(\d{1,3})%/);
+        if (confMatch) stockConfidence = confMatch[1] + '%';
+      }
     }
+  }
+
+  if (investorVerdict.includes('BUY') || traderVerdict.includes('BUY')) {
+    stockStanceType = 'BUY';
+  } else if (investorVerdict.includes('AVOID') || traderVerdict.includes('AVOID') || investorVerdict.includes('REDUCE') || traderVerdict.includes('REDUCE')) {
+    stockStanceType = 'AVOID';
+  } else {
+    stockStanceType = 'HOLD';
   }
 
   const renderMetricVal = (val, formatter, colorClass = "text-white") => {
@@ -592,6 +609,28 @@ export default function StockDetail() {
                             'text-brand-warning border-brand-warning/30 bg-brand-warning/10'
                           }`}>
                             {stockStanceType}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Dual verdicts grid */}
+                      <div className="grid grid-cols-2 gap-4 border-b border-brand-border/30 pb-3 mt-1 mb-2 font-mono text-[10px]">
+                        <div className="space-y-0.5">
+                          <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Investor Verdict (Long-Term)</span>
+                          <span className={`text-xs font-extrabold ${
+                            investorVerdict.includes('BUY') ? 'text-brand-success' :
+                            investorVerdict.includes('AVOID') || investorVerdict.includes('REDUCE') ? 'text-brand-danger' : 'text-brand-warning'
+                          }`}>
+                            {investorVerdict}
+                          </span>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Trader Verdict (Short-Term)</span>
+                          <span className={`text-xs font-extrabold ${
+                            traderVerdict.includes('BUY') ? 'text-brand-success' :
+                            traderVerdict.includes('AVOID') || traderVerdict.includes('REDUCE') ? 'text-brand-danger' : 'text-brand-warning'
+                          }`}>
+                            {traderVerdict}
                           </span>
                         </div>
                       </div>

@@ -614,11 +614,35 @@ async def generate_stock_briefing(
     else:
         cal_str = "No upcoming calendar events scheduled."
     
+    fundamental_score = stock_data.get('fundamental_score') or 60.0
+    valuation_score = stock_data.get('valuation_score') or 50.0
+    technical_score = stock_data.get('technical_score') or 55.0
+    risk_score = stock_data.get('risk_score') or 65.0
+    sector_relative_score = stock_data.get('sector_relative_score') or 50.0
+    alpha_score = stock_data.get('alpha_score') or 50.0
+    investor_verdict = stock_data.get('investor_verdict') or 'HOLD'
+    trader_verdict = stock_data.get('trader_verdict') or 'HOLD'
+    confidence_score = stock_data.get('confidence_score') or 65.0
+
     prompt = f"""
 You are a Lead Portfolio Manager and CFA specializing in Indian Equities.
 Current Date Context: {current_date_str}
 
 Analyze the following stock details, recent company news, corporate actions, and write a highly professional, comprehensive equity research report briefing.
+
+IMPORTANT ROLE DIRECTION:
+You MUST NOT decide or choose the final investment verdicts. The system's deterministic rating engine has calculated the following scores and verdicts for this company:
+- Fundamental Score: {fundamental_score}/100
+- Valuation Score: {valuation_score}/100
+- Technical Score: {technical_score}/100
+- Risk Score: {risk_score}/100
+- Sector Relative Score: {sector_relative_score}/100
+- Final Score: {alpha_score}/100
+- Investor Stance (Long-Term): {investor_verdict}
+- Trader Stance (Short-Term): {trader_verdict}
+- Data Confidence Rating: {confidence_score}%
+
+Your sole responsibility is to explain these scores, summarize key findings, and highlight key opportunities and risks.
 
 Stock Details:
 - Symbol: {symbol}
@@ -655,10 +679,10 @@ Return the output in clean Markdown. You MUST include these headers exactly:
 (incorporate analysis of price trends, volatility, and recent news events)
 
 ### Fundamental Analysis
-(analysis of profitability, leverage, valuation vs industry peers)
+(analysis of profitability, leverage, valuation vs industry peers. Explain the Fundamental Score of {fundamental_score}/100)
 
 ### Sector Analysis
-(industry drivers, tailwinds/headwinds and recent developments)
+(industry drivers, tailwinds/headwinds and recent developments. Explain the Sector Relative Score of {sector_relative_score}/100)
 
 ### Macro Analysis
 (interest rates, inflation impact, macro factors)
@@ -670,7 +694,7 @@ Return the output in clean Markdown. You MUST include these headers exactly:
 (detailed bullet points of the positive drivers, key catalysts, and reasons to invest)
 
 ### Risk Factors
-(detailed bullet points of risk assessment, concerns, or reasons NOT to invest)
+(detailed bullet points of risk assessment, concerns, or reasons NOT to invest. Explain the Risk Score of {risk_score}/100)
 
 ### Research Timeline
 (provide exactly 3 to 5 timeline entries of major company developments, earnings announcements, or corporate actions.
@@ -680,20 +704,23 @@ Each timeline entry MUST be on a new line and use EXACTLY the format:
 Note: Do not use outdated years like 2022 or 2023 for recent news; prioritize events from 2025 and 2026. Projections can be in late 2026 or 2027.)
 
 ### Bull Case
-(upside scenarios)
+(upside scenarios, provide at least 3 reasons)
 
 ### Base Case
 (expected performance)
 
 ### Bear Case
-(downside risks)
+(downside risks, provide at least 3 reasons)
 
 ### Final Verdict
-(Choose either **Strong Buy**, **Buy**, **Accumulate**, **Hold**, or **Avoid** as the Investment Outlook)
+Investor Verdict: {investor_verdict}
+Trader Verdict: {trader_verdict}
 
-### Confidence Score & Risk Rating
-Confidence Score: [0-100]
-Risk Rating: [Low | Medium | High]
+Provide a professional, objective explanation of these verdicts based on the Fundamental Score ({fundamental_score}/100), Valuation Score ({valuation_score}/100), and Technical Score ({technical_score}/100). Do NOT decide a new verdict yourself.
+
+### Confidence Score
+Confidence Score: {confidence_score}%
+Explain the Data Confidence rating of {confidence_score}%, highlighting whether metric agreement or data completeness supports it.
 
 Safety Constraint: Do NOT state anything with absolute certainty. Always write using probability-based language (e.g., 'represents a likely possibility', 'potential risk factor under interest rate pressure', 'probable trend').
 """
@@ -888,25 +915,26 @@ def _generate_mock_stock_briefing(stock_data: Dict[str, Any]) -> str:
     ret_1y = round((stock_data.get('cagr_1y') or 0)*100, 2)
     ret_3y = round((stock_data.get('cagr_3y') or 0)*100, 2)
     
-    verdict = "BUY"
-    if float(alpha_score) >= 80:
-        verdict = "Strong Buy"
-    elif float(alpha_score) < 45:
-        verdict = "Avoid"
-    elif float(alpha_score) < 60:
-        verdict = "Hold"
+    fundamental_score = stock_data.get('fundamental_score') or 60.0
+    valuation_score = stock_data.get('valuation_score') or 50.0
+    technical_score = stock_data.get('technical_score') or 55.0
+    risk_score = stock_data.get('risk_score') or 65.0
+    sector_relative_score = stock_data.get('sector_relative_score') or 50.0
+    investor_verdict = stock_data.get('investor_verdict') or 'HOLD'
+    trader_verdict = stock_data.get('trader_verdict') or 'HOLD'
+    confidence_score = stock_data.get('confidence_score') or 70.0
         
     return f"""### Executive Summary
-{name} ({sym}) represents a leading enterprise in the {sector} sector ({industry}). With an Alpha Score of {alpha_score}/100, it demonstrates a robust quantitative and qualitative investment setup. The company appears positioned to capture long-term structural tailwinds despite temporary market fluctuations.
+{name} ({sym}) represents a leading enterprise in the {sector} sector ({industry}). With an overall rating score of {alpha_score}/100, it demonstrates a robust quantitative and qualitative investment setup. The company appears positioned to capture long-term structural tailwinds despite temporary market fluctuations.
 
 ### Performance Analysis
-Over the past year, the stock has delivered a trend return of {ret_1y}%, which stands in comparison to its 3-Year CAGR of {ret_3y}%. With a Beta of {beta}, the stock exhibits {'above' if beta > 1.0 else 'below'} average systemic volatility relative to the benchmark Nifty 50 index.
+Over the past year, the stock has delivered a trend return of {ret_1y}%, which stands in comparison to its 3-Year CAGR of {ret_3y}%. With a Beta of {beta}, the stock exhibits {'above' if (beta != 'N/A' and float(beta) > 1.0) else 'below'} average systemic volatility relative to the benchmark Nifty 50 index.
 
 ### Fundamental Analysis
-From a fundamental stance, the business reports an ROE of {roe}% and a P/E Ratio of {pe}. Profitability metrics show strong efficiency, while leverage levels (Debt/Equity: {stock_data.get('debt_equity')}) remain within manageable bounds for the industry.
+From a fundamental stance, the business reports an ROE of {roe}% and a P/E Ratio of {pe}. Profitability metrics show strong efficiency, while leverage levels (Debt/Equity: {stock_data.get('debt_equity')}) remain within manageable bounds for the industry. Overall Fundamental Score: {fundamental_score}/100.
 
 ### Sector Analysis
-The {sector} sector is seeing significant technological integration and consolidation. Market leaders are likely to experience pricing power and market share gains, although wage inflation or regulatory updates could pose margin pressures.
+The {sector} sector is seeing significant technological integration and consolidation. Market leaders are likely to experience pricing power and market share gains. Overall Sector Relative Score: {sector_relative_score}/100.
 
 ### Macro Analysis
 Monetary policy, interest rate shifts, and consumer inflation cycles present systematic risks. A higher interest rate regime could raise capital costs, though the company's strong balance sheet likely mitigates severe liquidity friction.
@@ -920,7 +948,7 @@ Trade frictions and shifting geopolitical alliances impact global supply chains.
 - Strong tailwinds in the {sector} space supporting long-term structural compounding.
 
 ### Risk Factors
-- Potential wage inflation and rising talent retention costs within the {industry} industry.
+- Potential wage inflation and rising talent retention costs within the {industry} industry. Explain the Risk Score of {risk_score}/100.
 - Macroeconomic interest rate cycles increasing funding costs for capital expenditure.
 - Potential competitive pressure from regional/international entrants leading to margin dilution.
 
@@ -931,20 +959,27 @@ Trade frictions and shifting geopolitical alliances impact global supply chains.
 - **December 2025 - Contract Signing**: Secured a major multi-year domestic infrastructure contract. | Relevance Score: 9/10 | Impact Assessment: High
 
 ### Bull Case
-Under favorable economic growth, the stock has potential to experience valuation expansion, driven by robust order books, margin recovery, and accelerating compound yields.
+- High operational efficiency and strong brand franchise.
+- Accelerating order pipelines and market consolidation.
+- Excellent Return on Assets and Return on Capital.
 
 ### Base Case
 Our base expectation assumes steady margin maintenance and volume growth, yielding returns in line with its historical 3-Year CAGR performance bounds.
 
 ### Bear Case
-Downside risks involve localized demand deceleration, supply disruptions, or high competitive intensity, which could depress margins and trigger valuation contraction.
+- Rising competitive intensity diluting margins.
+- Localized demand deceleration or high material costs.
+- Structural raw material inflation or regulatory headwinds.
 
 ### Final Verdict
-We assign a definitive **{verdict}** recommendation for this counter.
+Investor Verdict: {investor_verdict}
+Trader Verdict: {trader_verdict}
 
-### Confidence Score & Risk Rating
-Confidence Score: 85
-Risk Rating: {'High' if beta > 1.2 else 'Medium' if beta > 0.8 else 'Low'}
+The scoring engine assigns an Investor Verdict of **{investor_verdict}** and a Trader Verdict of **{trader_verdict}**.
+
+### Confidence Score
+Confidence Score: {confidence_score}%
+Data confidence is rated at {confidence_score}% based on full metrics completeness and high agreement between fundamental indicators and technical price trend metrics.
 """
 
 def _mock_stock_chat_response(message: str, stock_data: Optional[Dict[str, Any]] = None) -> str:

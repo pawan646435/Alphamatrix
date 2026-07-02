@@ -92,60 +92,55 @@ def get_standardized_label(db_sector: str) -> str:
 
 def get_alpha_breakdown(stock_obj) -> dict:
     """
-    Computes a proprietary multi-factor Alpha Score breakdown based on:
-    1. Fundamentals (ROE, Debt/Equity) - 30% weight
-    2. Valuation (PE ratio, PB ratio) - 30% weight
-    3. Momentum (1Y CAGR, Slope) - 25% weight
-    4. Risk (Beta stability) - 15% weight
-    5. Sentiment (Alpha-inferred)
-    6. Macro (Beta-inferred)
+    Returns a proprietary multi-factor Alpha Score breakdown based on Institutional Ratings:
+    1. Fundamentals - 30%
+    2. Valuation - 25%
+    3. Technical - 20%
+    4. Risk - 15%
+    5. Sector Relative - 10%
     """
-    # 1. Fundamental score
-    roe = stock_obj.roe if stock_obj.roe is not None else 15.0
-    de = stock_obj.debt_equity if stock_obj.debt_equity is not None else 0.5
-    roe_score = min(100.0, roe * 4.0)
-    de_score = max(0.0, 100.0 - (de * 100.0))
-    fundamental_score = 0.6 * roe_score + 0.4 * de_score
-
-    # 2. Valuation score
-    pe = stock_obj.pe_ratio if stock_obj.pe_ratio is not None else 20.0
-    pb = stock_obj.pb_ratio if stock_obj.pb_ratio is not None else 3.0
-    pe_score = max(10.0, min(100.0, 100.0 - (pe - 12) * 2.5))
-    pb_score = max(10.0, min(100.0, 100.0 - (pb - 1.5) * 10.0))
-    valuation_score = 0.5 * pe_score + 0.5 * pb_score
-
-    # 3. Momentum score
-    cagr_1y_val = stock_obj.cagr_1y if stock_obj.cagr_1y is not None else 0.0
-    cagr_3y_val = stock_obj.cagr_3y if stock_obj.cagr_3y is not None else 0.0
-    mom_return_score = max(0.0, min(100.0, cagr_1y_val * 200.0))
-    acceleration_bonus = 20.0 if cagr_1y_val > cagr_3y_val else 0.0
-    momentum_score = min(100.0, mom_return_score + acceleration_bonus)
-
-    # 4. Risk score
-    beta = stock_obj.beta if stock_obj.beta is not None else 1.0
-    if beta <= 0.8:
-        risk_score = 95.0
-    elif beta <= 1.2:
-        risk_score = 80.0
-    else:
-        risk_score = max(20.0, 100.0 - (beta - 1.2) * 150.0)
-
-    # 5. Sentiment score
-    score = getattr(stock_obj, "alpha_score", 50.0)
-    if score is None:
-        score = 50.0
-    sentiment_score = 85.0 if score >= 70.0 else 70.0 if score >= 50.0 else 45.0
-
-    # 6. Macro score
-    macro_score = 80.0 if beta <= 0.9 else 55.0 if beta > 1.2 else 70.0
-
+    fundamental_score = getattr(stock_obj, "fundamental_score", None)
+    valuation_score = getattr(stock_obj, "valuation_score", None)
+    technical_score = getattr(stock_obj, "technical_score", None)
+    risk_score = getattr(stock_obj, "risk_score", None)
+    sector_relative_score = getattr(stock_obj, "sector_relative_score", None)
+    
+    if fundamental_score is None:
+        roe = stock_obj.roe if stock_obj.roe is not None else 15.0
+        de = stock_obj.debt_equity if stock_obj.debt_equity is not None else 0.5
+        roe_score = min(100.0, roe * 4.0)
+        de_score = max(0.0, 100.0 - (de * 100.0))
+        fundamental_score = 0.6 * roe_score + 0.4 * de_score
+        
+    if valuation_score is None:
+        pe = stock_obj.pe_ratio if stock_obj.pe_ratio is not None else 20.0
+        pb = stock_obj.pb_ratio if stock_obj.pb_ratio is not None else 3.0
+        pe_score = max(10.0, min(100.0, 100.0 - (pe - 12) * 2.5))
+        pb_score = max(10.0, min(100.0, 100.0 - (pb - 1.5) * 10.0))
+        valuation_score = 0.5 * pe_score + 0.5 * pb_score
+        
+    if technical_score is None:
+        cagr_1y_val = stock_obj.cagr_1y if stock_obj.cagr_1y is not None else 0.0
+        technical_score = max(0.0, min(100.0, cagr_1y_val * 200.0))
+        
+    if risk_score is None:
+        beta = stock_obj.beta if stock_obj.beta is not None else 1.0
+        if beta <= 0.8:
+            risk_score = 95.0
+        elif beta <= 1.2:
+            risk_score = 80.0
+        else:
+            risk_score = max(20.0, 100.0 - (beta - 1.2) * 150.0)
+            
+    if sector_relative_score is None:
+        sector_relative_score = 70.0
+        
     return {
-        "fundamentals": round(fundamental_score, 1),
-        "valuation": round(valuation_score, 1),
-        "momentum": round(momentum_score, 1),
-        "risk": round(risk_score, 1),
-        "sentiment": round(sentiment_score, 1),
-        "macro": round(macro_score, 1)
+        "fundamental_score": round(fundamental_score, 1),
+        "valuation_score": round(valuation_score, 1),
+        "technical_score": round(technical_score, 1),
+        "risk_score": round(risk_score, 1),
+        "sector_relative_score": round(sector_relative_score, 1)
     }
 
 class MockStock:
@@ -157,7 +152,13 @@ class MockStock:
         self.cagr_1y = d.get("cagr_1y")
         self.cagr_3y = d.get("cagr_3y")
         self.beta = d.get("beta")
-        self.alpha_score = d.get("alpha_score", 50)
+        self.alpha_score = d.get("alpha_score")
+        
+        self.fundamental_score = d.get("fundamental_score")
+        self.valuation_score = d.get("valuation_score")
+        self.technical_score = d.get("technical_score")
+        self.risk_score = d.get("risk_score")
+        self.sector_relative_score = d.get("sector_relative_score")
 
 # Redis client is imported from app.core.redis
 
@@ -543,6 +544,14 @@ async def get_stock_detail(
         "cagr_3y": stock.cagr_3y,
         "cagr_5y": stock.cagr_5y,
         "alpha_score": stock.alpha_score,
+        "fundamental_score": stock.fundamental_score,
+        "valuation_score": stock.valuation_score,
+        "technical_score": stock.technical_score,
+        "risk_score": stock.risk_score,
+        "sector_relative_score": stock.sector_relative_score,
+        "confidence_score": stock.confidence_score,
+        "investor_verdict": stock.investor_verdict,
+        "trader_verdict": stock.trader_verdict,
         "last_updated": stock.last_updated.isoformat() if stock.last_updated else None,
     }
     

@@ -169,3 +169,47 @@ async def init_db():
                 # Don't fail the startup if index creation fails, but log it
                 pass
 
+    # Run column migrations for ratings engine v2
+    import logging
+    mig_logger = logging.getLogger("app.core.database.migration")
+    async with async_session_maker() as session:
+        try:
+            from sqlalchemy import text
+            if is_sqlite:
+                res = await session.execute(text("PRAGMA table_info(stock_masters)"))
+                columns = [row[1] for row in res.fetchall()]
+                columns_to_add = {
+                    "fundamental_score": "FLOAT",
+                    "valuation_score": "FLOAT",
+                    "technical_score": "FLOAT",
+                    "risk_score": "FLOAT",
+                    "sector_relative_score": "FLOAT",
+                    "confidence_score": "FLOAT",
+                    "investor_verdict": "VARCHAR(50)",
+                    "trader_verdict": "VARCHAR(50)"
+                }
+                for col_name, col_type in columns_to_add.items():
+                    if col_name not in columns:
+                        await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN {col_name} {col_type}"))
+                        mig_logger.info(f"SQLite migration: Added column {col_name} to stock_masters")
+                await session.commit()
+            else:
+                columns_to_add = {
+                    "fundamental_score": "DOUBLE PRECISION",
+                    "valuation_score": "DOUBLE PRECISION",
+                    "technical_score": "DOUBLE PRECISION",
+                    "risk_score": "DOUBLE PRECISION",
+                    "sector_relative_score": "DOUBLE PRECISION",
+                    "confidence_score": "DOUBLE PRECISION",
+                    "investor_verdict": "VARCHAR(50)",
+                    "trader_verdict": "VARCHAR(50)"
+                }
+                for col_name, col_type in columns_to_add.items():
+                    await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                    mig_logger.info(f"PostgreSQL migration: Assured column {col_name} in stock_masters")
+                await session.commit()
+        except Exception as e:
+            await session.rollback()
+            mig_logger.error(f"Failed to execute stock_masters column migrations: {e}")
+            raise e
+
