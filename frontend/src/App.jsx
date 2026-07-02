@@ -77,8 +77,12 @@ function AppContent() {
 
   useEffect(() => {
     const onAuthExpired = () => {
-      setNotification({ type: 'error', text: 'Session expired. Please log in again.' });
-      navigate('/login');
+      if (user) {
+        logout();
+        setNotification({ type: 'error', text: 'Session expired. Please log in again.' });
+      } else {
+        localStorage.removeItem('alphamatrix_token');
+      }
     };
     const onRateLimited = () => {
       setNotification({ type: 'warning', text: 'Too many requests. Please wait before trying again.' });
@@ -89,7 +93,7 @@ function AppContent() {
       window.removeEventListener('auth:expired', onAuthExpired);
       window.removeEventListener('rate:limited', onRateLimited);
     };
-  }, [navigate]);
+  }, [user, logout]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {

@@ -8,9 +8,12 @@ import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
 import AnalystResponseCard from '../components/AnalystResponseCard';
 
+import useAuth from '../hooks/useAuth';
+
 export default function StockDetail() {
   const { symbol } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   
   const queryClient = useQueryClient();
   const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol, 'meta']);
@@ -173,6 +176,10 @@ export default function StockDetail() {
   const isSaved = watchlist.some((item) => item.symbol === symbol);
 
   const handleWatchlistToggle = async () => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
     try {
       if (isSaved) {
         await removeFromWatchlist(symbol);

@@ -220,6 +220,7 @@ export function useSectorDetails(sectorName) {
 
 /** Returns the user's watchlist */
 export function useWatchlistQuery() {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('alphamatrix_token') : null;
   return useQuery({
     queryKey: qk.watchlist(),
     queryFn: async () => {
@@ -227,6 +228,7 @@ export function useWatchlistQuery() {
       return data;
     },
     staleTime: STALE.LIVE,
+    enabled: !!token,
   });
 }
 
