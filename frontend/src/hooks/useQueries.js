@@ -50,27 +50,31 @@ export function getStandardizedSector(dbSector) {
 
 // ─── STALE TIME CONSTANTS ────────────────────────────────────────────────────
 export const STALE = {
-  LIVE:    60_000,          // 1 min — live prices
-  NEWS:    5 * 60_000,      // 5 min — news feeds
-  REGIME:  60 * 60_000,     // 1 hr  — market regime
-  MASTER:  6 * 60 * 60_000, // 6 hr  — fundamentals
-  FUND:    60 * 60_000,     // 1 hr  — NAV data
-  FUND_LIST: 5 * 60_000,   // 5 min — fund explorer grid
-  SEARCH:  30 * 60_000,    // 30 min — search results
+  LIVE:          60_000,          // 1 min — live prices
+  NEWS:          5 * 60_000,      // 5 min — news feeds
+  REGIME:        60 * 60_000,     // 1 hr  — market regime
+  MASTER:        6 * 60 * 60_000, // 6 hr  — fundamentals
+  FUND:          60 * 60_000,     // 1 hr  — NAV data
+  FUND_LIST:     5 * 60_000,      // 5 min — fund explorer grid
+  SEARCH:        30 * 60_000,     // 30 min — search results
+  BACKTEST:      24 * 60 * 60_000,// 24 hr — backtest summary
+  BACKTEST_STOCK:12 * 60 * 60_000,// 12 hr — per-stock backtest
 };
 
 // ─── QUERY KEY FACTORIES ─────────────────────────────────────────────────────
 export const qk = {
-  stockList:      (params = {}) => ['stocks', 'list', params],
-  stockDetail:    (symbol)      => ['stocks', 'detail', symbol],
-  stockHistory:   (symbol)      => ['stocks', 'history', symbol],
-  marketRegime:   ()            => ['stocks', 'market-regime'],
-  sectorDetails:  (sector)      => ['stocks', 'sector', sector],
-  fundList:       (params = {}) => ['funds', 'list', params],
-  fundDetail:     (code)        => ['funds', 'detail', code],
-  newsIndia:      (cat)         => ['news', 'india', cat],
-  newsGlobal:     (cat)         => ['news', 'global', cat],
-  watchlist:      ()            => ['watchlist'],
+  stockList:       (params = {}) => ['stocks', 'list', params],
+  stockDetail:     (symbol)      => ['stocks', 'detail', symbol],
+  stockHistory:    (symbol)      => ['stocks', 'history', symbol],
+  marketRegime:    ()            => ['stocks', 'market-regime'],
+  sectorDetails:   (sector)      => ['stocks', 'sector', sector],
+  fundList:        (params = {}) => ['funds', 'list', params],
+  fundDetail:      (code)        => ['funds', 'detail', code],
+  newsIndia:       (cat)         => ['news', 'india', cat],
+  newsGlobal:      (cat)         => ['news', 'global', cat],
+  watchlist:       ()            => ['watchlist'],
+  backtestSummary: ()            => ['stocks', 'backtest', 'summary'],
+  backtestStock:   (symbol)      => ['stocks', 'backtest', symbol],
 };
 
 // ─── STOCK HOOKS ─────────────────────────────────────────────────────────────
@@ -182,26 +186,53 @@ export function useFundDetail(schemeCode, options = {}) {
 
 // ─── NEWS HOOKS ──────────────────────────────────────────────────────────────
 
-/** Returns India market news feed */
+/** Returns India market news feed — multi-source aggregated */
 export function useNewsIndia(category = 'all') {
   return useQuery({
     queryKey: qk.newsIndia(category),
     queryFn: async () => {
-      const { data } = await apiClient.get('/news/list', { params: { stream: 'india', category } });
+      const { data } = await apiClient.get('/news/india', { params: { category } });
       return data || [];
     },
     staleTime: STALE.NEWS,
   });
 }
 
-/** Returns global market news feed */
+/** Returns global market news feed — multi-source aggregated */
 export function useNewsGlobal(category = 'all') {
   return useQuery({
     queryKey: qk.newsGlobal(category),
     queryFn: async () => {
-      const { data } = await apiClient.get('/news/list', { params: { stream: 'global', category } });
+      const { data } = await apiClient.get('/news/global', { params: { category } });
       return data || [];
     },
     staleTime: STALE.NEWS,
+  });
+}
+
+/** Returns aggregate backtesting summary for the verdict engine */
+export function useBacktestSummary() {
+  return useQuery({
+    queryKey: qk.backtestSummary(),
+    queryFn: async () => {
+      const { data } = await apiClient.get('/stocks/backtest/summary');
+      return data;
+    },
+    staleTime: STALE.BACKTEST,
+    retry: 1,
+  });
+}
+
+/** Returns per-stock backtest results */
+export function useStockBacktest(symbol) {
+  return useQuery({
+    queryKey: qk.backtestStock(symbol),
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/backtest/${symbol}`);
+      return data;
+    },
+    staleTime: STALE.BACKTEST_STOCK,
+    enabled: !!symbol,
+    retry: 1,
   });
 }

@@ -111,79 +111,137 @@ def get_mock_analysis(title: str, publisher: str, link: str) -> dict:
         "direction": direction
     }
 
-@router.get("/list", dependencies=[Depends(check_rate_limit)])
-async def list_news(stream: str = "india", category: str = "all"):
+@router.get("/india", dependencies=[Depends(check_rate_limit)])
+async def get_india_news(category: str = "all"):
     """
-    Retrieve live financial news headlines from Yahoo Finance based on stream and category filters.
+    Retrieve India financial news from multi-source RSS aggregation.
+    Sources: ET Markets, Moneycontrol, Business Standard, Livemint.
+    Includes deduplication, event classification, and credibility scoring.
     """
-    # 1. Map stream and category to Yahoo Finance Search query strings
-    queries_map = {
-        "india": {
-            "all": "Nifty",
-            "stocks": "Indian Stocks",
-            "mutual_funds": "SEBI",
-            "economy": "India Economy",
-            "policy": "RBI",
-            "earnings": "Sensex"
-        },
-        "global": {
-            "all": "Nasdaq",
-            "stocks": "S&P 500",
-            "mutual_funds": "ETFs",
-            "economy": "Inflation",
-            "policy": "Federal Reserve",
-            "earnings": "Mutual Funds"
-        }
-    }
-    
-    stream_val = stream.lower() if stream.lower() in ["india", "global"] else "india"
-    category_val = category.lower() if category.lower() in queries_map[stream_val] else "all"
-    
+    stream_val = "india"
+    category_val = category.lower() if category.lower() in ["all", "stocks", "mutual_funds", "economy", "policy", "earnings"] else "all"
+
     # Check cache first
     cached_news = await CacheService.get_news_feed(stream_val, category_val)
     if cached_news is not None:
-        logger.info(f"Returning cached news list for {stream_val}:{category_val}")
+        logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
         return cached_news
 
-    query = queries_map[stream_val][category_val]
-    logger.info(f"Fetching news for query: {query}")
-    
     try:
-        # Fetch news in a non-blocking threadpool
-        search = await asyncio.to_thread(yf.Search, query)
-        raw_news = search.news
-        
-        formatted_news = []
-        if raw_news:
-            for item in raw_news:
-                title = item.get("title", "")
-                if not title:
-                    continue
-                
-                formatted_news.append({
-                    "uuid": item.get("uuid", ""),
-                    "title": title,
-                    "publisher": item.get("publisher", "Yahoo Finance"),
-                    "link": item.get("link", ""),
-                    "timestamp": item.get("providerPublishTime", 0),
-                    "type": item.get("type", "STORY"),
-                    "category": category_val,
-                    "stream": stream_val,
-                    "impact": get_impact_tag(title)
-                })
-        
-        # Sort news by newest timestamp first
-        formatted_news.sort(key=lambda x: x["timestamp"], reverse=True)
-        
-        # Cache the results
-        await CacheService.set_news_feed(stream_val, category_val, formatted_news)
-        
-        return formatted_news
-        
+        from app.services.news_aggregator import fetch_india_news
+        articles = await fetch_india_news(category_filter=category_val if category_val != "all" else None)
+
+        if articles:
+            await CacheService.set_news_feed(stream_val, category_val, articles)
+            return articles
     except Exception as e:
-        logger.error(f"Error fetching news from yfinance: {e}")
-        # Return fallback mock list if yfinance fails
+        logger.error(f"Multi-source India news aggregation failed: {e}. Falling back to yfinance.")
+
+    # Fallback: Yahoo Finance
+    queries_map = {
+        "all": "Nifty", "stocks": "Indian Stocks", "mutual_funds": "SEBI",
+        "economy": "India Economy", "policy": "RBI", "earnings": "Sensex"
+    }
+    query = queries_map.get(category_val, "Nifty")
+    try:
+        search = await asyncio.to_thread(yf.Search, query)
+        raw_news = search.news or []
+        articles = []
+        for item in raw_news:
+            title = item.get("title", "")
+            if not title:
+                continue
+            articles.append({
+                "title": title,
+                "publisher": item.get("publisher", "Yahoo Finance"),
+                "source_short": "Yahoo Finance",
+                "link": item.get("link", ""),
+                "timestamp": item.get("providerPublishTime", 0),
+                "credibility_score": 0.70,
+                "source_count": 1,
+                "additional_sources": [],
+                "event_direction": "NEUTRAL",
+                "event_type": "general_coverage",
+                "impact_level": get_impact_tag(title),
+            })
+        articles.sort(key=lambda x: x["timestamp"], reverse=True)
+        await CacheService.set_news_feed(stream_val, category_val, articles)
+        return articles
+    except Exception as e:
+        logger.error(f"Fallback yfinance India news also failed: {e}")
         return []
+
+
+@router.get("/global", dependencies=[Depends(check_rate_limit)])
+async def get_global_news(category: str = "all"):
+    """
+    Retrieve global financial news from Reuters, CNBC, Yahoo Finance.
+    Includes deduplication, event classification, and credibility scoring.
+    """
+    stream_val = "global"
+    category_val = category.lower() if category.lower() in ["all", "stocks", "mutual_funds", "economy", "policy", "earnings"] else "all"
+
+    cached_news = await CacheService.get_news_feed(stream_val, category_val)
+    if cached_news is not None:
+        logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
+        return cached_news
+
+    try:
+        from app.services.news_aggregator import fetch_global_news
+        articles = await fetch_global_news(category_filter=category_val if category_val != "all" else None)
+
+        if articles:
+            await CacheService.set_news_feed(stream_val, category_val, articles)
+            return articles
+    except Exception as e:
+        logger.error(f"Multi-source global news aggregation failed: {e}. Falling back to yfinance.")
+
+    # Fallback: Yahoo Finance
+    queries_map = {
+        "all": "Nasdaq", "stocks": "S&P 500", "mutual_funds": "ETFs",
+        "economy": "Inflation", "policy": "Federal Reserve", "earnings": "Earnings"
+    }
+    query = queries_map.get(category_val, "Nasdaq")
+    try:
+        search = await asyncio.to_thread(yf.Search, query)
+        raw_news = search.news or []
+        articles = []
+        for item in raw_news:
+            title = item.get("title", "")
+            if not title:
+                continue
+            articles.append({
+                "title": title,
+                "publisher": item.get("publisher", "Yahoo Finance"),
+                "source_short": "Yahoo Finance",
+                "link": item.get("link", ""),
+                "timestamp": item.get("providerPublishTime", 0),
+                "credibility_score": 0.70,
+                "source_count": 1,
+                "additional_sources": [],
+                "event_direction": "NEUTRAL",
+                "event_type": "general_coverage",
+                "impact_level": get_impact_tag(title),
+            })
+        articles.sort(key=lambda x: x["timestamp"], reverse=True)
+        await CacheService.set_news_feed(stream_val, category_val, articles)
+        return articles
+    except Exception as e:
+        logger.error(f"Fallback yfinance global news also failed: {e}")
+        return []
+
+
+# Legacy /list endpoint — redirect to india for backwards compatibility
+@router.get("/list", dependencies=[Depends(check_rate_limit)])
+async def list_news(stream: str = "india", category: str = "all"):
+    """
+    Legacy endpoint. Routes to /india or /global based on stream param.
+    """
+    if stream.lower() == "global":
+        return await get_global_news(category)
+    return await get_india_news(category)
+
+
 
 @router.post("/analyze", dependencies=[Depends(check_rate_limit)])
 async def analyze_news_article(payload: NewsArticleRequest):

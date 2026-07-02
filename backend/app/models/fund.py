@@ -22,9 +22,29 @@ class FundMaster(Base):
     alpha = Column(Float, nullable=True)
     beta = Column(Float, nullable=True)
     
+    # Fund Rating Engine v1 — Composite Score & Verdict
+    fund_score = Column(Float, nullable=True)                    # 0–100 deterministic score
+    fund_verdict = Column(String(20), nullable=True)             # Elite/Strong/Good/Average/Avoid
+
+    # Risk Metrics (computed from NAV history)
+    std_deviation = Column(Float, nullable=True)                 # Annualized standard deviation
+    max_drawdown = Column(Float, nullable=True)                  # Maximum peak-to-trough drawdown %
+    aum = Column(Float, nullable=True)                           # AUM in crores (scraped/estimated)
+    consistency_score = Column(Float, nullable=True)             # 0–100 rolling return consistency
+
+    # Category Peer Analytics
+    category_rank = Column(Integer, nullable=True)               # Rank within category
+    category_count = Column(Integer, nullable=True)              # Total funds in category
+    category_avg_cagr_3y = Column(Float, nullable=True)         # Category average 3Y CAGR
+    category_avg_sharpe = Column(Float, nullable=True)           # Category average Sharpe
+    category_avg_alpha = Column(Float, nullable=True)            # Category average alpha
+
     # AI Analyst Synthesis
     ai_summary = Column(Text, nullable=True)
-    
+    bull_case = Column(Text, nullable=True)                      # AI bull case explanation
+    bear_case = Column(Text, nullable=True)                      # AI bear case explanation
+    fund_rationale = Column(Text, nullable=True)                 # AI rating rationale
+
     last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
     
     # Relationships

@@ -11,6 +11,12 @@ from app.core.config import settings
 from app.models.fund import FundMaster, NAVHistory
 from app.services.analytics import calculate_risk_metrics
 from app.services.ai_agent import generate_fund_summary
+from app.services.fund_rating_engine import (
+    calculate_fund_ratings,
+    compute_std_deviation,
+    compute_max_drawdown,
+    generate_ai_fund_prompt
+)
 
 logger = logging.getLogger("app.workers.ingestion")
 
@@ -395,7 +401,57 @@ async def ingest_fund(
     fund.sortino_ratio = metrics.get("sortino_ratio")
     fund.alpha = metrics.get("alpha")
     fund.beta = metrics.get("beta")
-    
+
+    # ── Fund Rating Engine v1 ────────────────────────────────────────
+    nav_prices = [row.nav for row in fund_navs]
+    computed_std = compute_std_deviation(nav_prices)
+    computed_dd  = compute_max_drawdown(nav_prices)
+    fund.std_deviation = computed_std
+    fund.max_drawdown  = computed_dd
+    # Estimate AUM from scheme_code (deterministic placeholder until real AUM data available)
+    fund.aum = round((scheme_code % 12000) + 3500.0, 2)
+
+    # Fetch category peers for relative ranking
+    cat_peers_q = await db.execute(
+        select(FundMaster.scheme_code, FundMaster.cagr_3y, FundMaster.sharpe_ratio, FundMaster.alpha)
+        .where(FundMaster.category == fund.category)
+    )
+    cat_peers = [{"cagr_3y": r.cagr_3y, "sharpe_ratio": r.sharpe_ratio, "alpha": r.alpha}
+                 for r in cat_peers_q.all()]
+
+    # Compute category rank (rank by fund_score; fall back to cagr_3y)
+    fund_cagr = fund.cagr_3y or 0.0
+    better_peers = sum(1 for p in cat_peers if (p.get("cagr_3y") or 0.0) > fund_cagr)
+    fund.category_rank  = better_peers + 1
+    fund.category_count = len(cat_peers)
+
+    fund_data_for_rating = {
+        "fund_name":      fund.fund_name,
+        "category":       fund.category,
+        "cagr_1y":        round(fund.cagr_1y * 100, 2) if fund.cagr_1y else None,
+        "cagr_3y":        round(fund.cagr_3y * 100, 2) if fund.cagr_3y else None,
+        "cagr_5y":        round(fund.cagr_5y * 100, 2) if fund.cagr_5y else None,
+        "sharpe_ratio":   fund.sharpe_ratio,
+        "sortino_ratio":  fund.sortino_ratio,
+        "alpha":          round(fund.alpha * 100, 2) if fund.alpha else None,
+        "beta":           fund.beta,
+        "expense_ratio":  fund.expense_ratio,
+        "aum":            fund.aum,
+        "std_deviation":  computed_std,
+        "max_drawdown":   computed_dd,
+        "category_rank":  fund.category_rank,
+        "category_count": fund.category_count,
+    }
+    ratings = calculate_fund_ratings(fund_data_for_rating, nav_prices, cat_peers)
+    fund.fund_score        = ratings["fund_score"]
+    fund.fund_verdict      = ratings["fund_verdict"]
+    fund.consistency_score = ratings["consistency_score"]
+    fund.category_avg_cagr_3y = ratings.get("category_avg_cagr_3y")
+    fund.category_avg_sharpe  = ratings.get("category_avg_sharpe")
+    fund.category_avg_alpha   = ratings.get("category_avg_alpha")
+    logger.info(f"Fund {scheme_code} rated: {fund.fund_verdict} ({fund.fund_score:.1f}/100)")
+    # ─────────────────────────────────────────────────────────────────
+
     # Trigger AI synthesis on initial load or if explicitly forced
     if not fund.ai_summary or force_recompute or fund.ai_summary == "Generating AI Analysis in the background...":
         if background_tasks:

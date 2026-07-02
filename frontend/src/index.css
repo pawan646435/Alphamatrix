@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=Sora:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -35,24 +35,37 @@
     background-color: var(--bg-color);
     color: var(--text-color);
     @apply antialiased overflow-x-hidden transition-colors duration-300;
-    font-family: 'Plus Jakarta Sans', sans-serif;
-    
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+
     /* Clean luxury radial glow background */
-    background-image: 
+    background-image:
       radial-gradient(circle at 50% -20%, rgba(197, 168, 128, 0.08) 0%, transparent 60%);
   }
 
-  /* Distinct Display Headers */
+  /* Institutional Display Headers — Sora */
   h1, h2, h3, .font-display {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Sora', system-ui, sans-serif;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
   }
 
-  /* Distinct Coding numbers/dates font */
-  .font-mono, td, .font-number {
-    font-family: 'JetBrains Mono', monospace;
+  h4, h5, h6 {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
   }
+
+  /* Data / Mono — JetBrains Mono */
+  .font-mono, td, .font-number, code {
+    font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+    font-feature-settings: 'calt', 'liga';
+  }
+
 
   /* Custom minimalist scrollbars */
   ::-webkit-scrollbar {

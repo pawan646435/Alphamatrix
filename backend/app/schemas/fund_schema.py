@@ -46,17 +46,31 @@ class FundMasterResponse(FundMasterBase):
     sortino_ratio: Optional[float] = None
     alpha: Optional[float] = None
     beta: Optional[float] = None
+    # Rating Engine v1 fields
+    fund_score: Optional[float] = None
+    fund_verdict: Optional[str] = None
+    std_deviation: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    aum: Optional[float] = None
+    consistency_score: Optional[float] = None
+    category_rank: Optional[int] = None
+    category_count: Optional[int] = None
+    category_avg_cagr_3y: Optional[float] = None
+    category_avg_sharpe: Optional[float] = None
+    category_avg_alpha: Optional[float] = None
+    bull_case: Optional[str] = None
+    bear_case: Optional[str] = None
+    fund_rationale: Optional[str] = None
     ai_summary: Optional[str] = None
     last_updated: Optional[datetime] = None
     status: Optional[str] = "ready"
-    
     model_config = ConfigDict(from_attributes=True)
 
 # Detailed Response including NAV history (for charting)
 class FundDetailResponse(BaseModel):
     fund: FundMasterResponse
     nav_history: List[NAVHistoryBase]
-    
+    rating_breakdown: Optional[dict] = None
     model_config = ConfigDict(from_attributes=True)
 
 # Short version for list grids
@@ -72,7 +86,12 @@ class FundGridItem(BaseModel):
     pe_ratio: Optional[float] = None
     expense_ratio: Optional[float] = None
     beta: Optional[float] = None
-    
+    fund_score: Optional[float] = None
+    fund_verdict: Optional[str] = None
+    aum: Optional[float] = None
+    consistency_score: Optional[float] = None
+    category_rank: Optional[int] = None
+    category_count: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 # Schema for manual sync operations

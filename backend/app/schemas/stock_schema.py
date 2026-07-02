@@ -43,9 +43,15 @@ class StockMasterResponse(StockMasterBase):
     technical_score: Optional[float] = None
     risk_score: Optional[float] = None
     sector_relative_score: Optional[float] = None
+    quality_score: Optional[float] = None
+    event_score: Optional[float] = None
     confidence_score: Optional[float] = None
     investor_verdict: Optional[str] = None
     trader_verdict: Optional[str] = None
+    trend_structure: Optional[str] = None
+    bull_case: Optional[str] = None
+    bear_case: Optional[str] = None
+    verdict_rationale: Optional[str] = None
     ai_summary: Optional[str] = None
     last_updated: Optional[datetime] = None
     status: Optional[str] = "ready"

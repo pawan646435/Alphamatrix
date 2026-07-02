@@ -34,11 +34,19 @@ class StockMaster(Base):
     technical_score = Column(Float, nullable=True)
     risk_score = Column(Float, nullable=True)
     sector_relative_score = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    event_score = Column(Float, nullable=True)
     confidence_score = Column(Float, nullable=True)
     
     # Mode-based Stances
     investor_verdict = Column(String(50), nullable=True)
     trader_verdict = Column(String(50), nullable=True)
+    trend_structure = Column(String(50), nullable=True)
+    
+    # Direct Explainability Fields
+    bull_case = Column(Text, nullable=True)
+    bear_case = Column(Text, nullable=True)
+    verdict_rationale = Column(Text, nullable=True)
     
     # AI Analyst Synthesis
     ai_summary = Column(Text, nullable=True)     # detailed briefing markdown cached in DB

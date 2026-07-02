@@ -95,6 +95,17 @@ export default function Detail() {
     sortino_ratio: null,
     alpha: null,
     beta: null,
+    fund_score: null,
+    fund_verdict: null,
+    std_deviation: null,
+    max_drawdown: null,
+    aum: null,
+    consistency_score: null,
+    category_rank: null,
+    category_count: null,
+    bull_case: null,
+    bear_case: null,
+    fund_rationale: null,
     ai_summary: null,
     last_updated: null
   };
@@ -208,7 +219,7 @@ export default function Detail() {
           <div className="flex flex-col md:flex-row md:items-center gap-4">
             <FundLogo fundName={fund.fund_name} size="lg" />
             <div className="space-y-1.5 flex-1 min-w-0">
-              <h1 className="text-2xl md:text-3xl font-extrabold text-black dark:text-white tracking-wide font-display uppercase truncate">
+              <h1 className="text-2xl md:text-3xl font-bold text-black dark:text-white tracking-tight font-display truncate">
                 {fund.fund_name}
               </h1>
               <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[10px] text-brand-textMuted font-mono pt-1">
@@ -217,6 +228,13 @@ export default function Detail() {
                 <p>LAST_SYNC: <span className="text-black dark:text-white">{fund.last_updated ? new Date(fund.last_updated).toLocaleString('en-IN') : 'Ingesting...'}</span></p>
               </div>
             </div>
+
+            {/* Fund Score Ring + Verdict Badge */}
+            {fund.fund_score !== null && fund.fund_score !== undefined && (
+              <div className="flex flex-col items-center gap-2 shrink-0">
+                <FundScoreRing score={fund.fund_score} verdict={fund.fund_verdict} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -275,8 +293,31 @@ export default function Detail() {
         </div>
       </div>
 
+      {/* Category Rank Bar */}
+      {(fund.category_rank !== null && fund.category_count !== null) && (
+        <div className="border border-brand-border bg-brand-surface px-5 py-4 animate-fade-in-up" style={{ animationDelay: '120ms' }}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[9px] text-brand-textMuted uppercase tracking-widest">Category Rank — {fund.category}</span>
+            <span className="font-mono text-[10px] font-bold text-brand-primary">
+              #{fund.category_rank} of {fund.category_count}
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-brand-border/40 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-brand-primary rounded-full transition-all duration-700"
+              style={{ width: `${Math.max(4, 100 - ((fund.category_rank - 1) / Math.max(1, fund.category_count - 1)) * 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between mt-1.5 font-mono text-[9px] text-brand-textMuted">
+            <span>Best</span>
+            <span>{fund.category_count && fund.category_rank ? `Top ${Math.round((fund.category_rank / fund.category_count) * 100)}%` : ''}</span>
+            <span>Worst</span>
+          </div>
+        </div>
+      )}
+
       {/* Recharts interactive timeline */}
-      <div 
+      <div
         className="w-full animate-fade-in-up shadow-xl"
         style={{ animationDelay: '150ms' }}
       >
@@ -453,6 +494,36 @@ export default function Detail() {
           </div>
         </div>
 
+        {/* Bull / Bear / Rationale cards (from Fund Rating Engine) */}
+        {(fund.bull_case || fund.bear_case || fund.fund_rationale) && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in-up" style={{ animationDelay: '190ms' }}>
+            {fund.bull_case && (
+              <div className="border border-brand-success/30 bg-brand-success/5 p-4 rounded space-y-2">
+                <div className="flex items-center gap-2 font-mono text-[9px] uppercase font-bold text-brand-success tracking-wider">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Bull Case
+                </div>
+                <p className="text-xs text-black dark:text-white leading-relaxed">{fund.bull_case}</p>
+              </div>
+            )}
+            {fund.bear_case && (
+              <div className="border border-brand-danger/30 bg-brand-danger/5 p-4 rounded space-y-2">
+                <div className="flex items-center gap-2 font-mono text-[9px] uppercase font-bold text-brand-danger tracking-wider">
+                  <ShieldAlert className="h-3.5 w-3.5" /> Bear Case
+                </div>
+                <p className="text-xs text-black dark:text-white leading-relaxed">{fund.bear_case}</p>
+              </div>
+            )}
+            {fund.fund_rationale && (
+              <div className="border border-brand-primary/30 bg-brand-primary/5 p-4 rounded space-y-2">
+                <div className="flex items-center gap-2 font-mono text-[9px] uppercase font-bold text-brand-primary tracking-wider">
+                  <Sparkles className="h-3.5 w-3.5" /> Rating Rationale
+                </div>
+                <p className="text-xs text-black dark:text-white leading-relaxed">{fund.fund_rationale}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Contextual chat panel - moved below and expanded */}
         <div 
           className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col font-mono animate-fade-in-up"
@@ -509,6 +580,57 @@ export default function Detail() {
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Fund Score Ring ──────────────────────────────────────────────────────────
+function FundScoreRing({ score, verdict }) {
+  const RADIUS = 36;
+  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+  const clampedScore = Math.max(0, Math.min(100, score ?? 0));
+  const offset = CIRCUMFERENCE - (clampedScore / 100) * CIRCUMFERENCE;
+
+  const verdictColors = {
+    Elite:   { stroke: '#4caf50', text: 'text-brand-success',   bg: 'bg-brand-success/10',  border: 'border-brand-success/30'  },
+    Strong:  { stroke: '#C9A56B', text: 'text-brand-primary',   bg: 'bg-brand-primary/10',  border: 'border-brand-primary/30'  },
+    Good:    { stroke: '#ffb74d', text: 'text-brand-warning',   bg: 'bg-brand-warning/10',  border: 'border-brand-warning/30'  },
+    Average: { stroke: '#BFB2A0', text: 'text-brand-textMuted', bg: 'bg-brand-border/20',   border: 'border-brand-border/40'   },
+    Avoid:   { stroke: '#ef5350', text: 'text-brand-danger',    bg: 'bg-brand-danger/10',   border: 'border-brand-danger/30'   },
+  };
+  const color = verdictColors[verdict] || verdictColors['Good'];
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {/* SVG Ring */}
+      <div className="relative w-24 h-24">
+        <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+          {/* Track */}
+          <circle cx="50" cy="50" r={RADIUS} fill="none" stroke="currentColor"
+            strokeWidth="7" className="text-brand-border/30" />
+          {/* Progress */}
+          <circle
+            cx="50" cy="50" r={RADIUS} fill="none"
+            stroke={color.stroke}
+            strokeWidth="7"
+            strokeLinecap="round"
+            strokeDasharray={CIRCUMFERENCE}
+            strokeDashoffset={offset}
+            style={{ transition: 'stroke-dashoffset 1s ease-out' }}
+          />
+        </svg>
+        {/* Score label */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="font-mono text-xl font-bold text-black dark:text-white leading-none">
+            {Math.round(clampedScore)}
+          </span>
+          <span className="font-mono text-[8px] text-brand-textMuted uppercase tracking-widest">score</span>
+        </div>
+      </div>
+      {/* Verdict badge */}
+      <span className={`px-3 py-1 text-[9px] font-mono font-bold uppercase tracking-widest rounded border ${color.text} ${color.bg} ${color.border}`}>
+        {verdict || 'Calculating…'}
+      </span>
     </div>
   );
 }

@@ -784,13 +784,86 @@ def calculate_technical_indicators(prices: List[float]) -> Dict[str, Any]:
         "latest": latest
     }
 
+def detect_trend_structure(prices_list: List[float]) -> str:
+    if len(prices_list) < 40:
+        return "SIDEWAYS"
+    try:
+        import pandas as pd
+        s = pd.Series(prices_list)
+        smoothed = s.rolling(window=15, min_periods=1).mean().tolist()
+        
+        peaks = []
+        troughs = []
+        window = 10
+        
+        for i in range(window, len(smoothed) - window):
+            seg = smoothed[i - window : i + window + 1]
+            val = smoothed[i]
+            if val == max(seg):
+                peaks.append(val)
+            elif val == min(seg):
+                troughs.append(val)
+                
+        if len(peaks) >= 2 and len(troughs) >= 2:
+            last_peaks = peaks[-3:]
+            last_troughs = troughs[-3:]
+            
+            hh = all(last_peaks[j] > last_peaks[j-1] for j in range(1, len(last_peaks)))
+            hl = all(last_troughs[j] > last_troughs[j-1] for j in range(1, len(last_troughs)))
+            
+            lh = all(last_peaks[j] < last_peaks[j-1] for j in range(1, len(last_peaks)))
+            ll = all(last_troughs[j] < last_troughs[j-1] for j in range(1, len(last_troughs)))
+            
+            if hh and hl:
+                return "BULLISH"
+            elif lh and ll:
+                return "BEARISH"
+                
+        # Fallback to SMA slopes
+        dma_50 = s.rolling(window=min(50, len(s))).mean().iloc[-1]
+        dma_200 = s.rolling(window=min(200, len(s))).mean().iloc[-1]
+        if dma_50 > dma_200 * 1.03:
+            return "BULLISH"
+        elif dma_50 < dma_200 * 0.97:
+            return "BEARISH"
+    except Exception:
+        pass
+    return "SIDEWAYS"
+
+def calculate_event_score(news_list: List[Dict[str, Any]]) -> float:
+    if not news_list:
+        return 80.0
+    import re
+    pos_count = 0
+    neg_count = 0
+    
+    pos_pat = re.compile(
+        r'\b(new order|bags contract|secured contract|secured order|capacity expansion|expansion plan|margin expansion|regulatory approval|fda approval|approved|product launch|unveils|launches|jv|joint venture|acquisition|order win)\b', 
+        re.IGNORECASE
+    )
+    neg_pat = re.compile(
+        r'\b(promoter sells|promoter selling|insider sale|pledge|earnings miss|profit falls|loss widens|misses estimate|debt rises|debt increase|investigation|probe|sebi|fraud|irregularity|governance|audit concern|downgrade|lowers rating|cut target|default|penalty|fine)\b', 
+        re.IGNORECASE
+    )
+    
+    for item in news_list:
+        text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+        if pos_pat.search(text):
+            pos_count += 1
+        if neg_pat.search(text):
+            neg_count += 1
+            
+    score = 80.0 + (pos_count * 5.0) - (neg_count * 15.0)
+    return max(0.0, min(100.0, score))
+
 def calculate_institutional_ratings(
     stock: Dict[str, Any], 
     prices_list: List[float], 
-    sector_avgs: Dict[str, float]
+    sector_avgs: Dict[str, float],
+    news_list: List[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Institutional stock rating engine with 5 independent scores.
+    Harden Institutional Stock Rating Engine v2 with Quality, Trend, and Event scores.
     """
     roe = stock.get("roe") if stock.get("roe") is not None else 15.0
     roce = stock.get("roce") if stock.get("roce") is not None else roe * 0.9
@@ -798,7 +871,6 @@ def calculate_institutional_ratings(
     pe = stock.get("pe_ratio") if stock.get("pe_ratio") is not None else 20.0
     pb = stock.get("pb_ratio") if stock.get("pb_ratio") is not None else 3.0
     
-    # Extra parameters with safe fallback defaults
     peg = stock.get("peg_ratio") if stock.get("peg_ratio") is not None else 1.5
     ev_ebitda = stock.get("ev_ebitda") if stock.get("ev_ebitda") is not None else 15.0
     op_margin = stock.get("operating_margin") if stock.get("operating_margin") is not None else 0.15
@@ -809,17 +881,19 @@ def calculate_institutional_ratings(
     held_promoters = stock.get("held_promoters") if stock.get("held_promoters") is not None else 0.50
     interest_coverage = stock.get("interest_coverage") if stock.get("interest_coverage") is not None else 4.0
     
-    # A. FUNDAMENTAL SCORE (0-100)
-    roe_score = min(100.0, max(0.0, roe * 4.0))
-    roce_score = min(100.0, max(0.0, roce * 5.0))
-    op_margin_score = min(100.0, max(0.0, op_margin * 400.0))
-    net_margin_score = min(100.0, max(0.0, net_margin * 666.0))
-    rev_growth_score = min(100.0, max(0.0, rev_growth * 500.0))
-    profit_growth_score = min(100.0, max(0.0, profit_growth * 500.0))
-    fcf_score = 100.0 if fcf > 0 else 20.0
     cagr_1 = stock.get("cagr_1y") or 0.15
     cagr_3 = stock.get("cagr_3y") or 0.15
-    consistency_score = 100.0 - min(40.0, abs(cagr_1 - cagr_3) * 150.0)
+    
+    # ─── A. FUNDAMENTAL SCORE (0-100) ───
+    # Calibrated strictness: 15% ROE yields 49.5 pts. Negative profit growth directly penalizes.
+    roe_score = min(100.0, max(0.0, roe * 3.3))
+    roce_score = min(100.0, max(0.0, roce * 4.0))
+    op_margin_score = min(100.0, max(0.0, op_margin * 333.0))
+    net_margin_score = min(100.0, max(0.0, net_margin * 500.0))
+    rev_growth_score = min(100.0, max(0.0, rev_growth * 400.0))
+    profit_growth_score = min(100.0, max(0.0, profit_growth * 400.0)) if profit_growth >= 0 else max(0.0, 30.0 + profit_growth * 100.0)
+    fcf_score = 100.0 if fcf > 0 else 10.0
+    consistency_score = 100.0 - min(50.0, abs(cagr_1 - cagr_3) * 200.0)
     
     fundamental_score = (
         0.15 * roe_score +
@@ -833,42 +907,59 @@ def calculate_institutional_ratings(
     )
     fundamental_score = round(max(0.0, min(100.0, fundamental_score)), 1)
     
-    # B. VALUATION SCORE (0-100)
+    # ─── B. QUALITY SCORE (0-100) [NEW] ───
+    # Evaluates consistency, cash generation efficiency, and leverage sustainability
+    margin_stability = min(100.0, max(0.0, op_margin * 400.0))
+    cash_conversion = 100.0 if (fcf > 0 and rev_growth > 0) else (40.0 if fcf > 0 else 10.0)
+    debt_quality = max(0.0, 100.0 - de * 60.0)
+    returns_stability = max(20.0, 100.0 - abs(cagr_1 - cagr_3) * 150.0)
+    
+    quality_score = 0.30 * margin_stability + 0.30 * cash_conversion + 0.20 * debt_quality + 0.20 * returns_stability
+    quality_score = round(max(0.0, min(100.0, quality_score)), 1)
+    
+    # ─── C. VALUATION SCORE (0-100) ───
+    # Massive penalty for loss-makers (PE<=0 gets 0). More sensitive relative deviations.
     sect_pe = sector_avgs.get("pe", 22.0)
     sect_pb = sector_avgs.get("pb", 3.0)
     
-    if pe <= sect_pe:
-        pe_score = 100.0 - (pe / sect_pe) * 30.0
+    if pe <= 0:
+        pe_score = 0.0
+    elif pe <= sect_pe:
+        pe_score = 100.0 - (pe / sect_pe) * 35.0
     else:
-        pe_score = max(10.0, 70.0 - ((pe - sect_pe) / sect_pe) * 40.0)
-        if pe > sect_pe * 2.0:
-            pe_score = max(5.0, pe_score - 30.0)
+        pe_score = max(5.0, 65.0 - ((pe - sect_pe) / sect_pe) * 60.0)
+        if pe > sect_pe * 1.8:
+            pe_score = max(0.0, pe_score - 25.0)
             
-    if pb <= sect_pb:
-        pb_score = 100.0 - (pb / sect_pb) * 30.0
+    if pb <= 0:
+        pb_score = 0.0
+    elif pb <= sect_pb:
+        pb_score = 100.0 - (pb / sect_pb) * 35.0
     else:
-        pb_score = max(10.0, 70.0 - ((pb - sect_pb) / sect_pb) * 40.0)
-        if pb > sect_pb * 2.0:
-            pb_score = max(5.0, pb_score - 30.0)
+        pb_score = max(5.0, 65.0 - ((pb - sect_pb) / sect_pb) * 60.0)
+        if pb > sect_pb * 1.8:
+            pb_score = max(0.0, pb_score - 25.0)
             
-    if ev_ebitda <= 12.0:
+    if ev_ebitda <= 10.0:
         ev_score = 90.0
     elif ev_ebitda >= 25.0:
-        ev_score = 30.0
+        ev_score = 15.0
     else:
-        ev_score = 90.0 - (ev_ebitda - 12.0) * 4.6
+        ev_score = 90.0 - (ev_ebitda - 10.0) * 5.0
         
     if peg <= 1.0:
         peg_score = 95.0
-    elif peg >= 2.5:
-        peg_score = 20.0
+    elif peg >= 2.0:
+        peg_score = 15.0
     else:
-        peg_score = 95.0 - (peg - 1.0) * 50.0
+        peg_score = 95.0 - (peg - 1.0) * 80.0
         
     valuation_score = 0.40 * pe_score + 0.20 * pb_score + 0.20 * ev_score + 0.20 * peg_score
     valuation_score = round(max(0.0, min(100.0, valuation_score)), 1)
     
-    # C. TECHNICAL SCORE (0-100)
+    # ─── D. TECHNICAL SCORE (0-100) & TREND STRUCTURE ───
+    # Cap technical score for BEARISH swing structure
+    trend_structure = detect_trend_structure(prices_list)
     tech = calculate_technical_indicators(prices_list)
     rsi = tech["rsi"]
     macd_bullish = tech["macd_bullish"]
@@ -876,117 +967,143 @@ def calculate_institutional_ratings(
     dma_200 = tech["dma_200"]
     latest_price = tech["latest"]
     
-    if 40 <= rsi <= 65:
+    if 45 <= rsi <= 60:
         rsi_score = 95.0
     elif rsi > 70:
-        rsi_score = max(10.0, 95.0 - (rsi - 70.0) * 4.0)
+        rsi_score = max(5.0, 95.0 - (rsi - 70.0) * 5.0)
     else:
-        rsi_score = max(20.0, 40.0 + (rsi - 20.0) * 2.0)
+        rsi_score = max(10.0, 30.0 + (rsi - 20.0) * 2.0)
         
-    macd_score = 100.0 if macd_bullish else 25.0
-    dma_50_score = 100.0 if (dma_50 and latest_price >= dma_50) else 30.0
-    dma_200_score = 100.0 if (dma_200 and latest_price >= dma_200) else 20.0
-    trend_score = 100.0 if (dma_50 and dma_200 and dma_50 > dma_200) else 25.0
+    macd_score = 100.0 if macd_bullish else 20.0
+    dma_50_score = 100.0 if (dma_50 and latest_price >= dma_50) else 25.0
+    dma_200_score = 100.0 if (dma_200 and latest_price >= dma_200) else 15.0
+    trend_align = 100.0 if (dma_50 and dma_200 and dma_50 > dma_200) else 20.0
     
-    technical_score = 0.20 * rsi_score + 0.20 * macd_score + 0.20 * dma_50_score + 0.20 * dma_200_score + 0.20 * trend_score
+    technical_score = 0.20 * rsi_score + 0.20 * macd_score + 0.20 * dma_50_score + 0.20 * dma_200_score + 0.20 * trend_align
+    if trend_structure == "BEARISH":
+        technical_score = min(45.0, technical_score)
     technical_score = round(max(0.0, min(100.0, technical_score)), 1)
     
-    # D. RISK SCORE (0-100)
-    if de <= 0.5:
+    # ─── E. RISK SCORE (0-100) & EVENT SCORE ───
+    # Incorporates promoter risk, vol risk (beta), and dynamic news event classification
+    if de <= 0.4:
         de_risk = 100.0
     elif de >= 1.5:
-        de_risk = 20.0
+        de_risk = 10.0
     else:
-        de_risk = 100.0 - (de - 0.5) * 80.0
+        de_risk = 100.0 - (de - 0.4) * 82.0
         
     if interest_coverage >= 5.0:
         ic_risk = 100.0
     elif interest_coverage <= 1.5:
-        ic_risk = 10.0
+        ic_risk = 5.0
     else:
-        ic_risk = 100.0 - (5.0 - interest_coverage) * 25.0
+        ic_risk = 100.0 - (5.0 - interest_coverage) * 27.0
         
-    promoter_risk = 100.0 if held_promoters >= 0.40 else 50.0
-    vol_risk = 90.0
-    news_risk = 85.0
+    promoter_risk = 100.0 if held_promoters >= 0.45 else 40.0
     
-    risk_score = 0.30 * de_risk + 0.20 * ic_risk + 0.20 * promoter_risk + 0.15 * vol_risk + 0.15 * news_risk
+    # Beta volatility risk
+    vol_risk = max(10.0, 100.0 - min(90.0, (stock.get("target_beta") or 1.0) * 45.0))
+    event_score = calculate_event_score(news_list)
+    
+    risk_score = 0.30 * de_risk + 0.20 * ic_risk + 0.20 * promoter_risk + 0.15 * vol_risk + 0.15 * event_score
     risk_score = round(max(0.0, min(100.0, risk_score)), 1)
     
-    # E. SECTOR RELATIVE SCORE (0-100)
+    # ─── F. SECTOR RELATIVE SCORE (0-100) ───
     sect_roe = sector_avgs.get("roe", 15.0)
     sect_de = sector_avgs.get("de", 0.5)
     sect_cagr = sector_avgs.get("cagr_3y", 0.15)
     
     if roe >= sect_roe:
-        roe_rel = min(100.0, 70.0 + (roe - sect_roe) * 3.0)
+        roe_rel = min(100.0, 70.0 + (roe - sect_roe) * 2.5)
     else:
-        roe_rel = max(10.0, 70.0 - (sect_roe - roe) * 3.0)
+        roe_rel = max(5.0, 70.0 - (sect_roe - roe) * 2.5)
         
     if de <= sect_de:
-        de_rel = min(100.0, 70.0 + (sect_de - de) * 40.0)
+        de_rel = min(100.0, 70.0 + (sect_de - de) * 35.0)
     else:
-        de_rel = max(10.0, 70.0 - (de - sect_de) * 40.0)
+        de_rel = max(5.0, 70.0 - (de - sect_de) * 35.0)
         
     stock_cagr = stock.get("cagr_3y") or 0.15
     if stock_cagr >= sect_cagr:
-        growth_rel = min(100.0, 70.0 + (stock_cagr - sect_cagr) * 150.0)
+        growth_rel = min(100.0, 70.0 + (stock_cagr - sect_cagr) * 120.0)
     else:
-        growth_rel = max(10.0, 70.0 - (sect_cagr - stock_cagr) * 150.0)
+        growth_rel = max(5.0, 70.0 - (sect_cagr - stock_cagr) * 120.0)
         
     sector_relative_score = (roe_rel + de_rel + growth_rel) / 3.0
     sector_relative_score = round(max(0.0, min(100.0, sector_relative_score)), 1)
     
-    # Weighted Final Score
+    # ─── FINAL ALPHA SCORE (WEIGHTED MODEL) ───
     final_score = (
-        0.30 * fundamental_score +
-        0.25 * valuation_score +
-        0.20 * technical_score +
+        0.25 * fundamental_score +
+        0.15 * quality_score +
+        0.20 * valuation_score +
+        0.15 * technical_score +
         0.15 * risk_score +
         0.10 * sector_relative_score
     )
     
-    # OVERHEAT DETECTION PENALTIES
+    # OVERHEAT PENALTIES
     if rsi > 75.0:
         final_score -= 10.0
-    if pe > sect_pe * 2.0:
+    if pe > sect_pe * 1.8:
         final_score -= 15.0
     if dma_200 and latest_price > dma_200 * 1.30:
         final_score -= 10.0
         
     final_score = round(max(0.0, min(100.0, final_score)), 1)
     
-    # CONFIDENCE ENGINE
+    # ─── CONFIDENCE ENGINE CALIBRATION ───
     filled_fields = sum(1 for v in [stock.get("roe"), stock.get("pe_ratio"), stock.get("debt_equity"), stock.get("pb_ratio")] if v is not None)
     completeness = (filled_fields / 4.0) * 100.0
-    agreement = 100.0 - abs(fundamental_score - technical_score)
-    confidence_score = 0.40 * completeness + 0.30 * agreement + 0.30 * 80.0
-    confidence_score = round(max(0.0, min(100.0, confidence_score)), 0)
     
-    # Verdict Mapping
+    divergence_penalty = 0.0
+    divergence = abs(fundamental_score - technical_score)
+    if divergence > 40.0:
+        divergence_penalty = 25.0
+    elif divergence > 25.0:
+        divergence_penalty = 10.0
+        
+    sector_penalty = 0.0 if sector_avgs.get("is_real", True) else 15.0
+    
+    # News conflict check
+    news_penalty = 0.0
+    if news_list:
+        import re
+        pos_pat = re.compile(r'\b(new order|bags contract|secured contract|secured order|capacity expansion|expansion plan|approved|product launch|launches)\b', re.IGNORECASE)
+        neg_pat = re.compile(r'\b(promoter sells|promoter selling|insider sale|earnings miss|profit falls|debt rises|debt increase|investigation|probe|downgrade|governance)\b', re.IGNORECASE)
+        pos_f = any(pos_pat.search(f"{n.get('title','')} {n.get('summary','')}".lower()) for n in news_list)
+        neg_f = any(neg_pat.search(f"{n.get('title','')} {n.get('summary','')}".lower()) for n in news_list)
+        if pos_f and neg_f:
+            news_penalty = 15.0
+            
+    confidence_score = completeness - divergence_penalty - sector_penalty - news_penalty
+    confidence_score = round(max(10.0, min(100.0, confidence_score)), 0)
+    
+    # Verdict Mappings
     def map_verdict(val: float) -> str:
-        if val >= 85.0: return "STRONG BUY"
-        if val >= 70.0: return "BUY"
-        if val >= 55.0: return "HOLD"
-        if val >= 40.0: return "REDUCE"
+        if val >= 74.0: return "STRONG BUY"
+        if val >= 66.0: return "BUY"
+        if val >= 56.0: return "HOLD"
+        if val >= 46.0: return "REDUCE"
         return "AVOID"
         
-    investor_score = 0.40 * fundamental_score + 0.40 * valuation_score + 0.20 * risk_score
-    investor_verdict = map_verdict(investor_score)
-    
-    trader_score = 0.70 * technical_score + 0.30 * consistency_score
-    trader_verdict = map_verdict(trader_score)
+    investor_verdict = map_verdict(final_score)
+    trader_verdict = map_verdict(final_score)
     
     return {
         "fundamental_score": fundamental_score,
+        "quality_score": quality_score,
         "valuation_score": valuation_score,
         "technical_score": technical_score,
         "risk_score": risk_score,
         "sector_relative_score": sector_relative_score,
+        "event_score": event_score,
         "final_score": final_score,
         "confidence_score": confidence_score,
         "investor_verdict": investor_verdict,
-        "trader_verdict": trader_verdict
+        "trader_verdict": trader_verdict,
+        "trend_structure": trend_structure
     }
 
 def calculate_alpha_score(stock: Dict[str, Any], cagr_1y: float, cagr_3y: float) -> float:
@@ -1022,7 +1139,7 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
         
         if hist.empty:
             logger.warning(f"No history returned from yfinance for {yf_symbol} across all tried periods.")
-            return None, None
+            return None, None, None
             
         try:
             info = ticker.info
@@ -1030,11 +1147,32 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
             logger.warning(f"Could not retrieve ticker info for {yf_symbol}: {info_err}")
             info = {}
             
-        return hist, info
+        try:
+            news = ticker.news or []
+        except Exception as news_err:
+            logger.warning(f"Could not retrieve ticker news for {yf_symbol}: {news_err}")
+            news = []
+            
+        return hist, info, news
     except Exception as e:
         logger.error(f"yfinance query failed for symbol {symbol}: {e}")
-        return None, None
+        return None, None, None
 
+
+def parse_briefing_sections(briefing: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if not briefing:
+        return None, None, None
+    def extract_section(text: str, heading: str) -> Optional[str]:
+        parts = text.split(f"### {heading}")
+        if len(parts) < 2:
+            return None
+        return parts[1].split("###")[0].strip()
+        
+    bull = extract_section(briefing, "Investment Thesis") or extract_section(briefing, "Bull Case")
+    bear = extract_section(briefing, "Risk Factors") or extract_section(briefing, "Bear Case")
+    rat = extract_section(briefing, "Final Verdict") or extract_section(briefing, "Verdict Rationale")
+    
+    return bull, bear, rat
 
 async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     """
@@ -1067,7 +1205,7 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     # 2. Fetch data from Yahoo Finance (blocking IO in thread to avoid blocking event loop)
     import asyncio
     loop = asyncio.get_event_loop()
-    hist, info = await loop.run_in_executor(None, lambda: fetch_ticker_data_yfinance(symbol))
+    hist, info, news = await loop.run_in_executor(None, lambda: fetch_ticker_data_yfinance(symbol))
 
     if hist is None or hist.empty:
         # Try BSE suffix as fallback
@@ -1082,18 +1220,22 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
                     if not h.empty:
                         break
                 if h.empty:
-                    return None, None
+                    return None, None, None
                 try:
                     i = ticker.info
                 except Exception:
                     i = {}
-                return h, i
+                try:
+                    n = ticker.news or []
+                except Exception:
+                    n = []
+                return h, i, n
             except Exception as e:
                 logger.error(f"[DynamicIngest] BSE fallback failed for {symbol}: {e}")
-                return None, None
+                return None, None, None
 
 
-        hist, info = await loop.run_in_executor(None, fetch_bse)
+        hist, info, news = await loop.run_in_executor(None, fetch_bse)
 
     if hist is None or hist.empty:
         logger.warning(f"[DynamicIngest] No market data found for symbol {symbol} on NSE or BSE.")
@@ -1242,7 +1384,12 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         "cagr_3y": cagr_3y
     }
     sector_avgs = await get_sector_averages(sector, db)
-    ratings = calculate_institutional_ratings(stock_meta, [p.close for p in prices_to_insert] if prices_to_insert else [100.0] * 50, sector_avgs)
+    ratings = calculate_institutional_ratings(
+        stock_meta, 
+        [p.close for p in prices_to_insert] if prices_to_insert else [100.0] * 50, 
+        sector_avgs,
+        news_list=news
+    )
     alpha_score = ratings["final_score"]
 
     # 7. Insert or Update StockMaster record
@@ -1272,6 +1419,9 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         existing.confidence_score = ratings["confidence_score"]
         existing.investor_verdict = ratings["investor_verdict"]
         existing.trader_verdict = ratings["trader_verdict"]
+        existing.quality_score = ratings["quality_score"]
+        existing.event_score = ratings["event_score"]
+        existing.trend_structure = ratings["trend_structure"]
         
         existing.ai_summary = "Generating Equity Intelligence Briefing in the background..."
     else:
@@ -1302,6 +1452,9 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
             confidence_score = ratings["confidence_score"],
             investor_verdict = ratings["investor_verdict"],
             trader_verdict = ratings["trader_verdict"],
+            quality_score = ratings["quality_score"],
+            event_score = ratings["event_score"],
+            trend_structure = ratings["trend_structure"],
             
             ai_summary="Generating Equity Intelligence Briefing in the background..."
         )
@@ -1397,7 +1550,7 @@ async def seed_stocks_data(db: AsyncSession):
         logger.info(f"Seeding stock data for symbol: {symbol}...")
         
         # Try fetching real data from Yahoo Finance
-        hist, info = fetch_ticker_data_yfinance(symbol)
+        hist, info, news = fetch_ticker_data_yfinance(symbol)
         
         prices_to_insert = []
         cagr_1y = None
@@ -1572,7 +1725,12 @@ async def seed_stocks_data(db: AsyncSession):
                         
         # 3. Calculate Alpha Score and ratings
         sector_avgs = await get_sector_averages(real_info["sector"], db)
-        ratings = calculate_institutional_ratings({**real_info, "cagr_1y": cagr_1y, "cagr_3y": cagr_3y}, [p.close for p in prices_to_insert] if prices_to_insert else [100.0] * 50, sector_avgs)
+        ratings = calculate_institutional_ratings(
+            {**real_info, "cagr_1y": cagr_1y, "cagr_3y": cagr_3y}, 
+            [p.close for p in prices_to_insert] if prices_to_insert else [100.0] * 50, 
+            sector_avgs,
+            news_list=news
+        )
         alpha_score = ratings["final_score"]
         
         # 4. Insert StockMaster record first
@@ -1603,6 +1761,9 @@ async def seed_stocks_data(db: AsyncSession):
             confidence_score = ratings["confidence_score"],
             investor_verdict = ratings["investor_verdict"],
             trader_verdict = ratings["trader_verdict"],
+            quality_score = ratings["quality_score"],
+            event_score = ratings["event_score"],
+            trend_structure = ratings["trend_structure"],
             
             ai_summary="Generating Equity Intelligence Briefing in the background..."
         )

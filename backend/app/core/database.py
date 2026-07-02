@@ -186,7 +186,13 @@ async def init_db():
                     "sector_relative_score": "FLOAT",
                     "confidence_score": "FLOAT",
                     "investor_verdict": "VARCHAR(50)",
-                    "trader_verdict": "VARCHAR(50)"
+                    "trader_verdict": "VARCHAR(50)",
+                    "quality_score": "FLOAT",
+                    "event_score": "FLOAT",
+                    "trend_structure": "VARCHAR(50)",
+                    "bull_case": "TEXT",
+                    "bear_case": "TEXT",
+                    "verdict_rationale": "TEXT"
                 }
                 for col_name, col_type in columns_to_add.items():
                     if col_name not in columns:
@@ -202,7 +208,13 @@ async def init_db():
                     "sector_relative_score": "DOUBLE PRECISION",
                     "confidence_score": "DOUBLE PRECISION",
                     "investor_verdict": "VARCHAR(50)",
-                    "trader_verdict": "VARCHAR(50)"
+                    "trader_verdict": "VARCHAR(50)",
+                    "quality_score": "DOUBLE PRECISION",
+                    "event_score": "DOUBLE PRECISION",
+                    "trend_structure": "VARCHAR(50)",
+                    "bull_case": "TEXT",
+                    "bear_case": "TEXT",
+                    "verdict_rationale": "TEXT"
                 }
                 for col_name, col_type in columns_to_add.items():
                     await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))

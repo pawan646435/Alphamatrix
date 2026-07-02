@@ -54,35 +54,40 @@ export default function Home() {
   return (
     <div className="space-y-8 sm:space-y-12 pb-20">
       {/* Hero Display Panel */}
-      <div 
-        className="relative border border-brand-border p-6 sm:p-8 md:p-12 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
+      <div
+        className="relative border border-brand-border p-8 sm:p-10 md:p-14 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
       >
-        {/* Terminal Corner Crosshairs decoration */}
-        <div className="absolute top-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [MATRIX_SYS]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted select-none font-mono text-xs">[ONLINE] +</div>
-        <div className="absolute bottom-2 left-2 text-brand-textMuted select-none font-mono text-xs">+ [LOC_IN]</div>
-        <div className="absolute bottom-2 right-2 text-brand-textMuted select-none font-mono text-xs">[SECURE] +</div>
-        
-        {/* Subtle grid accent inside hero */}
-        <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/5 via-transparent to-brand-primary/5 opacity-40 pointer-events-none" />
+        {/* Subtle corner markers — kept minimal */}
+        <div className="absolute top-3 left-3 text-brand-textMuted/40 select-none font-mono text-[9px] tracking-widest">ALPHAMATRIX</div>
+        <div className="absolute top-3 right-3 text-brand-textMuted/40 select-none font-mono text-[9px] tracking-widest">RESEARCH PLATFORM</div>
 
-        <div className="flex items-center gap-1.5 px-3 py-1 bg-brand-primary/10 border border-brand-primary/40 text-brand-primary text-[10px] font-mono uppercase tracking-wider mb-5 animate-pulse-subtle">
-          <Cpu className="h-3 w-3" /> COGNITIVE COMPILATION LAYER ACTIVE [v1.5_FLASH]
+        {/* Subtle gradient accent */}
+        <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/4 via-transparent to-brand-primary/4 opacity-40 pointer-events-none" />
+
+        {/* Platform badge */}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-brand-primary/8 border border-brand-primary/30 text-brand-primary text-[10px] font-mono tracking-widest mb-7">
+          <Cpu className="h-3 w-3" />
+          <span>Quantitative Intelligence Engine · v2.0</span>
         </div>
-        
-        <h1 className="text-4xl md:text-5xl font-extrabold text-black dark:text-white tracking-tight leading-none max-w-4xl font-display uppercase">
-          NAVIGATE MUTUAL FUNDS WITH <span className="text-brand-primary">QUANTITATIVE RIGOR</span>
+
+        {/* Clean Institutional Headline */}
+        <h1 className="font-display text-[2.1rem] md:text-[3rem] font-bold text-black dark:text-white leading-[1.12] tracking-[-0.03em] max-w-3xl">
+          Navigate Mutual Funds with{' '}
+          <span className="text-brand-primary">Quantitative Rigor</span>
         </h1>
-        
-        <p className="text-brand-textMuted text-sm md:text-base max-w-2xl mt-4 leading-relaxed font-sans">
-          Compute Rolling Sharpe, Sortino, CAGR, and CAPM Beta across 10,000+ Indian mutual funds. Powered by strict RAG models.
+
+        {/* Subtitle — lighter weight, relaxed line height */}
+        <p className="text-brand-textMuted text-[0.9rem] md:text-[1rem] max-w-xl mt-5 leading-[1.7] font-normal">
+          Rolling Sharpe, Sortino, CAGR, and CAPM Beta — computed across 10,000+&nbsp;Indian mutual funds.
+          Institutional-grade ratings. AI&nbsp;explanations. Zero&nbsp;guesswork.
         </p>
 
         {/* Master Search Input */}
-        <div className="mt-8 w-full flex justify-center">
+        <div className="mt-9 w-full flex justify-center">
           <GlobalSearch />
         </div>
       </div>
+
 
       {/* Analytics Overview Cards - show skeletons until data is ready */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

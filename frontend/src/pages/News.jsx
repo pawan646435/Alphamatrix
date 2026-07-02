@@ -109,7 +109,7 @@ export default function News() {
           <span className="font-mono text-[10px] text-brand-primary tracking-widest uppercase">[MARKETS_INTELLIGENCE_CENTER]</span>
           <h1 className="text-3xl font-extrabold text-black dark:text-white tracking-wide uppercase font-display mt-1">NEWS INTEL</h1>
           <p className="text-xs text-brand-textMuted mt-1">
-            Live institutional feeds aggregated from Yahoo Finance with on-demand AI Llama 3.3 impact diagnostics.
+            Multi-source aggregation from ET Markets, Moneycontrol, Business Standard, Reuters, CNBC &amp; more — with deduplication, event detection, and on-demand AI impact analysis.
           </p>
         </div>
         <div className="flex gap-2 w-full md:w-auto shrink-0">
@@ -388,23 +388,78 @@ export default function News() {
   );
 }
 
-// Subcomponent: NewsCard
+// Source credibility color
+function CredibilityDot({ score }) {
+  const color = score >= 0.90 ? '#4caf50' : score >= 0.80 ? '#ffb74d' : '#BFB2A0';
+  return (
+    <span
+      title={`Source credibility: ${Math.round(score * 100)}%`}
+      style={{ background: color }}
+      className="inline-block w-1.5 h-1.5 rounded-full mr-1 shrink-0"
+    />
+  );
+}
+
+// Event direction chip
+function EventChip({ direction, eventType }) {
+  if (!direction || direction === 'NEUTRAL') return null;
+  const isPos = direction === 'POSITIVE';
+  const label = (eventType || direction).replace(/_/g, ' ').toUpperCase();
+  return (
+    <span className={`px-1.5 py-0.5 text-[8px] font-mono rounded border tracking-wider ${
+      isPos
+        ? 'bg-brand-success/10 text-brand-success border-brand-success/30'
+        : 'bg-brand-danger/10 text-brand-danger border-brand-danger/30'
+    }`}>
+      {isPos ? '▲' : '▼'} {label.slice(0, 18)}
+    </span>
+  );
+}
+
+// Subcomponent: NewsCard — enhanced with multi-source metadata
 function NewsCard({ article, onAnalyze, getRelativeTime, getImpactBadgeClass }) {
+  const credibility = article.credibility_score;
+  const sourceCount = article.source_count || 1;
+  const additionalSources = article.additional_sources || [];
+  const sourceShort = article.source_short || article.publisher;
+
   return (
     <div className="border border-brand-border bg-brand-surface hover:bg-brand-surface/70 transition-all p-4 sm:p-5 rounded duration-200 group relative flex flex-col justify-between min-h-[140px] hover:border-brand-primary hover:shadow-[0_4px_20px_-5px_rgba(201,165,107,0.12)]">
       <div>
         {/* Source metadata row */}
-        <div className="flex justify-between items-center">
-          <span className="font-mono text-[9px] text-brand-textMuted uppercase tracking-wider">
-            {article.publisher.toUpperCase()} • {getRelativeTime(article.timestamp)}
-          </span>
-          <span className={`px-2 py-0.5 text-[8px] font-mono uppercase tracking-wider rounded border ${getImpactBadgeClass(article.impact)}`}>
-            IMPACT: {article.impact}
+        <div className="flex justify-between items-start gap-2 mb-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Source badge */}
+            <span className="flex items-center gap-1 font-mono text-[9px] text-brand-textMuted uppercase tracking-wider">
+              {credibility !== undefined && <CredibilityDot score={credibility} />}
+              {sourceShort}
+            </span>
+            {/* Multi-source count */}
+            {sourceCount > 1 && (
+              <span
+                title={`Also: ${additionalSources.join(', ')}`}
+                className="px-1.5 py-0.5 text-[8px] font-mono rounded bg-brand-primary/10 text-brand-primary border border-brand-primary/20"
+              >
+                +{sourceCount - 1} more
+              </span>
+            )}
+            {/* Event direction chip */}
+            <EventChip direction={article.event_direction} eventType={article.event_type} />
+            {/* Time */}
+            <span className="font-mono text-[9px] text-brand-textMuted/60">
+              {getRelativeTime(article.timestamp)}
+            </span>
+          </div>
+          {/* Impact badge */}
+          <span className={`px-2 py-0.5 text-[8px] font-mono uppercase tracking-wider rounded border shrink-0 ${
+            getImpactBadgeClass(article.impact_level || article.impact)
+          }`}>
+            {article.impact_level || article.impact || 'LOW'}
           </span>
         </div>
 
         {/* Title */}
-        <h4 className="text-sm font-extrabold text-black dark:text-white font-display mt-2 group-hover:text-brand-primary transition-colors duration-200 uppercase leading-snug">
+        <h4 className="text-sm font-semibold text-black dark:text-white mt-1 group-hover:text-brand-primary transition-colors duration-200 leading-snug">
           {article.title}
         </h4>
       </div>
@@ -413,17 +468,17 @@ function NewsCard({ article, onAnalyze, getRelativeTime, getImpactBadgeClass }) 
       <div className="flex justify-between items-center mt-4 pt-2 border-t border-brand-border/30 gap-2">
         <div>
           {article.link ? (
-            <a 
+            <a
               href={article.link}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 px-3 py-2.5 min-h-[44px] text-[10px] font-mono uppercase text-brand-textMuted hover:text-brand-primary transition-all border border-transparent hover:border-brand-primary/45 rounded"
             >
-              READ SOURCE ↗
+              Read Source ↗
             </a>
           ) : null}
         </div>
-        <button 
+        <button
           onClick={() => onAnalyze(article)}
           className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] text-[10px] font-mono uppercase text-brand-primary hover:text-black dark:hover:text-black hover:bg-brand-primary transition-all border border-brand-primary/40 hover:border-brand-primary rounded"
         >

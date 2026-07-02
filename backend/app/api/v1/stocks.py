@@ -93,13 +93,15 @@ def get_standardized_label(db_sector: str) -> str:
 def get_alpha_breakdown(stock_obj) -> dict:
     """
     Returns a proprietary multi-factor Alpha Score breakdown based on Institutional Ratings:
-    1. Fundamentals - 30%
-    2. Valuation - 25%
-    3. Technical - 20%
-    4. Risk - 15%
-    5. Sector Relative - 10%
+    1. Fundamentals - 25%
+    2. Quality - 15%
+    3. Valuation - 20%
+    4. Technical - 15%
+    5. Risk - 15%
+    6. Sector Relative - 10%
     """
     fundamental_score = getattr(stock_obj, "fundamental_score", None)
+    quality_score = getattr(stock_obj, "quality_score", None)
     valuation_score = getattr(stock_obj, "valuation_score", None)
     technical_score = getattr(stock_obj, "technical_score", None)
     risk_score = getattr(stock_obj, "risk_score", None)
@@ -108,9 +110,12 @@ def get_alpha_breakdown(stock_obj) -> dict:
     if fundamental_score is None:
         roe = stock_obj.roe if stock_obj.roe is not None else 15.0
         de = stock_obj.debt_equity if stock_obj.debt_equity is not None else 0.5
-        roe_score = min(100.0, roe * 4.0)
+        roe_score = min(100.0, roe * 3.3)
         de_score = max(0.0, 100.0 - (de * 100.0))
         fundamental_score = 0.6 * roe_score + 0.4 * de_score
+        
+    if quality_score is None:
+        quality_score = fundamental_score
         
     if valuation_score is None:
         pe = stock_obj.pe_ratio if stock_obj.pe_ratio is not None else 20.0
@@ -137,6 +142,7 @@ def get_alpha_breakdown(stock_obj) -> dict:
         
     return {
         "fundamental_score": round(fundamental_score, 1),
+        "quality_score": round(quality_score, 1),
         "valuation_score": round(valuation_score, 1),
         "technical_score": round(technical_score, 1),
         "risk_score": round(risk_score, 1),
@@ -145,20 +151,41 @@ def get_alpha_breakdown(stock_obj) -> dict:
 
 class MockStock:
     def __init__(self, d):
+        self.symbol = d.get("symbol")
+        self.company_name = d.get("company_name")
+        self.isin = d.get("isin")
+        self.sector = d.get("sector")
+        self.industry = d.get("industry")
+        self.market_cap = d.get("market_cap")
         self.roe = d.get("roe")
         self.debt_equity = d.get("debt_equity")
         self.pe_ratio = d.get("pe_ratio")
         self.pb_ratio = d.get("pb_ratio")
+        self.dividend_yield = d.get("dividend_yield")
         self.cagr_1y = d.get("cagr_1y")
         self.cagr_3y = d.get("cagr_3y")
+        self.cagr_5y = d.get("cagr_5y")
         self.beta = d.get("beta")
         self.alpha_score = d.get("alpha_score")
         
         self.fundamental_score = d.get("fundamental_score")
+        self.quality_score = d.get("quality_score")
         self.valuation_score = d.get("valuation_score")
         self.technical_score = d.get("technical_score")
         self.risk_score = d.get("risk_score")
         self.sector_relative_score = d.get("sector_relative_score")
+        self.event_score = d.get("event_score")
+        self.confidence_score = d.get("confidence_score")
+        
+        self.investor_verdict = d.get("investor_verdict")
+        self.trader_verdict = d.get("trader_verdict")
+        self.trend_structure = d.get("trend_structure")
+        
+        self.bull_case = d.get("bull_case")
+        self.bear_case = d.get("bear_case")
+        self.verdict_rationale = d.get("verdict_rationale")
+        self.ai_summary = d.get("ai_summary")
+        self.last_updated = d.get("last_updated")
 
 # Redis client is imported from app.core.redis
 
@@ -262,6 +289,11 @@ async def generate_briefing_background(symbol: str):
                 actions_list=actions_list,
                 calendar_dict=calendar_dict
             )
+            from app.workers.stock_ingestion import parse_briefing_sections
+            bull_case, bear_case, verdict_rationale = parse_briefing_sections(briefing)
+            stock.bull_case = bull_case
+            stock.bear_case = bear_case
+            stock.verdict_rationale = verdict_rationale
             stock.ai_summary = briefing
             await session.commit()
             
@@ -1027,4 +1059,110 @@ async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
         "symbol": symbol,
         "message": "Market data ingestion is in progress. Please wait..."
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# BACKTESTING ENGINE v3 ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/backtest/summary", dependencies=[Depends(check_rate_limit)])
+async def get_backtest_summary(db: AsyncSession = Depends(get_db)):
+    """
+    Returns aggregate backtesting accuracy across all stocks in the system.
+    Shows BUY/HOLD/AVOID accuracy, win rate, and benchmark comparison.
+    Cached for 24 hours.
+    """
+    CACHE_KEY = "backtest:summary:v3"
+    try:
+        cached = await redis_client.get(CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get backtest summary failed: {e}")
+
+    from app.services.backtesting import backtest_stock, aggregate_backtest_summary
+
+    # Fetch all stocks with price history
+    stocks_q = await db.execute(
+        select(StockMaster.symbol, StockMaster.investor_verdict, StockMaster.alpha_score)
+        .where(StockMaster.sector != "Invalid")
+        .limit(50)
+    )
+    stocks = stocks_q.all()
+
+    results = []
+    for stock in stocks:
+        symbol = stock.symbol
+        prices_q = await db.execute(
+            select(StockPriceHistory.date, StockPriceHistory.close)
+            .where(StockPriceHistory.symbol == symbol)
+            .order_by(StockPriceHistory.date.asc())
+        )
+        price_rows = prices_q.all()
+        if len(price_rows) < 90:
+            continue
+        prices = [{"date": r.date, "close": r.close} for r in price_rows]
+        result = backtest_stock(
+            symbol=symbol,
+            prices=prices,
+            current_verdict=stock.investor_verdict,
+            current_score=stock.alpha_score
+        )
+        results.append(result)
+
+    summary = aggregate_backtest_summary(results)
+
+    try:
+        await redis_client.setex(CACHE_KEY, 86400, json.dumps(summary))  # 24hr TTL
+    except Exception as e:
+        logger.error(f"Redis set backtest summary failed: {e}")
+
+    return summary
+
+
+@router.get("/backtest/{symbol}", dependencies=[Depends(check_rate_limit)])
+async def get_stock_backtest(symbol: str, db: AsyncSession = Depends(get_db)):
+    """
+    Returns per-stock backtest results: historical verdict, actual returns at
+    T+30, T+90, T+180, T+365, vs NIFTY 50 benchmark.
+    """
+    symbol = symbol.upper().strip()
+    CACHE_KEY = f"backtest:stock:{symbol}:v3"
+    try:
+        cached = await redis_client.get(CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock backtest failed for {symbol}: {e}")
+
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found.")
+
+    prices_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == symbol)
+        .order_by(StockPriceHistory.date.asc())
+    )
+    price_rows = prices_q.all()
+    if len(price_rows) < 90:
+        raise HTTPException(status_code=422, detail=f"Insufficient price history for {symbol}. Need 90+ days.")
+
+    from app.services.backtesting import backtest_stock
+    prices = [{"date": r.date, "close": r.close} for r in price_rows]
+    result = backtest_stock(
+        symbol=symbol,
+        prices=prices,
+        current_verdict=stock.investor_verdict,
+        current_score=stock.alpha_score
+    )
+
+    try:
+        await redis_client.setex(CACHE_KEY, 43200, json.dumps(result))  # 12hr TTL
+    except Exception as e:
+        logger.error(f"Redis set stock backtest failed for {symbol}: {e}")
+
+    return result
+
 

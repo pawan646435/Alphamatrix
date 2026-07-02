@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Star, Cpu, Layers, MessageSquare, ArrowUpRight, Activity } from 'lucide-react';
+import { TrendingUp, Star, Cpu, Layers, MessageSquare, ArrowUpRight, Activity, Target } from 'lucide-react';
 import { useStockAIChat } from '../hooks/useStocks';
-import { useStockList, useMarketRegime } from '../hooks/useQueries';
+import { useStockList, useMarketRegime, useBacktestSummary } from '../hooks/useQueries';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardGridSkeleton } from '../components/skeletons/Skeletons';
@@ -11,6 +11,7 @@ export default function StockHome() {
   const navigate = useNavigate();
   const { data: stocks = [], isLoading: stocksLoading } = useStockList();
   const { data: marketRegime, isLoading: regimeLoading } = useMarketRegime();
+  const { data: backtestSummary } = useBacktestSummary();
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   
@@ -153,6 +154,106 @@ export default function StockHome() {
                 <p className="text-[10px] font-mono text-brand-textMuted mt-0.5">Unavailable</p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Verdict Accuracy Engine — Backtesting Results */}
+      {backtestSummary && backtestSummary.status === 'completed' && (
+        <div className="border border-brand-border bg-brand-surface p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-brand-primary" />
+              <h2 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Accuracy Engine v3</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-[9px] text-brand-textMuted bg-brand-bg border border-brand-border px-2 py-0.5">
+                BENCHMARK: NIFTY 50 · 12% p.a.
+              </span>
+              <span className="font-mono text-[10px] font-bold text-brand-primary">
+                {backtestSummary.overall_win_rate_365d != null ? `${backtestSummary.overall_win_rate_365d}% Win Rate` : ''}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* BUY / STRONG BUY */}
+            {backtestSummary.verdict_accuracy?.BUY_STRONG_BUY && (
+              <div className="border border-brand-success/30 bg-brand-success/5 p-4 rounded">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] uppercase font-bold text-brand-success tracking-wider">BUY Verdicts</span>
+                  <span className="font-mono text-[9px] text-brand-textMuted">{backtestSummary.verdict_accuracy.BUY_STRONG_BUY.count} trades</span>
+                </div>
+                <div className="text-2xl font-bold font-mono text-brand-success">
+                  {backtestSummary.verdict_accuracy.BUY_STRONG_BUY.accuracy_365d != null
+                    ? `${backtestSummary.verdict_accuracy.BUY_STRONG_BUY.accuracy_365d}%`
+                    : '—'}
+                </div>
+                <div className="text-[10px] text-brand-textMuted mt-1">
+                  Outperformed Nifty 50 at 1Y horizon
+                </div>
+                {backtestSummary.verdict_accuracy.BUY_STRONG_BUY.avg_return_365d != null && (
+                  <div className="font-mono text-[10px] text-brand-success mt-1">
+                    Avg return: +{backtestSummary.verdict_accuracy.BUY_STRONG_BUY.avg_return_365d.toFixed(1)}%
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* HOLD */}
+            {backtestSummary.verdict_accuracy?.HOLD && (
+              <div className="border border-brand-warning/30 bg-brand-warning/5 p-4 rounded">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] uppercase font-bold text-brand-warning tracking-wider">HOLD Verdicts</span>
+                  <span className="font-mono text-[9px] text-brand-textMuted">{backtestSummary.verdict_accuracy.HOLD.count} trades</span>
+                </div>
+                <div className="text-2xl font-bold font-mono text-brand-warning">
+                  {backtestSummary.verdict_accuracy.HOLD.accuracy_365d != null
+                    ? `${backtestSummary.verdict_accuracy.HOLD.accuracy_365d}%`
+                    : '—'}
+                </div>
+                <div className="text-[10px] text-brand-textMuted mt-1">
+                  Within ±5% of benchmark at 1Y
+                </div>
+                {backtestSummary.verdict_accuracy.HOLD.avg_return_365d != null && (
+                  <div className="font-mono text-[10px] text-brand-warning mt-1">
+                    Avg return: {backtestSummary.verdict_accuracy.HOLD.avg_return_365d.toFixed(1)}%
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AVOID / REDUCE */}
+            {backtestSummary.verdict_accuracy?.AVOID_REDUCE && (
+              <div className="border border-brand-danger/30 bg-brand-danger/5 p-4 rounded">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[9px] uppercase font-bold text-brand-danger tracking-wider">AVOID Verdicts</span>
+                  <span className="font-mono text-[9px] text-brand-textMuted">{backtestSummary.verdict_accuracy.AVOID_REDUCE.count} trades</span>
+                </div>
+                <div className="text-2xl font-bold font-mono text-brand-danger">
+                  {backtestSummary.verdict_accuracy.AVOID_REDUCE.accuracy_365d != null
+                    ? `${backtestSummary.verdict_accuracy.AVOID_REDUCE.accuracy_365d}%`
+                    : '—'}
+                </div>
+                <div className="text-[10px] text-brand-textMuted mt-1">
+                  Correctly avoided underperformers
+                </div>
+                {backtestSummary.verdict_accuracy.AVOID_REDUCE.avg_return_365d != null && (
+                  <div className="font-mono text-[10px] text-brand-danger mt-1">
+                    Avg return: {backtestSummary.verdict_accuracy.AVOID_REDUCE.avg_return_365d.toFixed(1)}%
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer stats */}
+          <div className="flex flex-wrap gap-6 mt-4 pt-4 border-t border-brand-border/40 font-mono text-[10px] text-brand-textMuted">
+            <span>Evaluated: <strong className="text-black dark:text-white">{backtestSummary.evaluated_stocks}</strong> stocks</span>
+            <span>90d Win Rate: <strong className="text-black dark:text-white">{backtestSummary.t90_win_rate}%</strong></span>
+            {backtestSummary.avg_max_drawdown_pct != null && (
+              <span>Avg Max DD: <strong className="text-brand-danger">{backtestSummary.avg_max_drawdown_pct}%</strong></span>
+            )}
           </div>
         </div>
       )}

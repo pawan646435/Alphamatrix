@@ -186,7 +186,13 @@ async def get_funds(
             "alpha": f.alpha,
             "pe_ratio": f.pe_ratio,
             "expense_ratio": f.expense_ratio,
-            "beta": f.beta
+            "beta": f.beta,
+            "fund_score": f.fund_score,
+            "fund_verdict": f.fund_verdict,
+            "aum": f.aum,
+            "consistency_score": f.consistency_score,
+            "category_rank": f.category_rank,
+            "category_count": f.category_count,
         }
         for f in funds
     ]
@@ -361,9 +367,23 @@ async def get_fund_detail(
         "sortino_ratio": fund.sortino_ratio,
         "alpha": fund.alpha,
         "beta": fund.beta,
+        "fund_score": fund.fund_score,
+        "fund_verdict": fund.fund_verdict,
+        "std_deviation": fund.std_deviation,
+        "max_drawdown": fund.max_drawdown,
+        "aum": fund.aum,
+        "consistency_score": fund.consistency_score,
+        "category_rank": fund.category_rank,
+        "category_count": fund.category_count,
+        "category_avg_cagr_3y": fund.category_avg_cagr_3y,
+        "category_avg_sharpe": fund.category_avg_sharpe,
+        "category_avg_alpha": fund.category_avg_alpha,
+        "bull_case": fund.bull_case,
+        "bear_case": fund.bear_case,
+        "fund_rationale": fund.fund_rationale,
         "last_updated": fund.last_updated.isoformat() if fund.last_updated else None,
     }
-    
+
     if trigger_background or is_new:
         try:
             await redis_client.delete(
@@ -373,22 +393,22 @@ async def get_fund_detail(
             )
         except Exception as e:
             logger.error(f"Failed to clear Redis keys for briefing status: {e}")
-            
+
     # Cache in Redis split keys
     try:
         await redis_client.setex(f"fund:{scheme_code}", OPTIMIZED_METADATA_TTL, json.dumps(meta_dict))
         await redis_client.setex(f"fund_metrics:{scheme_code}", OPTIMIZED_METRICS_TTL, json.dumps(metrics_dict))
-        
+
         ai_ttl = 5 if (trigger_background or is_new or fund.ai_summary == "Generating AI Analysis in the background...") else OPTIMIZED_AI_TTL
         await redis_client.setex(f"fund_ai:{scheme_code}", ai_ttl, fund.ai_summary or "Generating AI Analysis in the background...")
         logger.info(f"Cached fund split details for {scheme_code} in Redis")
     except Exception as e:
         logger.error(f"Redis set failed for key fund:{scheme_code}: {e}")
-            
+
     fund_response = {**meta_dict, **metrics_dict}
     fund_response["ai_summary"] = fund.ai_summary
     fund_response["status"] = "discovering" if fund.cagr_1y is None else "ready"
-    
+
     if (trigger_background or is_new or fund.ai_summary == "Generating AI Analysis in the background...") and response is not None:
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
@@ -396,6 +416,114 @@ async def get_fund_detail(
         "fund": fund_response,
         "nav_history": navs
     }
+
+
+@router.get("/{scheme_code}/rating", dependencies=[Depends(check_rate_limit)])
+async def get_fund_rating_breakdown(scheme_code: int, db: AsyncSession = Depends(get_db)):
+    """
+    Returns the detailed score breakdown for a fund's Rating Engine result.
+    """
+    from app.services.fund_rating_engine import calculate_fund_ratings, compute_std_deviation, compute_max_drawdown
+
+    fund_check = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
+    fund = fund_check.scalar_one_or_none()
+    if not fund:
+        raise HTTPException(status_code=404, detail=f"Fund {scheme_code} not found.")
+
+    nav_q = await db.execute(
+        select(NAVHistory.nav).where(NAVHistory.scheme_code == scheme_code).order_by(NAVHistory.date.asc())
+    )
+    nav_prices = [r.nav for r in nav_q.all()]
+
+    fund_data = {
+        "fund_name":      fund.fund_name,
+        "category":       fund.category,
+        "cagr_1y":        round(fund.cagr_1y * 100, 2) if fund.cagr_1y else None,
+        "cagr_3y":        round(fund.cagr_3y * 100, 2) if fund.cagr_3y else None,
+        "cagr_5y":        round(fund.cagr_5y * 100, 2) if fund.cagr_5y else None,
+        "sharpe_ratio":   fund.sharpe_ratio,
+        "sortino_ratio":  fund.sortino_ratio,
+        "alpha":          round(fund.alpha * 100, 2) if fund.alpha else None,
+        "expense_ratio":  fund.expense_ratio,
+        "aum":            fund.aum,
+        "std_deviation":  fund.std_deviation,
+        "max_drawdown":   fund.max_drawdown,
+        "category_rank":  fund.category_rank,
+        "category_count": fund.category_count,
+    }
+    ratings = calculate_fund_ratings(fund_data, nav_prices)
+    return {
+        "scheme_code":   scheme_code,
+        "fund_name":     fund.fund_name,
+        "fund_score":    fund.fund_score or ratings["fund_score"],
+        "fund_verdict":  fund.fund_verdict or ratings["fund_verdict"],
+        "breakdown":     ratings,
+        "weights": {
+            "cagr":        "25%",
+            "consistency": "15%",
+            "risk":        "20%",
+            "quality":     "15%",
+            "alpha":       "15%",
+            "peer":        "10%",
+        }
+    }
+
+
+@router.get("/category/{category}/peers", dependencies=[Depends(check_rate_limit)])
+async def get_category_peers(
+    category: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns all funds in a category sorted by fund_score (descending).
+    Used for category relative analysis and peer comparison.
+    """
+    result = await db.execute(
+        select(FundMaster)
+        .where(FundMaster.category == category)
+        .order_by(
+            FundMaster.fund_score.desc().nullslast()
+        )
+        .limit(limit)
+    )
+    peers = result.scalars().all()
+    if not peers:
+        raise HTTPException(status_code=404, detail=f"No funds found in category '{category}'.")
+
+    # Category aggregates
+    scores = [p.fund_score for p in peers if p.fund_score is not None]
+    cagrs  = [p.cagr_3y * 100 for p in peers if p.cagr_3y is not None]
+    sharpes = [p.sharpe_ratio for p in peers if p.sharpe_ratio is not None]
+    alphas  = [p.alpha * 100 for p in peers if p.alpha is not None]
+
+    def safe_avg(lst): return round(sum(lst) / len(lst), 4) if lst else None
+
+    return {
+        "category": category,
+        "total_funds": len(peers),
+        "category_avg_score": safe_avg(scores),
+        "category_avg_cagr_3y": safe_avg(cagrs),
+        "category_avg_sharpe": safe_avg(sharpes),
+        "category_avg_alpha": safe_avg(alphas),
+        "peers": [
+            {
+                "scheme_code": p.scheme_code,
+                "fund_name": p.fund_name,
+                "fund_score": p.fund_score,
+                "fund_verdict": p.fund_verdict,
+                "cagr_3y": round(p.cagr_3y * 100, 2) if p.cagr_3y else None,
+                "cagr_5y": round(p.cagr_5y * 100, 2) if p.cagr_5y else None,
+                "sharpe_ratio": p.sharpe_ratio,
+                "alpha": round(p.alpha * 100, 2) if p.alpha else None,
+                "expense_ratio": p.expense_ratio,
+                "category_rank": p.category_rank,
+                "category_count": p.category_count,
+            }
+            for p in peers
+        ]
+    }
+
 
 @router.post("/sync/{scheme_code}", response_model=SyncResponse)
 async def sync_fund_manual(

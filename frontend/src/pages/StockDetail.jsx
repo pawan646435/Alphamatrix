@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle, Target } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
-import { useStockDetail, useWatchlistQuery, getStandardizedSector } from '../hooks/useQueries';
+import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -356,6 +356,18 @@ export default function StockDetail() {
                   {stock.isin && <p>ISIN: <span className="text-black dark:text-white font-bold">{stock.isin}</span></p>}
                   {stock.market_cap && <p>MARKET_CAP: <span className="text-black dark:text-white font-bold">₹{stock.market_cap.toLocaleString('en-IN')} Cr</span></p>}
                   <p>LAST_SYNC: <span className="text-black dark:text-white">{stock.last_updated ? new Date(stock.last_updated).toLocaleString('en-IN') : 'Ingesting...'}</span></p>
+                  {stock.trend_structure && (
+                    <p>TREND: <span className={`font-bold ${
+                      stock.trend_structure === 'BULLISH' ? 'text-brand-success' :
+                      stock.trend_structure === 'BEARISH' ? 'text-brand-danger' : 'text-brand-warning'
+                    }`}>{stock.trend_structure}</span></p>
+                  )}
+                  {stock.event_score !== undefined && stock.event_score !== null && (
+                    <p>EVENT_SCORE: <span className={`font-bold ${
+                      stock.event_score >= 80 ? 'text-brand-success' :
+                      stock.event_score <= 50 ? 'text-brand-danger' : 'text-brand-warning'
+                    }`}>{Math.round(stock.event_score)}/100</span></p>
+                  )}
                 </div>
               </div>
             </div>
@@ -372,7 +384,7 @@ export default function StockDetail() {
                 {Object.entries(alpha_score_breakdown).map(([factor, score]) => (
                   <div key={factor} className="space-y-0.5">
                     <div className="flex justify-between items-center text-brand-textMuted uppercase text-[8px]">
-                      <span>{factor}</span>
+                      <span>{factor.replace('_score', '').replace('_', ' ')}</span>
                       <span className="text-black dark:text-white font-bold">{score}</span>
                     </div>
                     <div className="w-full h-1 bg-brand-bg border border-brand-border/60 overflow-hidden">
@@ -530,7 +542,15 @@ export default function StockDetail() {
                 {renderBriefingSection('Executive Summary')}
 
                 {/* Investment Thesis — dedicated premium card */}
-                {stock.ai_summary && stock.ai_summary.includes('### Investment Thesis') && (
+                {stock.bull_case ? (
+                  <div className="p-4 border border-brand-primary/20 bg-brand-primary/5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-brand-primary">
+                      <Star className="h-3.5 w-3.5 fill-current" />
+                      <h4 className="text-[10px] font-bold uppercase tracking-wider font-display">Core Investment Thesis</h4>
+                    </div>
+                    <p className="text-xs leading-relaxed font-sans text-brand-textMuted" dangerouslySetInnerHTML={{ __html: stock.bull_case.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/^-\s*(.*)$/gm, '• $1<br/>').split('\n').filter(Boolean).join('<br/>') }} />
+                  </div>
+                ) : (stock.ai_summary && stock.ai_summary.includes('### Investment Thesis') && (
                   <div className="p-4 border border-brand-primary/20 bg-brand-primary/5 space-y-2">
                     <div className="flex items-center gap-1.5 text-brand-primary">
                       <Star className="h-3.5 w-3.5 fill-current" />
@@ -538,7 +558,7 @@ export default function StockDetail() {
                     </div>
                     {renderBriefingSectionContentOnly('Investment Thesis')}
                   </div>
-                )}
+                ))}
 
                 {renderBriefingSection('Performance Analysis')}
                 {renderBriefingSection('Fundamental Analysis')}
@@ -553,14 +573,21 @@ export default function StockDetail() {
                 </div>
 
                 {/* Risk Factors */}
-                {stock.ai_summary && stock.ai_summary.includes('### Risk Factors') && (
+                {stock.bear_case ? (
+                  <div className="border-t border-brand-border/40 pt-4 space-y-1">
+                    <h4 className="text-[10px] font-bold text-brand-warning uppercase tracking-wider font-display flex items-center gap-1.5">
+                      ⚠️ Key Risk Factors
+                    </h4>
+                    <p className="text-xs leading-relaxed font-sans text-brand-textMuted" dangerouslySetInnerHTML={{ __html: stock.bear_case.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/^-\s*(.*)$/gm, '• $1<br/>').split('\n').filter(Boolean).join('<br/>') }} />
+                  </div>
+                ) : (stock.ai_summary && stock.ai_summary.includes('### Risk Factors') && (
                   <div className="border-t border-brand-border/40 pt-4 space-y-1">
                     <h4 className="text-[10px] font-bold text-brand-warning uppercase tracking-wider font-display flex items-center gap-1.5">
                       ⚠️ Key Risk Factors
                     </h4>
                     {renderBriefingSectionContentOnly('Risk Factors')}
                   </div>
-                )}
+                ))}
 
                 {/* ── Professional Investment Verdict Card ──────────────────── */}
                 {stockStanceText && (
@@ -711,7 +738,108 @@ export default function StockDetail() {
           </form>
         </div>
 
+        {/* Verdict Backtest Panel */}
+        <StockBacktestPanel symbol={symbol} />
+
       </div>
+    </div>
+  );
+}
+
+// ─── Stock Backtest Panel ─────────────────────────────────────────────────────
+function StockBacktestPanel({ symbol }) {
+  const { data, isLoading, isError } = useStockBacktest(symbol);
+
+  if (isLoading) {
+    return (
+      <div className="border border-brand-border bg-brand-surface p-5 animate-pulse">
+        <div className="h-4 w-1/3 bg-brand-border/40 rounded mb-4" />
+        <div className="grid grid-cols-4 gap-3">
+          {[1,2,3,4].map(i => <div key={i} className="h-16 bg-brand-border/20 rounded" />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !data || data.status !== 'completed') return null;
+
+  const horizons = [
+    { key: 't30_days',  label: '30d',  hd: data.returns.t30_days },
+    { key: 't90_days',  label: '90d',  hd: data.returns.t90_days },
+    { key: 't180_days', label: '180d', hd: data.returns.t180_days },
+    { key: 't365_days', label: '1Y',   hd: data.returns.t365_days },
+  ];
+
+  const verdictColor = (v) => {
+    if (!v) return 'text-brand-textMuted';
+    if (v.includes('BUY')) return 'text-brand-success';
+    if (v === 'AVOID' || v === 'REDUCE') return 'text-brand-danger';
+    return 'text-brand-warning';
+  };
+
+  return (
+    <div className="border border-brand-border bg-brand-surface p-5 sm:p-6 animate-fade-in-up">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <div className="flex items-center gap-2">
+          <Target className="h-4 w-4 text-brand-primary" />
+          <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Backtest</h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 font-mono text-[9px] text-brand-textMuted">
+          <span>Historical Verdict: <strong className={`${verdictColor(data.historical_verdict)} font-bold`}>{data.historical_verdict}</strong></span>
+          <span className="text-brand-border">|</span>
+          <span>Score: <strong className="text-black dark:text-white">{data.historical_score}</strong></span>
+          <span className="text-brand-border">|</span>
+          <span>From: <strong className="text-black dark:text-white">{data.eval_start_date}</strong></span>
+        </div>
+      </div>
+
+      {/* Horizon returns grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {horizons.map(({ key, label, hd }) => {
+          const ret = hd?.return_pct;
+          const bench = hd?.benchmark_pct;
+          const beat = hd?.outperformed;
+          const noData = ret == null;
+          return (
+            <div key={key} className={`border p-3 rounded ${
+              noData ? 'border-brand-border/40 bg-brand-surface'
+                : beat ? 'border-brand-success/30 bg-brand-success/5'
+                : 'border-brand-danger/30 bg-brand-danger/5'
+            }`}>
+              <div className="font-mono text-[9px] text-brand-textMuted uppercase tracking-wider mb-2">{label} Return</div>
+              {noData ? (
+                <div className="text-brand-textMuted font-mono text-lg font-bold">—</div>
+              ) : (
+                <>
+                  <div className={`font-mono text-xl font-bold ${ ret >= 0 ? 'text-brand-success' : 'text-brand-danger' }`}>
+                    {ret >= 0 ? '+' : ''}{ret.toFixed(1)}%
+                  </div>
+                  <div className="font-mono text-[9px] text-brand-textMuted mt-1">
+                    Nifty: +{bench?.toFixed(1)}%
+                  </div>
+                  <div className={`font-mono text-[8px] mt-1 font-bold ${ beat ? 'text-brand-success' : 'text-brand-danger' }`}>
+                    {beat ? '▲ Beat' : '▼ Miss'}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Verdict accuracy callout */}
+      {data.verdict_success_365d !== null && data.verdict_success_365d !== undefined && (
+        <div className={`mt-4 px-4 py-3 border rounded font-mono text-[10px] ${
+          data.verdict_success_365d
+            ? 'border-brand-success/30 bg-brand-success/5 text-brand-success'
+            : 'border-brand-danger/30 bg-brand-danger/5 text-brand-danger'
+        }`}>
+          {data.verdict_success_365d
+            ? `✓ Verdict "${data.historical_verdict}" was CORRECT at 1Y horizon.`
+            : `✗ Verdict "${data.historical_verdict}" was INCORRECT at 1Y horizon.`}
+        </div>
+      )}
     </div>
   );
 }

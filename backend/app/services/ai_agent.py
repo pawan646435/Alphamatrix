@@ -615,13 +615,16 @@ async def generate_stock_briefing(
         cal_str = "No upcoming calendar events scheduled."
     
     fundamental_score = stock_data.get('fundamental_score') or 60.0
+    quality_score = stock_data.get('quality_score') or 60.0
     valuation_score = stock_data.get('valuation_score') or 50.0
     technical_score = stock_data.get('technical_score') or 55.0
     risk_score = stock_data.get('risk_score') or 65.0
     sector_relative_score = stock_data.get('sector_relative_score') or 50.0
+    event_score = stock_data.get('event_score') or 80.0
     alpha_score = stock_data.get('alpha_score') or 50.0
     investor_verdict = stock_data.get('investor_verdict') or 'HOLD'
     trader_verdict = stock_data.get('trader_verdict') or 'HOLD'
+    trend_structure = stock_data.get('trend_structure') or 'SIDEWAYS'
     confidence_score = stock_data.get('confidence_score') or 65.0
 
     prompt = f"""
@@ -633,9 +636,10 @@ Analyze the following stock details, recent company news, corporate actions, and
 IMPORTANT ROLE DIRECTION:
 You MUST NOT decide or choose the final investment verdicts. The system's deterministic rating engine has calculated the following scores and verdicts for this company:
 - Fundamental Score: {fundamental_score}/100
+- Quality Score (Consistency & Moat): {quality_score}/100
 - Valuation Score: {valuation_score}/100
-- Technical Score: {technical_score}/100
-- Risk Score: {risk_score}/100
+- Technical Score: {technical_score}/100 (Detected Price Trend Structure: {trend_structure})
+- Risk Score: {risk_score}/100 (Classified Corporate Events Score: {event_score}/100)
 - Sector Relative Score: {sector_relative_score}/100
 - Final Score: {alpha_score}/100
 - Investor Stance (Long-Term): {investor_verdict}
@@ -916,12 +920,15 @@ def _generate_mock_stock_briefing(stock_data: Dict[str, Any]) -> str:
     ret_3y = round((stock_data.get('cagr_3y') or 0)*100, 2)
     
     fundamental_score = stock_data.get('fundamental_score') or 60.0
+    quality_score = stock_data.get('quality_score') or 60.0
     valuation_score = stock_data.get('valuation_score') or 50.0
     technical_score = stock_data.get('technical_score') or 55.0
     risk_score = stock_data.get('risk_score') or 65.0
     sector_relative_score = stock_data.get('sector_relative_score') or 50.0
+    event_score = stock_data.get('event_score') or 80.0
     investor_verdict = stock_data.get('investor_verdict') or 'HOLD'
     trader_verdict = stock_data.get('trader_verdict') or 'HOLD'
+    trend_structure = stock_data.get('trend_structure') or 'SIDEWAYS'
     confidence_score = stock_data.get('confidence_score') or 70.0
         
     return f"""### Executive Summary
