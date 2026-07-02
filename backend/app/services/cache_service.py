@@ -73,6 +73,18 @@ class CacheService:
             return False
 
     @staticmethod
+    async def delete_news_feed(stream: str, category: str) -> bool:
+        """Bust the Redis cache for a news feed so the next request fetches fresh data."""
+        key = f"news_feed:{stream}:{category}"
+        try:
+            await redis_client.delete(key)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete news feed cache for {stream}:{category}: {e}")
+            return False
+
+
+    @staticmethod
     async def get_ai_briefing(identifier: str) -> Optional[str]:
         # identifier can be symbol (stock) or scheme_code (fund)
         key = f"ai_briefing:{identifier.strip().upper()}"

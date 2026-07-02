@@ -112,7 +112,7 @@ def get_mock_analysis(title: str, publisher: str, link: str) -> dict:
     }
 
 @router.get("/india", dependencies=[Depends(check_rate_limit)])
-async def get_india_news(category: str = "all"):
+async def get_india_news(category: str = "all", force_refresh: bool = False):
     """
     Retrieve India financial news from multi-source RSS aggregation.
     Sources: ET Markets, Moneycontrol, Business Standard, Livemint.
@@ -121,11 +121,15 @@ async def get_india_news(category: str = "all"):
     stream_val = "india"
     category_val = category.lower() if category.lower() in ["all", "stocks", "mutual_funds", "economy", "policy", "earnings"] else "all"
 
-    # Check cache first
-    cached_news = await CacheService.get_news_feed(stream_val, category_val)
-    if cached_news is not None:
-        logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
-        return cached_news
+    # Check cache first (unless forced to refresh)
+    if not force_refresh:
+        cached_news = await CacheService.get_news_feed(stream_val, category_val)
+        if cached_news is not None:
+            logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
+            return cached_news
+    else:
+        logger.info(f"Forced refresh requested for news feed: {stream_val}:{category_val}. Bypassing cache.")
+
 
     try:
         from app.services.news_aggregator import fetch_india_news
@@ -174,7 +178,7 @@ async def get_india_news(category: str = "all"):
 
 
 @router.get("/global", dependencies=[Depends(check_rate_limit)])
-async def get_global_news(category: str = "all"):
+async def get_global_news(category: str = "all", force_refresh: bool = False):
     """
     Retrieve global financial news from Reuters, CNBC, Yahoo Finance.
     Includes deduplication, event classification, and credibility scoring.
@@ -182,10 +186,15 @@ async def get_global_news(category: str = "all"):
     stream_val = "global"
     category_val = category.lower() if category.lower() in ["all", "stocks", "mutual_funds", "economy", "policy", "earnings"] else "all"
 
-    cached_news = await CacheService.get_news_feed(stream_val, category_val)
-    if cached_news is not None:
-        logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
-        return cached_news
+    # Check cache first (unless forced to refresh)
+    if not force_refresh:
+        cached_news = await CacheService.get_news_feed(stream_val, category_val)
+        if cached_news is not None:
+            logger.info(f"Returning cached multi-source news for {stream_val}:{category_val}")
+            return cached_news
+    else:
+        logger.info(f"Forced refresh requested for news feed: {stream_val}:{category_val}. Bypassing cache.")
+
 
     try:
         from app.services.news_aggregator import fetch_global_news
@@ -233,15 +242,14 @@ async def get_global_news(category: str = "all"):
         return []
 
 
-# Legacy /list endpoint — redirect to india for backwards compatibility
 @router.get("/list", dependencies=[Depends(check_rate_limit)])
-async def list_news(stream: str = "india", category: str = "all"):
+async def list_news(stream: str = "india", category: str = "all", force_refresh: bool = False):
     """
     Legacy endpoint. Routes to /india or /global based on stream param.
     """
     if stream.lower() == "global":
-        return await get_global_news(category)
-    return await get_india_news(category)
+        return await get_global_news(category, force_refresh)
+    return await get_india_news(category, force_refresh)
 
 
 

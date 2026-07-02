@@ -101,6 +101,30 @@ export default function News() {
 
   const activeNewsList = activeStream === 'india' ? indiaNews : globalNews;
 
+  // Refresh handler — force-refetch both news feeds regardless of stale time
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      // 1. Trigger backend cache bust and fetch fresh news feeds
+      await Promise.all([
+        apiClient.get('/news/india', { params: { category, force_refresh: true } }),
+        apiClient.get('/news/global', { params: { category, force_refresh: true } })
+      ]);
+      // 2. Invalidate React Query cache so the UI refetches the updated data from backend
+      await queryClient.invalidateQueries({
+        queryKey: ['news'],
+        refetchType: 'all',
+        exact: false,
+      });
+    } catch (err) {
+      console.error('Failed to refresh news feeds', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-20 relative min-h-screen">
       {/* Title Header */}
@@ -114,17 +138,16 @@ export default function News() {
         </div>
         <div className="flex gap-2 w-full md:w-auto shrink-0">
           <button 
-            onClick={() => {
-            queryClient.invalidateQueries({ queryKey: ['news'] });
-          }}
-            disabled={loading}
+            onClick={handleRefresh}
+            disabled={loading || isRefreshing}
             className="flex items-center justify-center gap-1.5 px-3 py-1.5 border border-brand-border hover:border-brand-primary hover:text-brand-primary text-xs font-mono transition-all rounded bg-brand-surface disabled:opacity-50 w-full md:w-auto"
           >
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-            REFRESH_FEEDS
+            <RefreshCw className={`h-3 w-3 ${(loading || isRefreshing) ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'REFRESHING...' : 'REFRESH_FEEDS'}
           </button>
         </div>
       </div>
+
 
       {/* Stream Tabs switcher */}
       <div className="flex bg-brand-surface border border-brand-border p-1 rounded-lg font-mono text-xs uppercase tracking-wider">
