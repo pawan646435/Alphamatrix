@@ -36,7 +36,44 @@ from app.core.cache_ttl import (
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.stocks")
-ingesting_tickers = set()
+
+# ---------------------------------------------------------------------------
+# Redis-based distributed ingestion lock
+# Replaces the old in-memory `ingesting_tickers = set()` which was BROKEN on
+# Vercel: each serverless invocation gets a fresh Python process, so the set
+# was always empty — every 3-second poll scheduled a NEW concurrent ingestion,
+# creating 10-20 simultaneous pipelines, race conditions, and infinite loading.
+# ---------------------------------------------------------------------------
+_INGEST_LOCK_TTL = 120   # seconds — lock auto-expires if process crashes
+_INGEST_ACTIVE_KEY = "ingest_lock:{}"   # Redis key template
+
+async def _acquire_ingest_lock(symbol: str) -> bool:
+    """Atomically acquire the ingestion lock for symbol. Returns True if acquired."""
+    try:
+        acquired = await redis_client.set_nx(
+            _INGEST_ACTIVE_KEY.format(symbol),
+            "active",
+            ex=_INGEST_LOCK_TTL,
+        )
+        return acquired
+    except Exception as e:
+        logger.warning(f"[Lock] Failed to acquire Redis lock for {symbol}: {e} — proceeding anyway")
+        return True  # Fail open: if Redis is down, allow ingestion
+
+async def _release_ingest_lock(symbol: str):
+    """Release the ingestion lock for symbol."""
+    try:
+        await redis_client.delete(_INGEST_ACTIVE_KEY.format(symbol))
+    except Exception as e:
+        logger.warning(f"[Lock] Failed to release Redis lock for {symbol}: {e}")
+
+async def _is_ingesting(symbol: str) -> bool:
+    """Check if another Vercel instance is currently ingesting this symbol."""
+    try:
+        val = await redis_client.get(_INGEST_ACTIVE_KEY.format(symbol))
+        return val is not None
+    except Exception:
+        return False  # Fail open
 
 SECTOR_MAP = {
     "BANKING": ["Financial Services", "Banking"],
@@ -656,46 +693,81 @@ async def get_stock_meta_split(
     response: Response = None,
 ):
     """
-    Split endpoint: returns only metadata (symbol, company_name, isin, sector, industry, market_cap, status).
-    For unknown stocks: creates a skeleton record instantly, fires background ingestion, returns HTTP 202 discovering.
-    TTL: 24h (86400s) for ready stocks, not cached for discovering state.
+    Split endpoint: returns only metadata (symbol, company_name, isin, sector,
+    industry, market_cap, status).
+
+    Flow for new/unknown stocks:
+      1. Acquire Redis distributed lock (shared across all Vercel instances)
+      2. Lock acquired  → fire ingestion as background task, return 202 Discovering
+      3. Lock NOT acquired → another instance is already ingesting, return 202 Discovering
+      4. On ingestion completion → release lock, cache result, next poll gets 200
+
+    This replaces the broken in-memory `ingesting_tickers = set()` which was
+    re-initialized to empty on every Vercel function invocation.
     """
-    import time
-    start_time = time.perf_counter()
+    import time as _time
+    import asyncio as _asyncio
+    t0 = _time.perf_counter()
+
+    def _ms(): return round((_time.perf_counter() - t0) * 1000, 1)
+    def _stage(name, **kw):
+        logger.info(f"[STAGE] symbol={symbol} stage={name} elapsed_ms={_ms()}" +
+                    "".join(f" {k}={v}" for k, v in kw.items()))
+
     symbol = symbol.upper().strip()
     cache_key = f"stock_meta_split:{symbol}"
 
-    # 1. Try Redis cache (only populated for fully-ready stocks)
+    # ── Stage 1: Redis cache ──────────────────────────────────────────────────
     try:
         cached = await redis_client.get(cache_key)
         if cached:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
-            logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | Cache: HIT | Final: Cached Meta")
+            _stage("cache_lookup", result="HIT")
             return json.loads(cached)
+        _stage("cache_lookup", result="MISS")
     except Exception as e:
-        logger.error(f"Redis get stock_meta_split failed: {e}")
+        logger.error(f"[STAGE] symbol={symbol} stage=cache_lookup error={e}")
 
-    # 2. Fetch from DB
+    # ── Stage 2: DB lookup ────────────────────────────────────────────────────
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
+    _stage("db_lookup", result="found" if stock else "missing",
+           sector=getattr(stock, "sector", None),
+           alpha_score=getattr(stock, "alpha_score", None))
 
-    logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | Cache: MISS | DB: {'Found' if stock else 'Not Found'}")
-
-    # 3. Permanently invalid stock — return 404 immediately
+    # ── Stage 3: Permanently invalid (not on any exchange) ───────────────────
     if stock and stock.sector == "Invalid":
-        logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | Response: HTTP 404 (Invalid sector)")
+        _stage("validation", result="invalid_sector")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stock {symbol} not found on NSE or BSE exchanges."
         )
 
-    # 4. Stock is missing or is a skeleton (alpha_score=None, sector=Unknown)
-    #    → DO NOT run ingestion inline. Create skeleton, fire background, return 202 IMMEDIATELY.
-    is_skeleton = not stock or (stock.alpha_score is None and stock.sector == "Unknown")
+    # ── Stage 4: Stock is ready — return immediately ──────────────────────────
+    is_skeleton = not stock or (stock.alpha_score is None and stock.sector in ("Unknown", None))
+    if not is_skeleton:
+        res_data = {
+            "symbol": stock.symbol,
+            "company_name": stock.company_name,
+            "isin": stock.isin,
+            "sector": stock.sector,
+            "industry": stock.industry,
+            "market_cap": stock.market_cap,
+            "status": "ready",
+        }
+        try:
+            await redis_client.setex(cache_key, 86400, json.dumps(res_data))
+        except Exception:
+            pass
+        _stage("response", status="ready", total_ms=_ms())
+        return res_data
 
-    if is_skeleton:
-        # 4a. Create skeleton record if doesn't exist yet
+    # ── Stage 5: Skeleton / new stock — coordinate ingestion via Redis lock ───
+    # Check if another Vercel instance is already ingesting this symbol.
+    already_ingesting = await _is_ingesting(symbol)
+    _stage("lock_check", already_ingesting=already_ingesting)
+
+    if not already_ingesting:
+        # Create skeleton DB record so polling requests don't re-trigger creation
         if not stock:
             try:
                 stock = StockMaster(
@@ -703,85 +775,91 @@ async def get_stock_meta_split(
                     company_name=f"Discovering {symbol}...",
                     sector="Unknown",
                     industry="Unknown",
-                    ai_summary="Generating Equity Intelligence Briefing in the background..."
+                    ai_summary="Generating Equity Intelligence Briefing in the background...",
                 )
                 db.add(stock)
                 await db.commit()
                 await db.refresh(stock)
+                _stage("skeleton_created")
             except Exception as e:
                 await db.rollback()
-                # Race condition: another request may have created it first
-                stock_q2 = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+                # Race: another request may have created it already — fetch it
+                stock_q2 = await db.execute(
+                    select(StockMaster).where(StockMaster.symbol == symbol)
+                )
                 stock = stock_q2.scalar_one_or_none()
                 if not stock:
                     raise HTTPException(status_code=500, detail="Failed to initialize stock record.")
 
-        # 4b. Fire background ingestion (non-blocking)
-        if symbol not in ingesting_tickers:
-            ingesting_tickers.add(symbol)
-            logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | Scheduling background ingestion")
+        # Acquire Redis distributed lock before scheduling any work
+        lock_acquired = await _acquire_ingest_lock(symbol)
+        _stage("lock_acquire", acquired=lock_acquired)
 
-            async def _background_ingest_and_brief(sym: str):
-                from app.core.database import async_session_maker
-                from app.workers.stock_ingestion import dynamic_ingest_stock
+        if lock_acquired:
+            # ── Background ingestion task ─────────────────────────────────────
+            # Runs AFTER this HTTP response is returned to client.
+            # Lock in Redis prevents any concurrent Vercel invocation from
+            # scheduling duplicate ingestion during the 120s TTL.
+            async def _bg_ingest(sym: str):
+                _bg_t0 = _time.perf_counter()
+                def _bg_ms(): return round((_time.perf_counter() - _bg_t0) * 1000, 1)
+                logger.info(f"[BG] symbol={sym} stage=ingestion_start")
                 try:
-                    async with async_session_maker() as ingest_session:
-                        result = await dynamic_ingest_stock(sym, ingest_session)
-                        logger.info(f"[DIAGNOSTIC] Background ingestion result for {sym}: {result}")
-                        if result.get("status") == "ingested":
-                            await generate_briefing_background(sym)
-                            # Bust the split meta cache so the next poll gets fresh data
-                            try:
-                                await redis_client.delete(f"stock_meta_split:{sym}")
-                            except Exception:
-                                pass
+                    from app.core.database import async_session_maker
+                    from app.workers.stock_ingestion import dynamic_ingest_stock
+                    async with async_session_maker() as sess:
+                        result = await dynamic_ingest_stock(sym, sess)
+                    logger.info(f"[BG] symbol={sym} stage=ingestion_done "
+                                f"status={result.get('status')} elapsed_ms={_bg_ms()}")
+
+                    if result.get("status") == "ingested":
+                        # Generate AI briefing in background (non-blocking for the user)
+                        logger.info(f"[BG] symbol={sym} stage=briefing_start")
+                        await generate_briefing_background(sym)
+                        logger.info(f"[BG] symbol={sym} stage=briefing_done elapsed_ms={_bg_ms()}")
+                        # Bust the split meta cache — next poll will get 200 ready
+                        await redis_client.delete(f"stock_meta_split:{sym}")
+                        logger.info(f"[BG] symbol={sym} stage=cache_busted total_ms={_bg_ms()}")
+                    elif result.get("status") in ("not_found", "error"):
+                        # Mark stock as permanently invalid so 404 is returned next poll
+                        try:
+                            from app.core.database import async_session_maker
+                            async with async_session_maker() as mark_sess:
+                                mark_q = await mark_sess.execute(
+                                    select(StockMaster).where(StockMaster.symbol == sym)
+                                )
+                                mark_stock = mark_q.scalar_one_or_none()
+                                if mark_stock:
+                                    mark_stock.sector = "Invalid"
+                                    await mark_sess.commit()
+                        except Exception as mark_err:
+                            logger.error(f"[BG] symbol={sym} stage=mark_invalid error={mark_err}")
                 except Exception as exc:
-                    logger.error(f"[DIAGNOSTIC] Background ingestion failed for {sym}: {exc}")
+                    logger.error(f"[BG] symbol={sym} stage=ingestion_error error={exc}")
                 finally:
-                    ingesting_tickers.discard(sym)
+                    await _release_ingest_lock(sym)
+                    logger.info(f"[BG] symbol={sym} stage=lock_released")
 
-            background_tasks.add_task(_background_ingest_and_brief, symbol)
-        else:
-            logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | Already ingesting (dedup)")
+            background_tasks.add_task(_bg_ingest, symbol)
+            _stage("background_task_scheduled")
 
-        # 4c. Return 202 Accepted with skeleton so frontend can start polling
-        skeleton_response = {
-            "symbol": symbol,
-            "company_name": f"Discovering {symbol}...",
-            "isin": None,
-            "sector": "Resolving...",
-            "industry": "Resolving...",
-            "market_cap": None,
-            "status": "discovering",
-            "message": f"Ingesting {symbol} from market data providers. This takes 15\u201340 seconds."
-        }
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (202 Discovering)")
-        if response is not None:
-            response.status_code = 202
-        return skeleton_response
-
-    # 5. Stock exists with real data — return metadata
-    res_data = {
-        "symbol": stock.symbol,
-        "company_name": stock.company_name,
-        "isin": stock.isin,
-        "sector": stock.sector,
-        "industry": stock.industry,
-        "market_cap": stock.market_cap,
-        "status": "ready"
+    # ── Stage 6: Return 202 Discovering ──────────────────────────────────────
+    skeleton_resp = {
+        "symbol": symbol,
+        "company_name": f"Discovering {symbol}...",
+        "isin": None,
+        "sector": "Resolving...",
+        "industry": "Resolving...",
+        "market_cap": None,
+        "status": "discovering",
+        "message": (
+            f"Ingesting {symbol} from NSE/BSE. This typically takes 15\u201340 seconds."
+        ),
     }
-
-    # Cache for 24h
-    try:
-        await redis_client.setex(cache_key, 86400, json.dumps(res_data))
-    except Exception as e:
-        logger.error(f"Redis set stock_meta_split failed: {e}")
-
-    elapsed_ms = (time.perf_counter() - start_time) * 1000
-    logger.info(f"[PERF] Metadata fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS, DB ready)")
-    logger.info(f"[DIAGNOSTIC] Symbol: {symbol} | DB: Resolved | Final: {res_data}")
-    return res_data
+    _stage("response", status="discovering", total_ms=_ms())
+    if response is not None:
+        response.status_code = 202
+    return skeleton_resp
 
 
 @router.get("/detail/{symbol}/metrics", dependencies=[Depends(check_rate_limit)])

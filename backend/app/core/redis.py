@@ -114,6 +114,36 @@ class RedisClient:
                 return False
         return False
 
+    async def set_nx(self, key: str, value: str, ex: int) -> bool:
+        """SET key value EX seconds NX — atomic lock acquisition.
+        Returns True if the key was set (lock acquired), False if already exists.
+        """
+        self._ensure_client()
+        if self.redis_client:
+            try:
+                result = self.redis_client.set(key, value, ex=ex, nx=True)
+                return result is not None  # None means key already existed
+            except Exception as e:
+                logger.error(f"TCP Redis SET NX failed: {e}")
+                return True  # Fail open: if Redis is broken, allow ingestion
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["SET", key, value, "EX", str(ex), "NX"],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    result = response.json().get("result")
+                    return result == "OK"   # "OK" = set, null = already existed
+                return True  # Fail open on HTTP errors
+            except Exception as e:
+                logger.error(f"Upstash Redis REST SET NX failed: {e}")
+                return True  # Fail open
+        return True  # No Redis configured — allow ingestion
+
     async def delete(self, *keys: str) -> bool:
         self._ensure_client()
         if self.redis_client:

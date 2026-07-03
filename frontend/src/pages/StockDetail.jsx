@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle, Target } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
@@ -17,27 +17,46 @@ export default function StockDetail() {
   
   const queryClient = useQueryClient();
   const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol, 'meta']);
-  
   const isDiscovering = !cachedStock || cachedStock?.status === 'discovering';
+
+  // Track when discovery started so we can enforce a hard timeout
+  const discoveryStartRef = useRef(null);
+  const [discoveryFailed, setDiscoveryFailed] = useState(false);
 
   // 1. Fetch metadata first (fast)
   // validateStatus allows 202 through as success (not an error), so we can read its body
   const { data: metaData, isLoading: metaLoading, error: metaError } = useStockMeta(symbol, {
     staleTime: isDiscovering ? 0 : 86400000,
     refetchInterval: (query) => {
+      if (discoveryFailed) return false; // Hard stop — timeout reached
       const data = query?.state?.data;
-      // Poll every 3s if: no data yet, status is 'discovering', or company_name still placeholder
       const stillDiscovering = !data || data?.status === 'discovering' || data?.company_name?.startsWith('Discovering ');
-      return stillDiscovering ? 3000 : false;
+      if (!stillDiscovering) return false; // Ready — stop polling
+
+      // Track when we first entered discovering state
+      if (!discoveryStartRef.current) {
+        discoveryStartRef.current = Date.now();
+      }
+      const elapsedSec = (Date.now() - discoveryStartRef.current) / 1000;
+
+      // Hard timeout: 60s — if ingestion hasn't finished by then, show FAILED
+      if (elapsedSec > 60) {
+        setDiscoveryFailed(true);
+        return false;
+      }
+
+      // Elapsed-based backoff: reduce Vercel invocation spam
+      if (elapsedSec < 10) return 3000;   // 0–10s: every 3s
+      if (elapsedSec < 30) return 5000;   // 10–30s: every 5s
+      return 8000;                         // 30–60s: every 8s
     },
     retry: (failureCount, error) => {
-      // Never retry on 404 (stock permanently not found on NSE/BSE)
-      if (error?.status === 404) return false;
+      if (error?.status === 404) return false; // Permanent — don't retry
       return failureCount < 2;
     }
   });
 
-  const currentIsDiscovering = metaLoading || !metaData || metaData?.status === 'discovering' || metaData?.company_name?.startsWith('Discovering ');
+  const currentIsDiscovering = !discoveryFailed && (metaLoading || !metaData || metaData?.status === 'discovering' || metaData?.company_name?.startsWith('Discovering '));
   
   // 2. Fetch metrics in parallel
   const { data: metricsData, isLoading: metricsLoading } = useStockMetrics(symbol, {
@@ -250,6 +269,55 @@ export default function StockDetail() {
     momentum_score: 0,
     risk_score: 0
   };
+
+  if (discoveryFailed) {
+    const elapsedSec = discoveryStartRef.current
+      ? Math.round((Date.now() - discoveryStartRef.current) / 1000)
+      : 60;
+    return (
+      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-5 font-mono animate-fade-in-up">
+        <div className="flex items-center justify-center gap-3 pb-3 border-b border-brand-border">
+          <AlertTriangle className="h-8 w-8 text-brand-warning" />
+          <div>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Discovery Timeout</h3>
+            <p className="text-[9px] text-brand-textMuted font-mono mt-0.5">INGESTION_TIMEOUT_AFTER_{elapsedSec}S</p>
+          </div>
+        </div>
+        <p className="text-brand-textMuted text-xs leading-relaxed">
+          Market data ingestion for <span className="text-brand-primary font-bold">{symbol}</span> did not complete
+          within {elapsedSec} seconds. This can happen when NSE/BSE data providers are slow.
+          The ingestion may still be running in the background.
+        </p>
+        <p className="text-[10px] text-brand-textMuted">
+          Click <span className="text-white font-bold">Retry</span> to check if data is now available.
+        </p>
+        <div className="flex gap-3 justify-center flex-wrap">
+          <button
+            onClick={() => {
+              queryClient.removeQueries({ queryKey: ['stocks', 'detail', symbol] });
+              setDiscoveryFailed(false);
+              discoveryStartRef.current = null;
+            }}
+            className="flex items-center gap-1.5 bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
+          >
+            <RefreshCw className="h-3 w-3" /> Retry
+          </button>
+          <button
+            onClick={() => navigate(-1)}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]"
+          >
+            Go Back
+          </button>
+          <button
+            onClick={() => navigate('/stocks/explorer')}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]"
+          >
+            Stock Explorer
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     const is404 = metaError?.status === 404;
