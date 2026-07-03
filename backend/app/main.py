@@ -73,6 +73,39 @@ app.add_middleware(CacheControlMiddleware)
 # It therefore captures total wall-clock time including all other middleware
 app.add_middleware(TimingMiddleware)
 
+# ── Lazy DB initialization for Vercel ────────────────────────────────────────
+# On Vercel, @app.on_event("startup") is bypassed because the function is
+# invoked cold per-request. We call init_db() on the FIRST /api/v1 request
+# to ensure tables + column migrations are applied before any DB query runs.
+_db_initialized = False
+_db_init_lock = asyncio.Lock()
+
+async def _ensure_db_ready():
+    global _db_initialized
+    if _db_initialized:
+        return
+    async with _db_init_lock:
+        if _db_initialized:  # double-check inside lock
+            return
+        try:
+            await init_db()
+            logger.info("[LazyInit] init_db() completed successfully on first request.")
+        except Exception as e:
+            logger.error(f"[LazyInit] init_db() failed: {e}")
+            # Don't set _db_initialized so next request retries — but cap to
+            # avoid hammering DB on every cold start failure
+        finally:
+            _db_initialized = True  # Set True regardless to avoid retry storm
+
+class LazyDbInitMiddleware(BaseHTTPMiddleware):
+    """Runs init_db once on the first /api/v1 request (Vercel cold-start safe)."""
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/api/v1"):
+            await _ensure_db_ready()
+        return await call_next(request)
+
+app.add_middleware(LazyDbInitMiddleware)
+
 
 # Include v1 routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
