@@ -93,17 +93,59 @@ async def get_db():
             raise
         finally:
             await session.close()
-            
+
+# Redis migration flag key — set after full migrations complete.
+# This prevents re-running slow ALTER TABLE / CREATE INDEX on every cold start.
+_MIGRATION_FLAG_KEY = "alphamatrix:schema_v3_done"
+
+async def _check_migration_done() -> bool:
+    """Returns True if the schema_v3 migration has already been applied."""
+    try:
+        from app.core.redis import redis_client
+        val = await redis_client.get(_MIGRATION_FLAG_KEY)
+        return val is not None
+    except Exception:
+        return False  # Redis unavailable — assume not done, run migrations
+
+async def _set_migration_done():
+    """Marks schema_v3 migration as complete in Redis (TTL: 30 days)."""
+    try:
+        from app.core.redis import redis_client
+        await redis_client.setex(_MIGRATION_FLAG_KEY, 60 * 60 * 24 * 30, "1")
+    except Exception:
+        pass  # Non-critical — worst case is re-running migrations next cold start
+
 async def init_db():
-    """Initializes tables in database if they do not exist."""
+    """
+    Initializes tables and runs column migrations.
+
+    Fast path (< 300ms): If Redis flag 'schema_v3_done' is set, only runs
+    create_all (idempotent table creation) and skips slow ALTER TABLE / index ops.
+
+    Slow path (first ever run, ~3-5s): Runs full schema migrations, then sets
+    the Redis flag so all future cold starts take the fast path.
+    """
+    import logging
+    logger = logging.getLogger("app.core.database")
+
     db_engine = get_engine()
+
+    # Always run create_all — fast, idempotent, creates tables if missing
     async with db_engine.begin() as conn:
-        # Import models inside function to prevent circular imports
         from app.models.fund import FundMaster, NAVHistory
         from app.models.user import User
         from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
         await conn.run_sync(Base.metadata.create_all)
-        
+    logger.info("[DB] create_all completed.")
+
+    # Check Redis flag — skip heavy migrations if already applied
+    already_migrated = await _check_migration_done()
+    if already_migrated:
+        logger.info("[DB] schema_v3 migration flag found in Redis — skipping ALTER TABLE/index ops.")
+        return
+
+    logger.info("[DB] schema_v3 migration flag NOT found — running full migrations...")
+
     # Initialize SQLite FTS5 search index virtual tables or PostgreSQL trigram search tables/indexes
     if is_sqlite:
         from sqlalchemy import text
@@ -128,8 +170,6 @@ async def init_db():
                 raise e
     else:
         from sqlalchemy import text
-        import logging
-        logger = logging.getLogger("app.core.database")
         async with async_session_maker() as session:
             try:
                 # 1. Create pg_trgm extension
@@ -162,15 +202,14 @@ async def init_db():
                 await session.execute(text("CREATE INDEX IF NOT EXISTS idx_fund_master_name_trgm ON fund_masters USING gin (fund_name gin_trgm_ops)"))
                 
                 await session.commit()
-                logger.info("Successfully initialized PostgreSQL search tables and trigram indexes.")
+                logger.info("[DB] PostgreSQL search tables and trigram indexes initialized.")
             except Exception as e:
                 await session.rollback()
-                logger.error(f"Failed to initialize PostgreSQL search tables/indexes: {e}")
-                # Don't fail the startup if index creation fails, but log it
+                logger.error(f"[DB] Failed to initialize PostgreSQL search tables/indexes: {e}")
+                # Don't fail the startup if index creation fails
                 pass
 
-    # Run column migrations for ratings engine v2
-    import logging
+    # Run column migrations for ratings engine v2 + progressive discovery pipeline v3
     mig_logger = logging.getLogger("app.core.database.migration")
     async with async_session_maker() as session:
         try:
@@ -192,26 +231,16 @@ async def init_db():
                     "trend_structure": "VARCHAR(50)",
                     "bull_case": "TEXT",
                     "bear_case": "TEXT",
-                    "verdict_rationale": "TEXT"
+                    "verdict_rationale": "TEXT",
+                    "ingestion_status": "VARCHAR(20)",
+                    "current_price": "FLOAT",
+                    "exchange": "VARCHAR(10)",
                 }
                 for col_name, col_type in columns_to_add.items():
                     if col_name not in columns:
                         await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN {col_name} {col_type}"))
-                        mig_logger.info(f"SQLite migration: Added column {col_name} to stock_masters")
-                await session.commit()
-                # SQLite: progressive discovery columns (v3 pipeline)
-                res2 = await session.execute(text("PRAGMA table_info(stock_masters)"))
-                cols2 = [row[1] for row in res2.fetchall()]
-                if "ingestion_status" not in cols2:
-                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN ingestion_status VARCHAR(20) DEFAULT 'READY'"))
-                    await session.execute(text("UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL"))
-                    mig_logger.info("SQLite migration: Added ingestion_status to stock_masters")
-                if "current_price" not in cols2:
-                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN current_price FLOAT"))
-                    mig_logger.info("SQLite migration: Added current_price to stock_masters")
-                if "exchange" not in cols2:
-                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN exchange VARCHAR(10)"))
-                    mig_logger.info("SQLite migration: Added exchange to stock_masters")
+                        mig_logger.info(f"SQLite migration: Added column {col_name}")
+                await session.execute(text("UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL"))
                 await session.commit()
             else:
                 columns_to_add = {
@@ -228,32 +257,25 @@ async def init_db():
                     "trend_structure": "VARCHAR(50)",
                     "bull_case": "TEXT",
                     "bear_case": "TEXT",
-                    "verdict_rationale": "TEXT"
+                    "verdict_rationale": "TEXT",
+                    "ingestion_status": "VARCHAR(20)",
+                    "current_price": "DOUBLE PRECISION",
+                    "exchange": "VARCHAR(10)",
                 }
                 for col_name, col_type in columns_to_add.items():
                     await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
-                    mig_logger.info(f"PostgreSQL migration: Assured column {col_name} in stock_masters")
-                # PostgreSQL: progressive discovery columns (v3 pipeline)
+                # Set READY for existing stocks that have no ingestion_status
                 await session.execute(text(
-                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS ingestion_status VARCHAR(20) DEFAULT 'READY'"
+                    "UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL AND alpha_score IS NOT NULL"
                 ))
-                await session.execute(text(
-                    "UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL"
-                ))
-                await session.execute(text(
-                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION"
-                ))
-                await session.execute(text(
-                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS exchange VARCHAR(10)"
-                ))
-                mig_logger.info("PostgreSQL migration: Assured progressive discovery columns in stock_masters")
                 await session.commit()
+                mig_logger.info("[DB] PostgreSQL stock_masters column migrations applied.")
         except Exception as e:
             await session.rollback()
-            mig_logger.error(f"Failed to execute stock_masters column migrations: {e}")
+            mig_logger.error(f"[DB] stock_masters column migration failed: {e}")
             raise e
 
-    # Run column migrations for fund_masters (Fund Rating Engine v2)
+    # Run column migrations for fund_masters
     async with async_session_maker() as session:
         try:
             from sqlalchemy import text
@@ -279,13 +301,15 @@ async def init_db():
                 for col_name, col_type in fund_columns_to_add.items():
                     if col_name not in existing:
                         await session.execute(text(f"ALTER TABLE fund_masters ADD COLUMN {col_name} {col_type}"))
-                        mig_logger.info(f"SQLite migration: Added column {col_name} to fund_masters")
             else:
                 for col_name, col_type in fund_columns_to_add.items():
                     await session.execute(text(f"ALTER TABLE fund_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
-                    mig_logger.info(f"PostgreSQL migration: Assured column {col_name} in fund_masters")
             await session.commit()
         except Exception as e:
             await session.rollback()
-            mig_logger.error(f"Failed to execute fund_masters column migrations: {e}")
+            mig_logger.error(f"[DB] fund_masters column migration failed: {e}")
             # Don't raise — fund migrations shouldn't block startup
+
+    # Mark migrations as done in Redis so future cold starts skip this block
+    await _set_migration_done()
+    logger.info("[DB] schema_v3 migration flag written to Redis. Future cold starts will be fast.")
