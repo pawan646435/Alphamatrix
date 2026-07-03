@@ -785,12 +785,30 @@ async def get_stock_meta_split(
     needs_discover = (
         stock is None
         or ingestion_status is None
+        or ingestion_status == "DISCOVERING"
         or (stock.sector in ("Unknown", None, "") and stock.alpha_score is None)
     )
     if needs_discover:
         logger.info(f"[META] {symbol} needs discovery (status={ingestion_status}, sector={getattr(stock,'sector',None)})")
         from app.workers.stock_ingestion import quick_discover_stock
-        result = await quick_discover_stock(symbol, db)
+        try:
+            result = await quick_discover_stock(symbol, db)
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"[META] quick_discover_stock crashed for {symbol}: {exc}\n{tb}")
+            # Return 503 with JSON error details for debugging (not plain-text 500)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "symbol": symbol,
+                    "status": "error",
+                    "error": str(exc),
+                    "traceback": tb[-1000:],  # last 1000 chars
+                    "stage_message": "Discovery temporarily unavailable. Please retry.",
+                }
+            )
 
         if result.get("status") == "not_found":
             raise HTTPException(
@@ -798,7 +816,16 @@ async def get_stock_meta_split(
                 detail=f"Stock {symbol} not found on NSE or BSE exchanges."
             )
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail="Discovery failed. Please try again.")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "symbol": symbol,
+                    "status": "error",
+                    "error": result.get("reason", "unknown"),
+                    "stage_message": "Discovery failed. Please retry.",
+                }
+            )
 
         logger.info(f"[META] {symbol} discovered ({_ms()}ms)")
         if response is not None:
