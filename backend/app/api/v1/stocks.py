@@ -947,13 +947,19 @@ async def get_stock_chart_split(
     period = period.lower().strip()
     cache_key = f"stock_chart_split:{period}:{symbol}"
     
-    # 1. Try Redis cache
+    # 1. Try Redis cache — but skip empty arrays (means history not ingested yet)
     try:
         cached = await redis_client.get(cache_key)
         if cached:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[PERF] Historical data fetch for {symbol} ({period}) took {elapsed_ms:.2f}ms (Cache: HIT)")
-            return json.loads(cached)
+            parsed = json.loads(cached)
+            if isinstance(parsed, list) and len(parsed) > 0:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                logger.info(f"[PERF] Historical data fetch for {symbol} ({period}) took {elapsed_ms:.2f}ms (Cache: HIT)")
+                return parsed
+            elif isinstance(parsed, list) and len(parsed) == 0:
+                # Empty cache — delete and re-fetch (ingestion may have completed since)
+                await redis_client.delete(cache_key)
+                logger.info(f"[Chart] Stale empty cache for {symbol}/{period} — deleting and re-fetching")
     except Exception as e:
         logger.error(f"Redis get stock_chart_split failed for {symbol}:{period}: {e}")
         
@@ -1025,60 +1031,138 @@ async def get_stock_chart_split(
 
 @router.get("/detail/{symbol}/briefing", dependencies=[Depends(check_rate_limit)])
 async def get_stock_briefing_split(
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     symbol: str = Path(..., min_length=1, max_length=20),
 ):
     """
     Split endpoint: returns only AI summary/briefing sections.
-    Triggers AI briefing inline synchronously if not present.
+    Generates AI briefing SYNCHRONOUSLY (not as background task — Vercel kills background tasks).
+    Uses asyncio.wait_for with a 7s timeout to stay within Vercel's 10s limit.
     """
     import time
     start_time = time.perf_counter()
     symbol = symbol.upper().strip()
     cache_key = f"stock_briefing_split:{symbol}"
-    
-    # 1. Try Redis cache
+
+    # Placeholder strings that mean briefing is not yet generated
+    PLACEHOLDER_STRINGS = {
+        "Generating Equity Intelligence Briefing in the background...",
+        "Analytics are being computed...",
+        "AI briefing not yet generated.",
+        "",
+    }
+
+    # 1. Try Redis cache — skip if it's a placeholder
     try:
         cached = await redis_client.get(cache_key)
         if cached:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[PERF] AI report generation fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
-            return json.loads(cached)
+            parsed = json.loads(cached)
+            ai_text = parsed.get("ai_summary", "")
+            if ai_text not in PLACEHOLDER_STRINGS and len(ai_text) > 100:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                logger.info(f"[PERF] AI briefing fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: HIT)")
+                return parsed
+            else:
+                # Stale placeholder in cache — delete and regenerate
+                await redis_client.delete(cache_key)
     except Exception as e:
         logger.error(f"Redis get stock_briefing_split failed: {e}")
-        
+
     # 2. Fetch from DB
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
-    
+
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
-        
-    is_generating = not stock.ai_summary or stock.ai_summary == "Generating Equity Intelligence Briefing in the background..."
 
-    if is_generating:
-        # Fire AI briefing as a background task — DO NOT block the response.
-        logger.info(f"[DIAGNOSTIC] AI briefing for {symbol} is missing/generating — scheduling background generation")
-        background_tasks.add_task(generate_briefing_background, symbol)
+    # Check if stock has analytics (alpha_score) — briefing requires analytics
+    if stock.alpha_score is None:
+        res_data = {
+            "ai_summary": "Analytics are still being computed. Please wait...",
+            "bull_case": None,
+            "bear_case": None,
+            "verdict_rationale": None,
+            "status": "generating"
+        }
+        try:
+            await redis_client.setex(cache_key, 5, json.dumps(res_data))
+        except Exception:
+            pass
+        return res_data
+
+    current_ai = stock.ai_summary or ""
+    needs_generation = current_ai in PLACEHOLDER_STRINGS or len(current_ai) < 100
+
+    if needs_generation:
+        # Generate synchronously with 7s timeout (Vercel Hobby 10s limit)
+        # BackgroundTasks are killed when the request completes on Vercel.
+        logger.info(f"[Briefing] Generating AI briefing for {symbol} synchronously")
+        try:
+            stock_dict = {
+                "symbol": stock.symbol,
+                "company_name": stock.company_name,
+                "sector": stock.sector,
+                "industry": stock.industry,
+                "market_cap": stock.market_cap,
+                "pe_ratio": stock.pe_ratio,
+                "pb_ratio": stock.pb_ratio,
+                "roe": stock.roe,
+                "debt_equity": stock.debt_equity,
+                "dividend_yield": stock.dividend_yield,
+                "beta": stock.beta,
+                "alpha_score": stock.alpha_score,
+                "cagr_1y": stock.cagr_1y,
+                "cagr_3y": stock.cagr_3y,
+                "cagr_5y": stock.cagr_5y,
+            }
+            from app.services.ai_agent import generate_stock_briefing
+            from app.workers.stock_ingestion import parse_briefing_sections
+
+            # 7s timeout — leaves 3s margin for Vercel's 10s limit
+            briefing = await asyncio.wait_for(
+                generate_stock_briefing(stock_dict, news_list=[], actions_list=[], calendar_dict={}),
+                timeout=7.0
+            )
+
+            if briefing and len(briefing) > 100:
+                bull_case, bear_case, verdict_rationale = parse_briefing_sections(briefing)
+                stock.ai_summary = briefing
+                stock.bull_case = bull_case
+                stock.bear_case = bear_case
+                stock.verdict_rationale = verdict_rationale
+                await db.commit()
+                await db.refresh(stock)
+                logger.info(f"[Briefing] Generated and saved briefing for {symbol} ({len(briefing)} chars)")
+            else:
+                logger.warning(f"[Briefing] Briefing too short for {symbol}: {len(briefing) if briefing else 0} chars")
+
+        except asyncio.TimeoutError:
+            logger.warning(f"[Briefing] Timed out generating briefing for {symbol} — will retry on next poll")
+        except Exception as gen_err:
+            logger.error(f"[Briefing] Generation failed for {symbol}: {gen_err}")
+
+    # Re-read from DB after potential generation
+    await db.refresh(stock)
+    current_ai = stock.ai_summary or ""
+    is_ready = current_ai not in PLACEHOLDER_STRINGS and len(current_ai) > 100
 
     res_data = {
-        "ai_summary": stock.ai_summary or "Generating Equity Intelligence Briefing in the background...",
-        "bull_case": getattr(stock, "bull_case", None),
-        "bear_case": getattr(stock, "bear_case", None),
-        "verdict_rationale": getattr(stock, "verdict_rationale", None),
-        "status": "generating" if is_generating else "completed"
+        "ai_summary": current_ai if is_ready else "Generating AI Equity Briefing — polling in 3s...",
+        "bull_case": stock.bull_case if is_ready else None,
+        "bear_case": stock.bear_case if is_ready else None,
+        "verdict_rationale": stock.verdict_rationale if is_ready else None,
+        "status": "completed" if is_ready else "generating"
     }
 
-    # 3. Cache results (short TTL if still generating so frontend re-polls, 24h if completed)
+    # Cache: 5s TTL if still generating (so frontend re-polls quickly), 24h if done
     try:
-        ttl = 8 if is_generating else 86400
+        ttl = 86400 if is_ready else 5
         await redis_client.setex(cache_key, ttl, json.dumps(res_data))
     except Exception as e:
         logger.error(f"Redis set stock_briefing_split failed: {e}")
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
-    logger.info(f"[PERF] AI briefing fetch for {symbol} took {elapsed_ms:.2f}ms (Cache: MISS, status={res_data['status']})")
+    logger.info(f"[PERF] AI briefing for {symbol}: {elapsed_ms:.0f}ms (ready={is_ready})")
     return res_data
 
 
