@@ -5,9 +5,6 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-
-from app.middleware.timing import TimingMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db, async_session_maker
@@ -53,30 +50,46 @@ CACHEABLE_PREFIXES = (
     "/api/v1/search",
 )
 
-class CacheControlMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+# ── Pure ASGI middleware (replaces BaseHTTPMiddleware to avoid Vercel buffering bug) ────
+# BaseHTTPMiddleware buffers the entire response body which causes silent failures
+# on Vercel's ASGI layer when endpoints return streaming or large responses.
+# This single pure-ASGI middleware handles: timing, cache-control headers.
+@app.middleware("http")
+async def combined_middleware(request: Request, call_next):
+    import time as _time
+    start = _time.perf_counter()
+    try:
         response = await call_next(request)
-        path = request.url.path
-        if (
-            request.method == "GET"
-            and response.status_code == 200
-            and "Cache-Control" not in response.headers
-            and any(path.startswith(p) for p in CACHEABLE_PREFIXES)
-        ):
-            # stale-while-revalidate: serve stale for 60s while refetching in background
-            response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=30"
-        return response
+    except Exception as exc:
+        # Catch any unhandled exception from endpoints and return JSON (not Vercel HTML 500)
+        import traceback, json as _json
+        from starlette.responses import Response as StarletteResponse
+        logger.error(f"[Unhandled] {request.method} {request.url.path}: {exc}\n{traceback.format_exc()}")
+        body = _json.dumps({"detail": str(exc), "type": type(exc).__name__})
+        return StarletteResponse(content=body, status_code=500, media_type="application/json")
 
-app.add_middleware(CacheControlMiddleware)
+    duration_ms = round((_time.perf_counter() - start) * 1000, 1)
+    path = request.url.path
 
-# TimingMiddleware added last so it runs outermost (first in, last out)
-# It therefore captures total wall-clock time including all other middleware
-app.add_middleware(TimingMiddleware)
+    # Cache-Control for read endpoints
+    if (
+        request.method == "GET"
+        and response.status_code == 200
+        and "Cache-Control" not in response.headers
+        and any(path.startswith(p) for p in CACHEABLE_PREFIXES)
+    ):
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=30"
 
-# ── Lazy DB initialization for Vercel ────────────────────────────────────────
-# On Vercel, @app.on_event("startup") is bypassed because the function is
-# invoked cold per-request. We call init_db() on the FIRST /api/v1 request
-# to ensure tables + column migrations are applied before any DB query runs.
+    # Timing header + log
+    response.headers["X-Response-Time"] = f"{duration_ms}ms"
+    if path.startswith("/api/"):
+        logger.info("%s %s  %dms  status=%d", request.method, path, duration_ms, response.status_code)
+
+    return response
+
+# ── Lazy DB initialization for Vercel ────────────────────────────────────────────
+# On Vercel, @app.on_event("startup") is bypassed. init_db() is called
+# lazily on first DB access instead of at startup.
 _db_initialized = False
 _db_init_lock = asyncio.Lock()
 
@@ -85,27 +98,19 @@ async def _ensure_db_ready():
     if _db_initialized:
         return
     async with _db_init_lock:
-        if _db_initialized:  # double-check inside lock
+        if _db_initialized:
             return
         try:
             await init_db()
-            logger.info("[LazyInit] init_db() completed successfully on first request.")
+            logger.info("[LazyInit] init_db() completed on first DB access.")
         except Exception as e:
             logger.error(f"[LazyInit] init_db() failed: {e}")
-            # Don't set _db_initialized so next request retries — but cap to
-            # avoid hammering DB on every cold start failure
         finally:
-            _db_initialized = True  # Set True regardless to avoid retry storm
+            _db_initialized = True
 
-class LazyDbInitMiddleware(BaseHTTPMiddleware):
-    """Runs init_db once on the first /api/v1 request (Vercel cold-start safe)."""
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/api/v1"):
-            await _ensure_db_ready()
-        return await call_next(request)
-
-app.add_middleware(LazyDbInitMiddleware)
-
+# Export _ensure_db_ready so database.py get_db() can call it
+import app.core.database as _db_module
+_db_module._ensure_db_ready_fn = _ensure_db_ready
 
 # Include v1 routes
 app.include_router(api_router, prefix=settings.API_V1_STR)

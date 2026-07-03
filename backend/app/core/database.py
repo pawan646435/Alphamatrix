@@ -81,8 +81,15 @@ async_session_maker = AsyncSessionMakerProxy()
 # Declarative Base for models
 Base = declarative_base()
 
+# Injected by main.py after app startup — avoids circular imports.
+# Points to _ensure_db_ready() which calls init_db() once per cold start.
+_ensure_db_ready_fn = None
+
 # Dependency to get async DB session
 async def get_db():
+    # Run lazy init once on first DB access (Vercel cold-start safe)
+    if _ensure_db_ready_fn is not None:
+        await _ensure_db_ready_fn()
     session_maker = get_session_maker()
     async with session_maker() as session:
         try:
