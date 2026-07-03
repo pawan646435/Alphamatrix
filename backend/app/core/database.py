@@ -199,6 +199,20 @@ async def init_db():
                         await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN {col_name} {col_type}"))
                         mig_logger.info(f"SQLite migration: Added column {col_name} to stock_masters")
                 await session.commit()
+                # SQLite: progressive discovery columns (v3 pipeline)
+                res2 = await session.execute(text("PRAGMA table_info(stock_masters)"))
+                cols2 = [row[1] for row in res2.fetchall()]
+                if "ingestion_status" not in cols2:
+                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN ingestion_status VARCHAR(20) DEFAULT 'READY'"))
+                    await session.execute(text("UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL"))
+                    mig_logger.info("SQLite migration: Added ingestion_status to stock_masters")
+                if "current_price" not in cols2:
+                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN current_price FLOAT"))
+                    mig_logger.info("SQLite migration: Added current_price to stock_masters")
+                if "exchange" not in cols2:
+                    await session.execute(text("ALTER TABLE stock_masters ADD COLUMN exchange VARCHAR(10)"))
+                    mig_logger.info("SQLite migration: Added exchange to stock_masters")
+                await session.commit()
             else:
                 columns_to_add = {
                     "fundamental_score": "DOUBLE PRECISION",
@@ -219,6 +233,20 @@ async def init_db():
                 for col_name, col_type in columns_to_add.items():
                     await session.execute(text(f"ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
                     mig_logger.info(f"PostgreSQL migration: Assured column {col_name} in stock_masters")
+                # PostgreSQL: progressive discovery columns (v3 pipeline)
+                await session.execute(text(
+                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS ingestion_status VARCHAR(20) DEFAULT 'READY'"
+                ))
+                await session.execute(text(
+                    "UPDATE stock_masters SET ingestion_status='READY' WHERE ingestion_status IS NULL"
+                ))
+                await session.execute(text(
+                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION"
+                ))
+                await session.execute(text(
+                    "ALTER TABLE stock_masters ADD COLUMN IF NOT EXISTS exchange VARCHAR(10)"
+                ))
+                mig_logger.info("PostgreSQL migration: Assured progressive discovery columns in stock_masters")
                 await session.commit()
         except Exception as e:
             await session.rollback()

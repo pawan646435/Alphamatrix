@@ -198,6 +198,57 @@ export function useStockNews(symbol, options = {}) {
   });
 }
 
+/**
+ * useStockStatus — Progressive Discovery Pipeline v3
+ *
+ * Polls /stocks/status/{symbol} every 4s while the stock is not READY.
+ * Returns { status, available_sections, pending_sections, progress,
+ *           stage_message, current_price, company_name, ... }
+ *
+ * The caller uses available_sections to decide which page sections to render.
+ */
+export function useStockStatus(symbol, options = {}) {
+  return useQuery({
+    queryKey: ['stocks', 'status', symbol],
+    queryFn: async () => {
+      const { data } = await apiClient.get(`/stocks/status/${symbol}`, {
+        validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
+      });
+      return data;
+    },
+    enabled: !!symbol,
+    staleTime: 0,          // always fresh — pipeline state changes frequently
+    gcTime: 60000,
+    refetchInterval: (query) => {
+      const data = query?.state?.data;
+      if (!data) return 4000;
+      const done = data.status === 'READY' || data.status === 'NOT_FOUND';
+      return done ? false : 4000;
+    },
+    retry: (failureCount, error) => {
+      if (error?.status === 404) return false;
+      return failureCount < 2;
+    },
+    ...options
+  });
+}
+
+/**
+ * advanceIngestionPipeline — fire-and-forget POST to run the next pipeline step.
+ * Returns a promise. The caller does NOT need to await it — it fires and the
+ * /status poll will pick up the state change in the next interval.
+ */
+export async function advanceIngestionPipeline(symbol) {
+  try {
+    const { data } = await apiClient.post(`/stocks/ingest/${symbol}`);
+    return data;
+  } catch (err) {
+    // Swallow non-critical errors — the /status poll will show the real state
+    console.warn(`[Pipeline] /ingest/${symbol} failed:`, err?.response?.data || err.message);
+    return null;
+  }
+}
+
 /** Returns market regime macro diagnostics */
 export function useMarketRegime() {
   return useQuery({

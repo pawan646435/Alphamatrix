@@ -1623,6 +1623,400 @@ async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# PROGRESSIVE DISCOVERY PIPELINE v3 — Hobby-plan-safe step functions
+# Each function completes within 8s (Vercel Hobby 10s limit).
+# Flow: quick_discover → step1_history → step2_analytics → step3_briefing
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def quick_discover_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Stage 0 — Quick Discovery (< 5s):
+    Fetches only yfinance .info (no history), extracts company name, sector,
+    current price, exchange, and writes a DISCOVERED record to DB.
+    Returns immediately so the frontend can render a real header/price badge.
+    """
+    import asyncio
+    import json
+    from app.core.redis import redis_client
+
+    symbol = symbol.upper().strip()
+    logger.info(f"[QuickDiscover] Starting quick discovery for {symbol}")
+
+    loop = asyncio.get_event_loop()
+
+    def _fetch_info(ticker_symbol: str) -> Dict:
+        import yfinance as yf
+        import requests
+
+        sess = requests.Session()
+        sess.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+
+        class _TimeoutAdapter(requests.adapters.HTTPAdapter):
+            def send(self, request, **kwargs):
+                kwargs["timeout"] = 5.0
+                return super().send(request, **kwargs)
+
+        a = _TimeoutAdapter()
+        sess.mount("https://", a)
+        sess.mount("http://", a)
+        try:
+            return yf.Ticker(ticker_symbol, session=sess).info or {}
+        except Exception as e:
+            logger.warning(f"[QuickDiscover] .info failed for {ticker_symbol}: {e}")
+            return {}
+
+    info = await loop.run_in_executor(None, lambda: _fetch_info(f"{symbol}.NS"))
+    exchange = "NSE"
+    if not info or not info.get("regularMarketPrice"):
+        logger.warning(f"[QuickDiscover] NSE miss for {symbol}, trying BSE...")
+        info = await loop.run_in_executor(None, lambda: _fetch_info(f"{symbol}.BO"))
+        exchange = "BSE"
+
+    current_price = info.get("regularMarketPrice") if info else None
+    if not current_price:
+        logger.warning(f"[QuickDiscover] No price found for {symbol}")
+        return {"status": "not_found", "symbol": symbol}
+
+    company_name = info.get("longName") or info.get("shortName") or symbol
+    raw_sector = info.get("sector") or "Unknown"
+    sector = SECTOR_OVERRIDES.get(symbol, raw_sector) or "Unknown"
+    industry = info.get("industry") or "Unknown"
+    isin = info.get("isin")
+    mc = info.get("marketCap")
+    market_cap = round(mc / 10_000_000.0, 2) if mc else None
+    pe_raw = info.get("trailingPE") or info.get("forwardPE")
+    pe_ratio = round(float(pe_raw), 2) if pe_raw else None
+    pb_raw = info.get("priceToBook")
+    pb_ratio = round(float(pb_raw), 2) if pb_raw else None
+    roe_raw = info.get("returnOnEquity")
+    roe = round(float(roe_raw) * 100.0, 2) if roe_raw is not None else None
+    de_raw = info.get("debtToEquity")
+    debt_equity = round(de_raw / 100.0 if de_raw and de_raw > 3.0 else de_raw, 2) if de_raw is not None else None
+    dy_raw = info.get("dividendYield")
+    dividend_yield = round(float(dy_raw) * 100.0, 2) if dy_raw is not None else None
+
+    check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    existing = check_q.scalar_one_or_none()
+
+    if existing:
+        existing.company_name = company_name
+        existing.sector = sector
+        existing.industry = industry
+        existing.isin = isin
+        existing.market_cap = market_cap
+        existing.pe_ratio = pe_ratio
+        existing.pb_ratio = pb_ratio
+        existing.roe = roe
+        existing.debt_equity = debt_equity
+        existing.dividend_yield = dividend_yield
+        existing.current_price = current_price
+        existing.exchange = exchange
+        existing.ingestion_status = "DISCOVERED"
+        existing.ai_summary = "Analytics are being computed..."
+        await db.commit()
+        await db.refresh(existing)
+    else:
+        existing = StockMaster(
+            symbol=symbol, company_name=company_name, sector=sector,
+            industry=industry, isin=isin, market_cap=market_cap,
+            pe_ratio=pe_ratio, pb_ratio=pb_ratio, roe=roe,
+            debt_equity=debt_equity, dividend_yield=dividend_yield,
+            current_price=current_price, exchange=exchange,
+            ingestion_status="DISCOVERED",
+            ai_summary="Analytics are being computed...",
+        )
+        db.add(existing)
+        try:
+            await db.commit()
+            await db.refresh(existing)
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"[QuickDiscover] DB commit failed for {symbol}: {e}")
+            return {"status": "error", "symbol": symbol, "reason": str(e)}
+
+    # Sync to search index
+    from app.core.database import is_sqlite
+    from sqlalchemy import text
+    try:
+        await db.execute(text("DELETE FROM stock_search_index WHERE symbol = :symbol"), {"symbol": symbol})
+        upsert_sql = (
+            "INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:s, :n, :e)"
+            if is_sqlite else
+            "INSERT INTO stock_search_index (symbol, company_name, exchange) VALUES (:s, :n, :e) ON CONFLICT (symbol) DO UPDATE SET company_name=:n, exchange=:e"
+        )
+        await db.execute(text(upsert_sql), {"s": symbol, "n": company_name, "e": exchange})
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"[QuickDiscover] search index sync failed: {e}")
+
+    try:
+        progress = json.dumps({
+            "stage": "DISCOVERED", "progress": 10,
+            "available_sections": ["meta"],
+            "pending_sections": ["chart", "metrics", "briefing", "news"],
+            "stage_message": "Downloading historical price data..."
+        })
+        await redis_client.setex(f"ingest_progress:{symbol}", 3600, progress)
+    except Exception as e:
+        logger.warning(f"[QuickDiscover] Redis progress write failed: {e}")
+
+    logger.info(f"[QuickDiscover] {symbol} → {company_name} ({exchange}) @ ₹{current_price}")
+    return {
+        "status": "discovered", "symbol": symbol, "company_name": company_name,
+        "sector": sector, "industry": industry, "current_price": current_price,
+        "exchange": exchange, "market_cap": market_cap, "isin": isin,
+    }
+
+
+async def ingest_step1_history(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Step 1 — History Download (< 8s):
+    Downloads 3Y price history (NSE → BSE fallback), writes StockPriceHistory rows.
+    Transitions ingestion_status: DISCOVERED → INGESTING.
+    """
+    import asyncio
+    import json
+    from app.core.redis import redis_client
+
+    symbol = symbol.upper().strip()
+    logger.info(f"[IngestStep1] Downloading history for {symbol}")
+
+    check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = check_q.scalar_one_or_none()
+    if not stock:
+        return {"status": "error", "reason": "not_found"}
+
+    stock.ingestion_status = "INGESTING"
+    await db.commit()
+
+    loop = asyncio.get_event_loop()
+    hist, info, news = await loop.run_in_executor(None, lambda: fetch_ticker_data_yfinance(symbol))
+
+    if hist is None or hist.empty:
+        logger.warning(f"[IngestStep1] NSE miss for {symbol}, trying BSE fallback...")
+        def _bse():
+            import yfinance as yf, requests, concurrent.futures
+            s = requests.Session()
+            s.headers.update({"User-Agent": "Mozilla/5.0"})
+            class A(requests.adapters.HTTPAdapter):
+                def send(self, r, **k): k["timeout"]=5.0; return super().send(r,**k)
+            s.mount("https://",A()); s.mount("http://",A())
+            t = yf.Ticker(f"{symbol}.BO", session=s)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                fh = ex.submit(lambda: next((t.history(period=p) for p in ("3y","2y","1y") if not t.history(period=p).empty), pd.DataFrame()))
+                fi = ex.submit(lambda: t.info or {})
+                return fh.result(), fi.result(), []
+        hist, info, _ = await loop.run_in_executor(None, _bse)
+
+    if hist is None or hist.empty:
+        stock.ingestion_status = "FAILED"
+        stock.sector = "Invalid"
+        await db.commit()
+        logger.error(f"[IngestStep1] All providers failed for {symbol}")
+        return {"status": "failed", "symbol": symbol}
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=int(3.0 * 365.25))
+    prices_to_insert = []
+    for timestamp, row in hist.iterrows():
+        try:
+            close_val = float(row["Close"])
+        except Exception:
+            continue
+        if np.isnan(close_val):
+            continue
+        p_date = timestamp.date()
+        if p_date < start_date:
+            continue
+        prices_to_insert.append(StockPriceHistory(symbol=symbol, date=p_date, close=round(close_val, 2)))
+
+    if prices_to_insert:
+        await db.execute(delete(StockPriceHistory).where(StockPriceHistory.symbol == symbol))
+        db.add_all(prices_to_insert)
+
+    if info and info.get("regularMarketPrice") and not stock.current_price:
+        stock.current_price = info.get("regularMarketPrice")
+
+    await db.commit()
+    logger.info(f"[IngestStep1] {symbol}: wrote {len(prices_to_insert)} price rows")
+
+    try:
+        progress = json.dumps({
+            "stage": "INGESTING", "progress": 40,
+            "available_sections": ["meta", "chart"],
+            "pending_sections": ["metrics", "briefing", "news"],
+            "stage_message": "Computing Alpha Score and analytics..."
+        })
+        await redis_client.setex(f"ingest_progress:{symbol}", 3600, progress)
+        await redis_client.delete(f"stock_history:{symbol}")
+    except Exception as e:
+        logger.warning(f"[IngestStep1] Redis update failed: {e}")
+
+    return {"status": "ingesting", "symbol": symbol, "price_rows": len(prices_to_insert)}
+
+
+async def ingest_step2_analytics(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Step 2 — Analytics (< 5s):
+    Reads price rows from DB, computes CAGR 1/3/5Y, beta, and all
+    alpha sub-scores. Transitions: INGESTING → ANALYTICS_RUNNING.
+    """
+    import json
+    from app.core.redis import redis_client
+
+    symbol = symbol.upper().strip()
+    logger.info(f"[IngestStep2] Computing analytics for {symbol}")
+
+    check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = check_q.scalar_one_or_none()
+    if not stock:
+        return {"status": "error", "reason": "not_found"}
+
+    stock.ingestion_status = "ANALYTICS_RUNNING"
+    await db.commit()
+
+    hist_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == symbol)
+        .order_by(StockPriceHistory.date.asc())
+    )
+    rows = hist_q.all()
+
+    if len(rows) < 30:
+        logger.warning(f"[IngestStep2] {symbol} has < 30 price rows — using defaults")
+        prices_list = [100.0] * 50
+        cagr_1y = cagr_3y = cagr_5y = 0.0
+    else:
+        prices_list = [float(r.close) for r in rows]
+        prices_df = pd.DataFrame({"date": [r.date for r in rows], "close": prices_list})
+        prices_df["date"] = pd.to_datetime(prices_df["date"])
+        prices_df = prices_df.sort_values("date").reset_index(drop=True)
+
+        def get_cagr(years: int) -> float:
+            latest_row = prices_df.iloc[-1]
+            target_d = latest_row["date"] - pd.DateOffset(years=years)
+            diffs = (prices_df["date"] - target_d).abs()
+            idx = diffs.idxmin()
+            best_row = prices_df.loc[idx]
+            if diffs.min().days > 30:
+                return 0.0
+            days = (latest_row["date"] - best_row["date"]).days
+            years_act = days / 365.25
+            if years_act < (years * 0.9):
+                return 0.0
+            return (latest_row["close"] / best_row["close"]) ** (1.0 / years_act) - 1.0
+
+        cagr_1y = get_cagr(1)
+        cagr_3y = get_cagr(3)
+        cagr_5y = get_cagr(5)
+
+    beta = stock.beta or 1.0
+    sector_avgs = await get_sector_averages(stock.sector or "Unknown", db)
+    stock_meta = {
+        "roe": stock.roe or 15.0, "debt_equity": stock.debt_equity or 0.5,
+        "pe_ratio": stock.pe_ratio or 20.0, "pb_ratio": stock.pb_ratio or 3.0,
+        "target_beta": beta, "cagr_1y": cagr_1y, "cagr_3y": cagr_3y,
+        "peg_ratio": None, "ev_ebitda": None, "operating_margin": None,
+        "net_margin": None, "revenue_growth": None, "profit_growth": None,
+        "free_cashflow": None, "held_promoters": None,
+    }
+    ratings = calculate_institutional_ratings(stock_meta, prices_list, sector_avgs, news_list=[])
+
+    stock.cagr_1y = cagr_1y
+    stock.cagr_3y = cagr_3y
+    stock.cagr_5y = cagr_5y
+    stock.beta = round(beta, 2)
+    stock.alpha_score = ratings["final_score"]
+    stock.fundamental_score = ratings["fundamental_score"]
+    stock.valuation_score = ratings["valuation_score"]
+    stock.technical_score = ratings["technical_score"]
+    stock.risk_score = ratings["risk_score"]
+    stock.sector_relative_score = ratings["sector_relative_score"]
+    stock.confidence_score = ratings["confidence_score"]
+    stock.quality_score = ratings["quality_score"]
+    stock.event_score = ratings["event_score"]
+    stock.investor_verdict = ratings["investor_verdict"]
+    stock.trader_verdict = ratings["trader_verdict"]
+    stock.trend_structure = ratings["trend_structure"]
+    await db.commit()
+
+    logger.info(f"[IngestStep2] {symbol}: alpha={ratings['final_score']}, cagr_3y={cagr_3y:.2%}")
+
+    try:
+        progress = json.dumps({
+            "stage": "ANALYTICS_RUNNING", "progress": 70,
+            "available_sections": ["meta", "chart", "metrics"],
+            "pending_sections": ["briefing", "news"],
+            "stage_message": "Generating AI Equity Intelligence Briefing..."
+        })
+        await redis_client.setex(f"ingest_progress:{symbol}", 3600, progress)
+        await redis_client.delete(f"stock_detail:{symbol}", f"stock_master:{symbol}")
+    except Exception as e:
+        logger.warning(f"[IngestStep2] Redis update failed: {e}")
+
+    return {
+        "status": "analytics_running", "symbol": symbol,
+        "alpha_score": ratings["final_score"], "cagr_3y": cagr_3y,
+    }
+
+
+async def ingest_step3_briefing(symbol: str, db: AsyncSession) -> Dict[str, Any]:
+    """
+    Step 3 — AI Briefing (< 9s):
+    Generates AI briefing via Groq/Llama. Writes ai_summary, bull/bear case.
+    Transitions ingestion_status → READY. Busts all Redis caches.
+    """
+    import json
+    from app.core.redis import redis_client
+
+    symbol = symbol.upper().strip()
+    logger.info(f"[IngestStep3] Generating briefing for {symbol}")
+
+    check_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = check_q.scalar_one_or_none()
+    if not stock:
+        return {"status": "error", "reason": "not_found"}
+
+    briefing_text = None
+    try:
+        from app.services.ai_agent import generate_stock_briefing
+        briefing_text = await generate_stock_briefing(symbol, db)
+        logger.info(f"[IngestStep3] {symbol}: briefing ready ({len(briefing_text or '')} chars)")
+    except Exception as e:
+        logger.warning(f"[IngestStep3] briefing failed for {symbol}: {e}")
+
+    if briefing_text:
+        bull, bear, rationale = parse_briefing_sections(briefing_text)
+        stock.ai_summary = briefing_text
+        stock.bull_case = bull
+        stock.bear_case = bear
+        stock.verdict_rationale = rationale
+
+    stock.ingestion_status = "READY"
+    await db.commit()
+    logger.info(f"[IngestStep3] {symbol}: ingestion_status → READY")
+
+    try:
+        await redis_client.delete(
+            f"stock_detail:{symbol}", f"stock_master:{symbol}",
+            f"stock_history:{symbol}", f"stock_briefing:{symbol}",
+            f"stock_meta_split:{symbol}", f"stock_search:{symbol.lower()}",
+        )
+        await redis_client.delete_pattern("stocks_list:*")
+        progress = json.dumps({
+            "stage": "READY", "progress": 100,
+            "available_sections": ["meta", "chart", "metrics", "briefing", "news"],
+            "pending_sections": [],
+            "stage_message": "All analytics ready."
+        })
+        await redis_client.setex(f"ingest_progress:{symbol}", 86400, progress)
+    except Exception as e:
+        logger.warning(f"[IngestStep3] Redis bust failed: {e}")
+
+    return {"status": "ready", "symbol": symbol}
+
+
 async def seed_stocks_data(db: AsyncSession):
     """
     Main background process to seed stocks metadata and generate

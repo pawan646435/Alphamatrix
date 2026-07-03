@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle, Target } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Star, Cpu, MessageSquare, Plus, Check, Zap, Activity, ShieldCheck, ShieldAlert, AlertTriangle, Target, Loader2 } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
-import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest, useStockMeta, useStockMetrics, useStockChart, useStockBriefing, useStockNews } from '../hooks/useQueries';
+import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest, useStockMeta, useStockMetrics, useStockChart, useStockBriefing, useStockNews, useStockStatus, advanceIngestionPipeline } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
@@ -14,84 +14,105 @@ export default function StockDetail() {
   const { symbol } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  
   const queryClient = useQueryClient();
-  const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol, 'meta']);
-  const isDiscovering = !cachedStock || cachedStock?.status === 'discovering';
 
-  // Track when discovery started so we can enforce a hard timeout
-  const discoveryStartRef = useRef(null);
-  const [discoveryFailed, setDiscoveryFailed] = useState(false);
+  // ── Progressive Discovery Pipeline v3 ──────────────────────────────────
+  // Step 0: /meta returns quickly with real company_name + current_price
+  // Step 1-3: /status polls every 4s; pipeline driver fires /ingest each step
+  // The frontend drives the pipeline chain so every step stays < 10s (Hobby-safe)
 
-  // 1. Fetch metadata first (fast)
-  // validateStatus allows 202 through as success (not an error), so we can read its body
+  // 1. Status hook — polls /status every 4s, drives available_sections
+  const { data: statusData } = useStockStatus(symbol, { enabled: !!symbol });
+  const availableSections = statusData?.available_sections || [];
+  const ingestionStatus = statusData?.status || null;
+  const isFullyReady = ingestionStatus === 'READY';
+  const isFailed = ingestionStatus === 'FAILED';
+
+  // Track which pipeline steps we've already triggered to avoid duplicate calls
+  const triggeredStepsRef = useRef(new Set());
+
+  // Pipeline driver: call POST /ingest/{symbol} for each non-READY state
+  useEffect(() => {
+    if (!symbol || !ingestionStatus) return;
+    if (isFullyReady || isFailed) return;
+
+    const triggerable = ['DISCOVERED', 'INGESTING', 'ANALYTICS_RUNNING'];
+    if (!triggerable.includes(ingestionStatus)) return;
+    if (triggeredStepsRef.current.has(ingestionStatus)) return; // already fired
+
+    triggeredStepsRef.current.add(ingestionStatus);
+    // Small delay so the /status response has time to persist before we fire
+    const timer = setTimeout(() => {
+      console.log(`[Pipeline] Advancing ${symbol} from ${ingestionStatus}`);
+      advanceIngestionPipeline(symbol);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [symbol, ingestionStatus, isFullyReady, isFailed]);
+
+  // Reset triggered steps when symbol changes
+  useEffect(() => {
+    triggeredStepsRef.current = new Set();
+  }, [symbol]);
+
+  // 2. Fetch metadata (fast, returns immediately from cache or DB)
   const { data: metaData, isLoading: metaLoading, error: metaError } = useStockMeta(symbol, {
-    staleTime: isDiscovering ? 0 : 86400000,
+    staleTime: isFullyReady ? 86400000 : 0,
     refetchInterval: (query) => {
-      if (discoveryFailed) return false; // Hard stop — timeout reached
-      const data = query?.state?.data;
-      const stillDiscovering = !data || data?.status === 'discovering' || data?.company_name?.startsWith('Discovering ');
-      if (!stillDiscovering) return false; // Ready — stop polling
-
-      // Track when we first entered discovering state
-      if (!discoveryStartRef.current) {
-        discoveryStartRef.current = Date.now();
-      }
-      const elapsedSec = (Date.now() - discoveryStartRef.current) / 1000;
-
-      // Hard timeout: 60s — if ingestion hasn't finished by then, show FAILED
-      if (elapsedSec > 60) {
-        setDiscoveryFailed(true);
-        return false;
-      }
-
-      // Elapsed-based backoff: reduce Vercel invocation spam
-      if (elapsedSec < 10) return 3000;   // 0–10s: every 3s
-      if (elapsedSec < 30) return 5000;   // 10–30s: every 5s
-      return 8000;                         // 30–60s: every 8s
+      const d = query?.state?.data;
+      // Keep polling /meta until we get a READY status (so company_name/price update)
+      if (!d || d.status === 'DISCOVERED' || d.status === 'INGESTING' || d.status === 'ANALYTICS_RUNNING') return 5000;
+      return false;
     },
     retry: (failureCount, error) => {
-      if (error?.status === 404) return false; // Permanent — don't retry
+      if (error?.status === 404) return false;
       return failureCount < 2;
     }
   });
 
-  const currentIsDiscovering = !discoveryFailed && (metaLoading || !metaData || metaData?.status === 'discovering' || metaData?.company_name?.startsWith('Discovering '));
-  
-  // 2. Fetch metrics in parallel
+  // Derived: is this a brand-new stock still in initial meta-fetch?
+  const isInitialLoading = metaLoading && !metaData;
+  // currentIsDiscovering = true only while we're waiting for the very first
+  // response from /meta (no partial data yet). After that, sections render progressively.
+  const currentIsDiscovering = isInitialLoading;
+
+  // 3. Fetch metrics — enabled when 'metrics' section is available
+  const metricsEnabled = availableSections.includes('metrics') || isFullyReady;
   const { data: metricsData, isLoading: metricsLoading } = useStockMetrics(symbol, {
-    enabled: !currentIsDiscovering && !!symbol,
+    enabled: metricsEnabled && !!symbol,
     staleTime: 86400000
   });
-  
+
   const [chartRange, setChartRange] = useState('3Y');
   const chartPeriod = (chartRange === '5Y' ? '5y' : chartRange === 'MAX' ? 'max' : '3y');
-  
-  // 3. Fetch chart in parallel
+
+  // 4. Fetch chart — enabled when 'chart' section is available
+  const chartEnabled = availableSections.includes('chart') || isFullyReady;
   const { data: chartData, isLoading: chartLoading } = useStockChart(symbol, chartPeriod, {
-    enabled: !currentIsDiscovering && !!symbol,
+    enabled: chartEnabled && !!symbol,
     staleTime: 3600000
   });
-  
-  // 4. Fetch briefing in parallel
+
+  // 5. Fetch briefing — enabled when 'briefing' section is available
+  const briefingEnabled = availableSections.includes('briefing') || isFullyReady;
   const { data: briefingData, isLoading: briefingFetchLoading } = useStockBriefing(symbol, {
-    enabled: !currentIsDiscovering && !!symbol,
+    enabled: briefingEnabled && !!symbol,
     staleTime: 86400000,
     refetchInterval: (query) => {
       const data = query?.state?.data;
       return (data?.status === 'generating' || !data?.ai_summary) ? 3000 : false;
     }
   });
-  
-  // 5. Fetch yfinance news in parallel
+
+  // 6. Fetch news — enabled when 'news' section is available
+  const newsEnabled = availableSections.includes('news') || isFullyReady;
   const { data: newsData } = useStockNews(symbol, {
-    enabled: !currentIsDiscovering && !!symbol,
+    enabled: newsEnabled && !!symbol,
     staleTime: 900000
   });
-  
+
   const loading = metaLoading;
   const stockError = metaError;
-  
+
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();
   
@@ -228,13 +249,16 @@ export default function StockDetail() {
   // Safe fallback placeholders for progressive loading
   const stock = {
     symbol: symbol,
-    company_name: metaData?.company_name || `Discovering ${symbol}...`,
-    sector: metaData?.sector || 'Ingesting...',
-    industry: metaData?.industry || 'Resolving parameters...',
+    company_name: metaData?.company_name || statusData?.company_name || `Discovering ${symbol}...`,
+    sector: metaData?.sector || statusData?.sector || 'Resolving...',
+    industry: metaData?.industry || statusData?.industry || 'Resolving...',
     market_cap: metaData?.market_cap || null,
-    status: metaData?.status || 'discovering',
-    
-    // Metrics
+    // current_price available from DISCOVERED state onwards (within 3-5s)
+    current_price: metaData?.current_price || statusData?.current_price || null,
+    exchange: metaData?.exchange || statusData?.exchange || 'NSE',
+    status: metaData?.status || ingestionStatus || 'DISCOVERED',
+
+    // Metrics (available after step 2 — ANALYTICS_RUNNING)
     pe_ratio: metricsData?.pe_ratio ?? null,
     pb_ratio: metricsData?.pb_ratio ?? null,
     roe: metricsData?.roe ?? null,
@@ -254,14 +278,14 @@ export default function StockDetail() {
     investor_verdict: metricsData?.investor_verdict ?? null,
     trader_verdict: metricsData?.trader_verdict ?? null,
     last_updated: metricsData?.last_updated ?? null,
-    
-    // Briefing
+
+    // Briefing (available after step 3 — READY)
     ai_summary: briefingData?.ai_summary ?? null,
     bull_case: briefingData?.bull_case ?? null,
     bear_case: briefingData?.bear_case ?? null,
     verdict_rationale: briefingData?.verdict_rationale ?? null
   };
-  
+
   const price_history = chartData || [];
   const alpha_score_breakdown = metricsData?.alpha_score_breakdown || {
     fundamental_score: 0,
@@ -270,114 +294,35 @@ export default function StockDetail() {
     risk_score: 0
   };
 
-  if (discoveryFailed) {
-    const elapsedSec = discoveryStartRef.current
-      ? Math.round((Date.now() - discoveryStartRef.current) / 1000)
-      : 60;
+  // Progressive pipeline progress bar (shown while analytics are computing)
+  const showProgressBanner = !!ingestionStatus && !isFullyReady && !isFailed && !!metaData;
+  const pipelineProgress = statusData?.progress || 0;
+  const pipelineMessage = statusData?.stage_message || 'Computing analytics...';
+
+  if (isFailed) {
     return (
       <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-5 font-mono animate-fade-in-up">
         <div className="flex items-center justify-center gap-3 pb-3 border-b border-brand-border">
           <AlertTriangle className="h-8 w-8 text-brand-warning" />
           <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Discovery Timeout</h3>
-            <p className="text-[9px] text-brand-textMuted font-mono mt-0.5">INGESTION_TIMEOUT_AFTER_{elapsedSec}S</p>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Equity Not Found</h3>
+            <p className="text-[9px] text-brand-textMuted font-mono mt-0.5">SYMBOL_NOT_FOUND_ON_NSE_BSE</p>
           </div>
         </div>
         <p className="text-brand-textMuted text-xs leading-relaxed">
-          Market data ingestion for <span className="text-brand-primary font-bold">{symbol}</span> did not complete
-          within {elapsedSec} seconds. This can happen when NSE/BSE data providers are slow.
-          The ingestion may still be running in the background.
-        </p>
-        <p className="text-[10px] text-brand-textMuted">
-          Click <span className="text-white font-bold">Retry</span> to check if data is now available.
+          <span className="text-brand-primary font-bold">{symbol}</span> could not be found on NSE or BSE.
+          Please verify the stock symbol and try again.
         </p>
         <div className="flex gap-3 justify-center flex-wrap">
-          <button
-            onClick={() => {
-              queryClient.removeQueries({ queryKey: ['stocks', 'detail', symbol] });
-              setDiscoveryFailed(false);
-              discoveryStartRef.current = null;
-            }}
-            className="flex items-center gap-1.5 bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
-          >
-            <RefreshCw className="h-3 w-3" /> Retry
-          </button>
-          <button
-            onClick={() => navigate(-1)}
-            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]"
-          >
+          <button onClick={() => navigate(-1)}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]">
             Go Back
           </button>
-          <button
-            onClick={() => navigate('/stocks/explorer')}
-            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]"
-          >
+          <button onClick={() => navigate('/stocks/explorer')}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-white font-bold px-4 py-2 transition-colors text-[10px]">
             Stock Explorer
           </button>
         </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    const is404 = metaError?.status === 404;
-    return (
-      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-5 font-mono animate-fade-in-up">
-        <div className="flex items-center justify-center gap-3 pb-3 border-b border-brand-border">
-          <Cpu className={`h-8 w-8 ${is404 ? 'text-brand-warning' : 'text-brand-danger'}`} />
-          <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-              {is404 ? 'Equity Not Found' : 'Data Fetch Error'}
-            </h3>
-            <p className="text-[9px] text-brand-textMuted font-mono mt-0.5">
-              {is404 ? 'SYMBOL_NOT_FOUND_ON_NSE_BSE' : 'FETCH_ERROR_RETRYABLE'}
-            </p>
-          </div>
-        </div>
-        <p className="text-brand-textMuted text-xs leading-relaxed">
-          {is404
-            ? `"${symbol}" could not be found on NSE or BSE exchanges. Please verify the stock symbol.`
-            : (error || 'Failed to fetch stock details. The backend may be temporarily unavailable.')
-          }
-        </p>
-        <div className="flex gap-3 justify-center">
-          {!is404 && (
-            <button
-              onClick={() => window.location.reload()}
-              className="flex items-center gap-1.5 bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
-            >
-              <RefreshCw className="h-3 w-3" /> Retry
-            </button>
-          )}
-          <button
-            onClick={() => navigate(-1)}
-            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-xs text-white font-bold px-4 py-2 transition-colors text-[10px]"
-          >
-            Go Back
-          </button>
-          <button
-            onClick={() => navigate('/stocks/explorer')}
-            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-xs text-white font-bold px-4 py-2 transition-colors text-[10px]"
-          >
-            Stock Explorer
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!loading && !currentIsDiscovering && (!metaData || metaData.detail || metaError)) {
-    return (
-      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
-        <Cpu className="h-10 w-10 text-brand-warning mx-auto" />
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Equity Not Found</h3>
-        <p className="text-brand-textMuted text-xs leading-relaxed">{metaData?.detail || metaError?.message || 'Stock data is unavailable.'}</p>
-        <button
-          onClick={() => navigate('/stocks/explorer')}
-          className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
-        >
-          Return to Stock Explorer
-        </button>
       </div>
     );
   }
@@ -561,21 +506,47 @@ export default function StockDetail() {
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
-      {/* Discovering Banner — shown while ingestion is running in background */}
+      {/* Initial loading state — only shown for the very first /meta fetch (< 5s) */}
       {currentIsDiscovering && (
-        <div className="border border-brand-primary/40 bg-brand-primary/5 p-4 flex items-center gap-4 animate-pulse-subtle font-mono">
-          <RefreshCw className="h-4 w-4 text-brand-primary animate-spin flex-shrink-0" />
+        <div className="border border-brand-primary/40 bg-brand-primary/5 p-4 flex items-center gap-4 font-mono">
+          <Loader2 className="h-4 w-4 text-brand-primary animate-spin flex-shrink-0" />
           <div className="flex-1">
             <p className="text-xs font-bold text-brand-primary uppercase tracking-wider">
               Discovering {symbol}
             </p>
             <p className="text-[10px] text-brand-textMuted mt-0.5">
-              {metaData?.message || `Fetching market data from NSE/BSE. Page will populate automatically when ready (15–40s).`}
+              Fetching company data from NSE/BSE (3–5 seconds)...
             </p>
           </div>
-          <span className="text-[9px] text-brand-primary/60 uppercase tracking-widest hidden sm:block">[INGESTING...]</span>
+          <span className="text-[9px] text-brand-primary/60 uppercase tracking-widest hidden sm:block">[RESOLVING...]</span>
         </div>
       )}
+
+      {/* Progressive pipeline banner — shown while analytics are computing in background */}
+      {showProgressBanner && (
+        <div className="border border-brand-primary/30 bg-brand-primary/5 p-3 font-mono animate-fade-in-up">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 text-brand-primary animate-spin flex-shrink-0" />
+              <p className="text-[10px] font-bold text-brand-primary uppercase tracking-wider">
+                Analytics Computing — {pipelineProgress}% Complete
+              </p>
+            </div>
+            <span className="text-[9px] text-brand-textMuted uppercase tracking-widest hidden sm:block">
+              [{ingestionStatus}]
+            </span>
+          </div>
+          {/* Progress bar */}
+          <div className="w-full bg-brand-border rounded-full h-1 mb-1.5">
+            <div
+              className="bg-brand-primary h-1 rounded-full transition-all duration-700"
+              style={{ width: `${pipelineProgress}%` }}
+            />
+          </div>
+          <p className="text-[9px] text-brand-textMuted">{pipelineMessage}</p>
+        </div>
+      )}
+
 
       {/* Back navigation & Watchlist Trigger */}
 

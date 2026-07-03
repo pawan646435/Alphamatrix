@@ -50,6 +50,17 @@ class StockMaster(Base):
     
     # AI Analyst Synthesis
     ai_summary = Column(Text, nullable=True)     # detailed briefing markdown cached in DB
+
+    # ── Progressive Discovery Pipeline ──────────────────────────────────────
+    # Tracks the ingestion state machine for async progressive loading.
+    # DISCOVERED: basic info fetched (name, price, sector) — page can render header
+    # INGESTING: price history downloaded, CAGR/beta computing
+    # ANALYTICS_RUNNING: alpha score and sub-scores computing
+    # READY: fully ingested, all analytics available
+    # FAILED: all providers failed, permanently invalid
+    ingestion_status = Column(String(20), nullable=False, server_default="READY")
+    current_price = Column(Float, nullable=True)   # live price at discovery time
+    exchange = Column(String(10), nullable=True)   # "NSE" | "BSE"
     
     last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
     

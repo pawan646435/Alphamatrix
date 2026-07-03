@@ -687,64 +687,56 @@ async def get_stock_detail(
 
 @router.get("/detail/{symbol}/meta", dependencies=[Depends(check_rate_limit)])
 async def get_stock_meta_split(
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     symbol: str = Path(..., min_length=1, max_length=20),
     response: Response = None,
 ):
     """
-    Split endpoint: returns only metadata (symbol, company_name, isin, sector,
-    industry, market_cap, status).
+    Progressive Discovery Pipeline v3 — Hobby-safe.
 
-    Flow for new/unknown stocks:
-      1. Acquire Redis distributed lock (shared across all Vercel instances)
-      2. Lock acquired  → fire ingestion as background task, return 202 Discovering
-      3. Lock NOT acquired → another instance is already ingesting, return 202 Discovering
-      4. On ingestion completion → release lock, cache result, next poll gets 200
+    For stocks already READY: return instantly from cache/DB (< 500ms).
+    For DISCOVERED/INGESTING/ANALYTICS_RUNNING: return partial data immediately.
+    For new stocks: run quick_discover_stock() inline (< 5s) and return DISCOVERED.
 
-    This replaces the broken in-memory `ingesting_tickers = set()` which was
-    re-initialized to empty on every Vercel function invocation.
+    The frontend drives the background pipeline by calling POST /ingest/{symbol}.
     """
     import time as _time
-    import asyncio as _asyncio
     t0 = _time.perf_counter()
-
     def _ms(): return round((_time.perf_counter() - t0) * 1000, 1)
-    def _stage(name, **kw):
-        logger.info(f"[STAGE] symbol={symbol} stage={name} elapsed_ms={_ms()}" +
-                    "".join(f" {k}={v}" for k, v in kw.items()))
 
     symbol = symbol.upper().strip()
     cache_key = f"stock_meta_split:{symbol}"
 
-    # ── Stage 1: Redis cache ──────────────────────────────────────────────────
+    # ── Stage 1: Redis cache (READY stocks only) ──────────────────────────────
     try:
         cached = await redis_client.get(cache_key)
         if cached:
-            _stage("cache_lookup", result="HIT")
+            logger.info(f"[META] {symbol} cache HIT ({_ms()}ms)")
             return json.loads(cached)
-        _stage("cache_lookup", result="MISS")
     except Exception as e:
-        logger.error(f"[STAGE] symbol={symbol} stage=cache_lookup error={e}")
+        logger.error(f"[META] {symbol} cache error: {e}")
 
     # ── Stage 2: DB lookup ────────────────────────────────────────────────────
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
-    _stage("db_lookup", result="found" if stock else "missing",
-           sector=getattr(stock, "sector", None),
-           alpha_score=getattr(stock, "alpha_score", None))
 
-    # ── Stage 3: Permanently invalid (not on any exchange) ───────────────────
-    if stock and stock.sector == "Invalid":
-        _stage("validation", result="invalid_sector")
+    # ── Stage 3: Invalid / not on any exchange ────────────────────────────────
+    if stock and (stock.sector == "Invalid" or getattr(stock, "ingestion_status", None) == "FAILED"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stock {symbol} not found on NSE or BSE exchanges."
         )
 
-    # ── Stage 4: Stock is ready — return immediately ──────────────────────────
-    is_skeleton = not stock or (stock.alpha_score is None and stock.sector in ("Unknown", None))
-    if not is_skeleton:
+    # ── Stage 4: Stock is READY — return and cache ───────────────────────────
+    ingestion_status = getattr(stock, "ingestion_status", "READY") if stock else None
+    is_ready = (
+        stock is not None
+        and stock.alpha_score is not None
+        and stock.sector not in ("Unknown", None, "")
+        and ingestion_status in ("READY", None)  # None = old row without the column
+    )
+
+    if is_ready:
         res_data = {
             "symbol": stock.symbol,
             "company_name": stock.company_name,
@@ -752,114 +744,68 @@ async def get_stock_meta_split(
             "sector": stock.sector,
             "industry": stock.industry,
             "market_cap": stock.market_cap,
-            "status": "ready",
+            "current_price": getattr(stock, "current_price", None),
+            "exchange": getattr(stock, "exchange", "NSE"),
+            "status": "READY",
         }
         try:
             await redis_client.setex(cache_key, 86400, json.dumps(res_data))
         except Exception:
             pass
-        _stage("response", status="ready", total_ms=_ms())
+        logger.info(f"[META] {symbol} READY ({_ms()}ms)")
         return res_data
 
-    # ── Stage 5: Skeleton / new stock — coordinate ingestion via Redis lock ───
-    # Check if another Vercel instance is already ingesting this symbol.
-    already_ingesting = await _is_ingesting(symbol)
-    _stage("lock_check", already_ingesting=already_ingesting)
+    # ── Stage 5: Partial data available (DISCOVERED / INGESTING / ANALYTICS_RUNNING) ──
+    if stock and ingestion_status in ("DISCOVERED", "INGESTING", "ANALYTICS_RUNNING"):
+        partial = {
+            "symbol": stock.symbol,
+            "company_name": stock.company_name,
+            "isin": stock.isin,
+            "sector": stock.sector,
+            "industry": stock.industry,
+            "market_cap": stock.market_cap,
+            "current_price": getattr(stock, "current_price", None),
+            "exchange": getattr(stock, "exchange", "NSE"),
+            "status": ingestion_status,
+            "stage_message": (
+                "Downloading historical price data..." if ingestion_status == "DISCOVERED" else
+                "Computing analytics and Alpha Score..." if ingestion_status == "INGESTING" else
+                "Generating AI Equity Intelligence Briefing..."
+            ),
+        }
+        logger.info(f"[META] {symbol} partial ({ingestion_status}) ({_ms()}ms)")
+        if response is not None:
+            response.status_code = 202
+        return partial
 
-    if not already_ingesting:
-        # Create skeleton DB record so polling requests don't re-trigger creation
-        if not stock:
-            try:
-                stock = StockMaster(
-                    symbol=symbol,
-                    company_name=f"Discovering {symbol}...",
-                    sector="Unknown",
-                    industry="Unknown",
-                    ai_summary="Generating Equity Intelligence Briefing in the background...",
-                )
-                db.add(stock)
-                await db.commit()
-                await db.refresh(stock)
-                _stage("skeleton_created")
-            except Exception as e:
-                await db.rollback()
-                # Race: another request may have created it already — fetch it
-                stock_q2 = await db.execute(
-                    select(StockMaster).where(StockMaster.symbol == symbol)
-                )
-                stock = stock_q2.scalar_one_or_none()
-                if not stock:
-                    raise HTTPException(status_code=500, detail="Failed to initialize stock record.")
+    # ── Stage 6: New stock — run quick_discover_stock() inline ──────────────
+    logger.info(f"[META] {symbol} new stock — running quick_discover")
+    from app.workers.stock_ingestion import quick_discover_stock
+    result = await quick_discover_stock(symbol, db)
 
-        # Acquire Redis distributed lock before scheduling any work
-        lock_acquired = await _acquire_ingest_lock(symbol)
-        _stage("lock_acquire", acquired=lock_acquired)
+    if result.get("status") == "not_found":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+        )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail="Discovery failed. Please try again.")
 
-        if lock_acquired:
-            # ── Background ingestion task ─────────────────────────────────────
-            # Runs AFTER this HTTP response is returned to client.
-            # Lock in Redis prevents any concurrent Vercel invocation from
-            # scheduling duplicate ingestion during the 120s TTL.
-            async def _bg_ingest(sym: str):
-                _bg_t0 = _time.perf_counter()
-                def _bg_ms(): return round((_time.perf_counter() - _bg_t0) * 1000, 1)
-                logger.info(f"[BG] symbol={sym} stage=ingestion_start")
-                try:
-                    from app.core.database import async_session_maker
-                    from app.workers.stock_ingestion import dynamic_ingest_stock
-                    async with async_session_maker() as sess:
-                        result = await dynamic_ingest_stock(sym, sess)
-                    logger.info(f"[BG] symbol={sym} stage=ingestion_done "
-                                f"status={result.get('status')} elapsed_ms={_bg_ms()}")
-
-                    if result.get("status") == "ingested":
-                        # Generate AI briefing in background (non-blocking for the user)
-                        logger.info(f"[BG] symbol={sym} stage=briefing_start")
-                        await generate_briefing_background(sym)
-                        logger.info(f"[BG] symbol={sym} stage=briefing_done elapsed_ms={_bg_ms()}")
-                        # Bust the split meta cache — next poll will get 200 ready
-                        await redis_client.delete(f"stock_meta_split:{sym}")
-                        logger.info(f"[BG] symbol={sym} stage=cache_busted total_ms={_bg_ms()}")
-                    elif result.get("status") in ("not_found", "error"):
-                        # Mark stock as permanently invalid so 404 is returned next poll
-                        try:
-                            from app.core.database import async_session_maker
-                            async with async_session_maker() as mark_sess:
-                                mark_q = await mark_sess.execute(
-                                    select(StockMaster).where(StockMaster.symbol == sym)
-                                )
-                                mark_stock = mark_q.scalar_one_or_none()
-                                if mark_stock:
-                                    mark_stock.sector = "Invalid"
-                                    await mark_sess.commit()
-                        except Exception as mark_err:
-                            logger.error(f"[BG] symbol={sym} stage=mark_invalid error={mark_err}")
-                except Exception as exc:
-                    logger.error(f"[BG] symbol={sym} stage=ingestion_error error={exc}")
-                finally:
-                    await _release_ingest_lock(sym)
-                    logger.info(f"[BG] symbol={sym} stage=lock_released")
-
-            background_tasks.add_task(_bg_ingest, symbol)
-            _stage("background_task_scheduled")
-
-    # ── Stage 6: Return 202 Discovering ──────────────────────────────────────
-    skeleton_resp = {
-        "symbol": symbol,
-        "company_name": f"Discovering {symbol}...",
-        "isin": None,
-        "sector": "Resolving...",
-        "industry": "Resolving...",
-        "market_cap": None,
-        "status": "discovering",
-        "message": (
-            f"Ingesting {symbol} from NSE/BSE. This typically takes 15\u201340 seconds."
-        ),
-    }
-    _stage("response", status="discovering", total_ms=_ms())
+    logger.info(f"[META] {symbol} discovered ({_ms()}ms)")
     if response is not None:
         response.status_code = 202
-    return skeleton_resp
+    return {
+        "symbol": symbol,
+        "company_name": result.get("company_name", f"Discovering {symbol}..."),
+        "isin": result.get("isin"),
+        "sector": result.get("sector", "Unknown"),
+        "industry": result.get("industry", "Unknown"),
+        "market_cap": result.get("market_cap"),
+        "current_price": result.get("current_price"),
+        "exchange": result.get("exchange", "NSE"),
+        "status": "DISCOVERED",
+        "stage_message": "Downloading historical price data...",
+    }
 
 
 @router.get("/detail/{symbol}/metrics", dependencies=[Depends(check_rate_limit)])
@@ -1549,30 +1495,202 @@ async def get_market_regime():
 @router.get("/status/{symbol}", dependencies=[Depends(check_rate_limit)])
 async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
     """
-    Poll whether a dynamically ingested stock is ready.
-    Returns status: 'ready' | 'discovering'
+    Progressive discovery status endpoint.
+    Returns current ingestion state, progress %, available_sections list,
+    and partial stock data (company_name, current_price, sector) even
+    while analytics are still computing.
     """
+    import json
     symbol = symbol.upper().strip()
+
     stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
     stock = stock_q.scalar_one_or_none()
 
-    if stock:
-        if stock.sector == "Invalid":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Stock {symbol} not found on NSE or BSE exchanges."
-            )
+    if not stock:
         return {
-            "status": "ready",
+            "status": "NOT_FOUND",
             "symbol": symbol,
-            "company_name": stock.company_name,
-            "sector": stock.sector,
-            "alpha_score": stock.alpha_score,
+            "available_sections": [],
+            "pending_sections": ["meta", "chart", "metrics", "briefing", "news"],
+            "progress": 0,
+            "stage_message": "Stock not yet discovered.",
         }
+
+    if stock.sector == "Invalid" or getattr(stock, "ingestion_status", None) == "FAILED":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+        )
+
+    ingestion_status = getattr(stock, "ingestion_status", None) or "READY"
+
+    # Read progress from Redis (written by each step function)
+    available_sections = ["meta"]
+    pending_sections = ["chart", "metrics", "briefing", "news"]
+    progress_pct = 10
+    stage_message = "Discovery in progress..."
+
+    try:
+        prog_raw = await redis_client.get(f"ingest_progress:{symbol}")
+        if prog_raw:
+            prog = json.loads(prog_raw)
+            available_sections = prog.get("available_sections", available_sections)
+            pending_sections = prog.get("pending_sections", pending_sections)
+            progress_pct = prog.get("progress", progress_pct)
+            stage_message = prog.get("stage_message", stage_message)
+    except Exception:
+        pass
+
+    # For READY stocks without Redis progress entry, return full sections
+    if ingestion_status == "READY" or (
+        stock.alpha_score is not None and stock.sector not in ("Unknown", None, "")
+    ):
+        ingestion_status = "READY"
+        available_sections = ["meta", "chart", "metrics", "briefing", "news"]
+        pending_sections = []
+        progress_pct = 100
+        stage_message = "All analytics ready."
+
     return {
-        "status": "discovering",
         "symbol": symbol,
-        "message": "Market data ingestion is in progress. Please wait..."
+        "status": ingestion_status,
+        "company_name": stock.company_name,
+        "sector": stock.sector,
+        "industry": stock.industry,
+        "current_price": getattr(stock, "current_price", None),
+        "exchange": getattr(stock, "exchange", "NSE"),
+        "alpha_score": stock.alpha_score,
+        "available_sections": available_sections,
+        "pending_sections": pending_sections,
+        "progress": progress_pct,
+        "stage_message": stage_message,
+    }
+
+
+@router.post("/ingest/{symbol}", dependencies=[Depends(check_rate_limit)])
+async def advance_ingestion_pipeline(
+    symbol: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Frontend-driven pipeline advancement — Vercel Hobby compatible.
+
+    Checks the current ingestion_status and runs the NEXT pipeline step:
+      DISCOVERED        → run ingest_step1_history()  (downloads price data)
+      INGESTING         → run ingest_step2_analytics() (compute alpha score)
+      ANALYTICS_RUNNING → run ingest_step3_briefing()  (generate AI briefing)
+      READY             → no-op, return immediately
+
+    Each step completes within 8s — safe for Vercel Hobby 10s limit.
+    The frontend calls this endpoint after each /status poll shows a non-READY state.
+    Redis lock prevents duplicate concurrent runs.
+    """
+    symbol = symbol.upper().strip()
+
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"{symbol} not found. Call /meta first.")
+
+    if stock.sector == "Invalid" or getattr(stock, "ingestion_status", None) == "FAILED":
+        raise HTTPException(status_code=404, detail=f"{symbol} is invalid (not on NSE/BSE).")
+
+    ingestion_status = getattr(stock, "ingestion_status", "READY")
+
+    if ingestion_status == "READY":
+        return {"symbol": symbol, "status": "READY", "message": "Already fully ingested."}
+
+    # Check Redis lock — prevent duplicate concurrent pipeline runs
+    lock_key = f"pipeline_lock:{symbol}"
+    try:
+        lock_acquired = await redis_client.set_nx(lock_key, "1", ex=60)
+    except Exception:
+        lock_acquired = True  # Proceed if Redis is unavailable
+
+    if not lock_acquired:
+        return {
+            "symbol": symbol,
+            "status": ingestion_status,
+            "message": "Pipeline step already in progress. Poll /status for updates."
+        }
+
+    try:
+        from app.workers.stock_ingestion import (
+            ingest_step1_history, ingest_step2_analytics, ingest_step3_briefing
+        )
+        from app.core.database import async_session_maker
+
+        async with async_session_maker() as step_db:
+            if ingestion_status == "DISCOVERED":
+                result = await ingest_step1_history(symbol, step_db)
+            elif ingestion_status == "INGESTING":
+                result = await ingest_step2_analytics(symbol, step_db)
+            elif ingestion_status == "ANALYTICS_RUNNING":
+                result = await ingest_step3_briefing(symbol, step_db)
+            else:
+                result = {"status": ingestion_status, "message": "Unknown state"}
+
+        return {"symbol": symbol, **result}
+
+    except Exception as exc:
+        logger.error(f"[IngestEndpoint] {symbol} pipeline step failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Pipeline step failed: {str(exc)[:200]}")
+    finally:
+        try:
+            await redis_client.delete(lock_key)
+        except Exception:
+            pass
+
+
+@router.post("/admin/prewarm", dependencies=[Depends(check_rate_limit)])
+async def prewarm_nifty50(db: AsyncSession = Depends(get_db)):
+    """
+    Prewarm common stocks (NIFTY 50 + NIFTY NEXT 50).
+    Triggers quick_discover for any stocks not yet in DB or marked stale (> 24h).
+    Call daily via Vercel cron or external scheduler.
+    """
+    from datetime import datetime, timedelta
+    from app.workers.stock_ingestion import quick_discover_stock
+
+    NIFTY50 = [
+        "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR",
+        "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK", "BAJFINANCE", "MARUTI",
+        "HCLTECH", "SUNPHARMA", "TITAN", "WIPRO", "NESTLEIND", "POWERGRID",
+        "ULTRACEMCO", "NTPC", "BAJAJFINSV", "ONGC", "HDFCLIFE", "TATASTEEL",
+        "M&M", "JSWSTEEL", "ADANIENT", "SBILIFE", "CIPLA", "DRREDDY",
+        "COALINDIA", "TATAMOTORS", "INDUSINDBK", "APOLLOHOSP", "ASIANPAINT",
+        "EICHERMOT", "GRASIM", "HEROMOTOCO", "HINDALCO", "BPCL",
+        "BRITANNIA", "DIVISLAB", "TATACONSUM", "TECHM", "SHREECEM",
+        "LTIM", "HAL", "BEL", "ADANIPORTS", "BAJAJ-AUTO",
+    ]
+
+    queued = []
+    skipped = []
+    stale_cutoff = datetime.utcnow() - timedelta(hours=24)
+
+    for sym in NIFTY50:
+        try:
+            q = await db.execute(select(StockMaster).where(StockMaster.symbol == sym))
+            existing = q.scalar_one_or_none()
+            ingestion_status = getattr(existing, "ingestion_status", None)
+
+            if existing and ingestion_status == "READY" and existing.last_updated > stale_cutoff:
+                skipped.append(sym)
+                continue
+
+            # Quick discover to seed/refresh basic info
+            result = await quick_discover_stock(sym, db)
+            queued.append({"symbol": sym, "result": result.get("status")})
+            logger.info(f"[Prewarm] {sym}: {result.get('status')}")
+        except Exception as e:
+            logger.error(f"[Prewarm] {sym} failed: {e}")
+            queued.append({"symbol": sym, "result": "error"})
+
+    return {
+        "queued": len(queued),
+        "skipped": len(skipped),
+        "details": queued,
     }
 
 
