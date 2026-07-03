@@ -19,17 +19,25 @@ export default function StockDetail() {
   const cachedStock = queryClient.getQueryData(['stocks', 'detail', symbol, 'meta']);
   
   const isDiscovering = !cachedStock || cachedStock?.status === 'discovering';
-  
+
   // 1. Fetch metadata first (fast)
+  // validateStatus allows 202 through as success (not an error), so we can read its body
   const { data: metaData, isLoading: metaLoading, error: metaError } = useStockMeta(symbol, {
     staleTime: isDiscovering ? 0 : 86400000,
     refetchInterval: (query) => {
       const data = query?.state?.data;
-      return (data?.status === 'discovering' || !data) ? 3000 : false;
+      // Poll every 3s if: no data yet, status is 'discovering', or company_name still placeholder
+      const stillDiscovering = !data || data?.status === 'discovering' || data?.company_name?.startsWith('Discovering ');
+      return stillDiscovering ? 3000 : false;
+    },
+    retry: (failureCount, error) => {
+      // Never retry on 404 (stock permanently not found on NSE/BSE)
+      if (error?.status === 404) return false;
+      return failureCount < 2;
     }
   });
-  
-  const currentIsDiscovering = metaLoading || !metaData || metaData?.status === 'discovering';
+
+  const currentIsDiscovering = metaLoading || !metaData || metaData?.status === 'discovering' || metaData?.company_name?.startsWith('Discovering ');
   
   // 2. Fetch metrics in parallel
   const { data: metricsData, isLoading: metricsLoading } = useStockMetrics(symbol, {
@@ -244,17 +252,48 @@ export default function StockDetail() {
   };
 
   if (error) {
+    const is404 = metaError?.status === 404;
     return (
-      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-4 font-mono">
-        <Cpu className="h-10 w-10 text-brand-danger mx-auto" />
-        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Ingestion Pipeline Failure</h3>
-        <p className="text-brand-textMuted text-xs leading-relaxed">{error}</p>
-        <button
-          onClick={() => navigate('/stocks/explorer')}
-          className="bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
-        >
-          Return to Matrix
-        </button>
+      <div className="max-w-2xl mx-auto mt-10 p-6 bg-brand-surface border border-brand-border text-center space-y-5 font-mono animate-fade-in-up">
+        <div className="flex items-center justify-center gap-3 pb-3 border-b border-brand-border">
+          <Cpu className={`h-8 w-8 ${is404 ? 'text-brand-warning' : 'text-brand-danger'}`} />
+          <div>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+              {is404 ? 'Equity Not Found' : 'Data Fetch Error'}
+            </h3>
+            <p className="text-[9px] text-brand-textMuted font-mono mt-0.5">
+              {is404 ? 'SYMBOL_NOT_FOUND_ON_NSE_BSE' : 'FETCH_ERROR_RETRYABLE'}
+            </p>
+          </div>
+        </div>
+        <p className="text-brand-textMuted text-xs leading-relaxed">
+          {is404
+            ? `"${symbol}" could not be found on NSE or BSE exchanges. Please verify the stock symbol.`
+            : (error || 'Failed to fetch stock details. The backend may be temporarily unavailable.')
+          }
+        </p>
+        <div className="flex gap-3 justify-center">
+          {!is404 && (
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-1.5 bg-brand-primary hover:bg-[#cc4400] text-black text-[10px] font-bold px-4 py-2 border border-brand-primary transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" /> Retry
+            </button>
+          )}
+          <button
+            onClick={() => navigate(-1)}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-xs text-white font-bold px-4 py-2 transition-colors text-[10px]"
+          >
+            Go Back
+          </button>
+          <button
+            onClick={() => navigate('/stocks/explorer')}
+            className="bg-brand-surface border border-brand-border hover:border-brand-primary text-xs text-white font-bold px-4 py-2 transition-colors text-[10px]"
+          >
+            Stock Explorer
+          </button>
+        </div>
       </div>
     );
   }
@@ -454,7 +493,24 @@ export default function StockDetail() {
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-20">
+      {/* Discovering Banner — shown while ingestion is running in background */}
+      {currentIsDiscovering && (
+        <div className="border border-brand-primary/40 bg-brand-primary/5 p-4 flex items-center gap-4 animate-pulse-subtle font-mono">
+          <RefreshCw className="h-4 w-4 text-brand-primary animate-spin flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-xs font-bold text-brand-primary uppercase tracking-wider">
+              Discovering {symbol}
+            </p>
+            <p className="text-[10px] text-brand-textMuted mt-0.5">
+              {metaData?.message || `Fetching market data from NSE/BSE. Page will populate automatically when ready (15–40s).`}
+            </p>
+          </div>
+          <span className="text-[9px] text-brand-primary/60 uppercase tracking-widest hidden sm:block">[INGESTING...]</span>
+        </div>
+      )}
+
       {/* Back navigation & Watchlist Trigger */}
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in-up">
         <button
           onClick={() => navigate(-1)}

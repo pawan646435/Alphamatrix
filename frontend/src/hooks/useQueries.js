@@ -119,14 +119,19 @@ export function useStockMeta(symbol, options = {}) {
     queryKey: ['stocks', 'detail', symbol, 'meta'],
     queryFn: async () => {
       const { data } = await apiClient.get(`/stocks/detail/${symbol}/meta`, {
-        validateStatus: (s) => s < 500,
+        // Allow 202 (discovering) and 404 through — don't throw for these
+        validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
       });
       return data;
     },
     enabled: !!symbol,
-    staleTime: 86400000, // 24 hours
+    staleTime: 86400000, // 24 hours (cleared for new stocks after ingestion)
     gcTime: 86400000,
-    retry: 1,
+    // Don't retry 404 — stock is permanently not found on NSE/BSE
+    retry: (failureCount, error) => {
+      if (error?.status === 404) return false;
+      return failureCount < 2;
+    },
     ...options
   });
 }

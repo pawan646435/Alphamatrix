@@ -1206,18 +1206,58 @@ in_flight_ingestions: Dict[str, asyncio.Event] = {}
 async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     import asyncio
     symbol = symbol.upper().strip()
-    
+
     if symbol in in_flight_ingestions:
-        logger.info(f"[SingleFlight] Wait for ongoing dynamic ingestion of {symbol}...")
-        await in_flight_ingestions[symbol].wait()
-        logger.info(f"[SingleFlight] Ongoing ingestion for {symbol} finished. Returning.")
+        logger.info(f"[SingleFlight] Waiting for ongoing dynamic ingestion of {symbol}...")
+        try:
+            # Wait at most 55s for the in-flight ingestion to complete
+            await asyncio.wait_for(in_flight_ingestions[symbol].wait(), timeout=55.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"[SingleFlight] Timed out waiting for in-flight ingestion of {symbol}")
+        logger.info(f"[SingleFlight] In-flight ingestion for {symbol} finished (or timed out). Returning.")
         return {"status": "already_exists", "symbol": symbol}
-        
+
     event = asyncio.Event()
     in_flight_ingestions[symbol] = event
-    
+
+    # Write initial progress to Redis so the frontend can poll status
     try:
-        return await _dynamic_ingest_stock_internal(symbol, db)
+        from app.core.redis import redis_client
+        await redis_client.setex(
+            f"ingest_progress:{symbol}", 120,
+            '{"stage": "starting", "progress": 0}'
+        )
+    except Exception:
+        pass
+
+    try:
+        # Hard 55-second timeout — keeps us well within Vercel's 60s limit
+        result = await asyncio.wait_for(
+            _dynamic_ingest_stock_internal(symbol, db),
+            timeout=55.0
+        )
+        # Write completion progress
+        try:
+            await redis_client.setex(
+                f"ingest_progress:{symbol}", 120,
+                '{"stage": "completed", "progress": 100}'
+            )
+        except Exception:
+            pass
+        return result
+    except asyncio.TimeoutError:
+        logger.error(f"[DynamicIngest] Ingestion for {symbol} timed out after 55s")
+        try:
+            await redis_client.setex(
+                f"ingest_progress:{symbol}", 60,
+                '{"stage": "timeout", "progress": -1}'
+            )
+        except Exception:
+            pass
+        return {"status": "error", "symbol": symbol, "reason": "timeout"}
+    except Exception as exc:
+        logger.error(f"[DynamicIngest] Ingestion for {symbol} failed: {exc}")
+        return {"status": "error", "symbol": symbol, "reason": str(exc)}
     finally:
         in_flight_ingestions.pop(symbol, None)
         event.set()
