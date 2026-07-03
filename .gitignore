@@ -47,3 +47,5 @@ out/
 .DS_Store
 Thumbs.db
 .history/
+frontend/.env.production
+frontend/.env
