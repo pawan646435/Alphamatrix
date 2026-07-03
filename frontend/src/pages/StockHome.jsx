@@ -292,7 +292,7 @@ export default function StockHome() {
 
         {/* Scatterplot */}
         <div className="lg:col-span-7 h-[300px] sm:h-[420px] animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-          <StockRiskScatterplot stocks={stocks} />
+          <StockRiskScatterplot stocks={stocks} isLoading={stocksLoading} />
         </div>
       </div>
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis, Label } from 'recharts';
 import { getStandardizedSector } from '../../hooks/useQueries';
 
-export default function StockRiskScatterplot({ stocks = [] }) {
+export default function StockRiskScatterplot({ stocks = [], isLoading = false }) {
   const navigate = useNavigate();
 
   // Pre-process data
@@ -140,9 +140,22 @@ export default function StockRiskScatterplot({ stocks = [] }) {
               ))}
             </ScatterChart>
           </ResponsiveContainer>
+        ) : isLoading ? (
+          // Still loading stocks from API
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-brand-textMuted">
+            <div className="flex gap-1.5">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="w-2.5 h-2.5 rounded-full bg-brand-primary/40 animate-bounce"
+                  style={{ animationDelay: `${i * 150}ms` }} />
+              ))}
+            </div>
+            <span className="text-xs font-mono">COMPILING EQUITY RISK COORDINATES...</span>
+          </div>
         ) : (
-          <div className="h-full flex items-center justify-center text-brand-textMuted text-sm font-mono">
-            COMPILING EQUITY RISK COORDINATES...
+          // Stocks loaded but none have beta + cagr_3y data yet
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-brand-textMuted text-center font-mono">
+            <span className="text-xs">NO PLOTTABLE EQUITIES</span>
+            <span className="text-[10px] opacity-60">Stocks require beta & 3Y CAGR data to appear here.</span>
           </div>
         )}
       </div>
