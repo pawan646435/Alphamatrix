@@ -1700,6 +1700,7 @@ async def quick_discover_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     existing = check_q.scalar_one_or_none()
 
     if existing:
+        # Update existing record (covers both DISCOVERING skeletons and DISCOVERED records)
         existing.company_name = company_name
         existing.sector = sector
         existing.industry = industry

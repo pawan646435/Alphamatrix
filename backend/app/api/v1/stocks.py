@@ -556,14 +556,16 @@ async def get_stock_detail(
 
     is_new = False
     if not stock:
-        # Create a skeleton StockMaster record immediately to allow instant rendering
+        # Create a skeleton StockMaster record immediately — include ingestion_status
+        # so the new /meta pipeline knows to run quick_discover on the next call
         try:
             stock = StockMaster(
                 symbol=symbol,
                 company_name=f"Discovering {symbol}...",
                 sector="Unknown",
                 industry="Unknown",
-                ai_summary="Generating Equity Intelligence Briefing in the background..."
+                ai_summary="Generating Equity Intelligence Briefing in the background...",
+                ingestion_status="DISCOVERING",
             )
             db.add(stock)
             await db.commit()
@@ -778,33 +780,57 @@ async def get_stock_meta_split(
             response.status_code = 202
         return partial
 
-    # ── Stage 6: New stock — run quick_discover_stock() inline ──────────────
-    logger.info(f"[META] {symbol} new stock — running quick_discover")
-    from app.workers.stock_ingestion import quick_discover_stock
-    result = await quick_discover_stock(symbol, db)
+    # ── Stage 6: New stock OR legacy skeleton (NULL ingestion_status + Unknown sector) ─
+    # Covers: brand new stock, OR old skeleton records created by /detail/{symbol}
+    needs_discover = (
+        stock is None
+        or ingestion_status is None
+        or (stock.sector in ("Unknown", None, "") and stock.alpha_score is None)
+    )
+    if needs_discover:
+        logger.info(f"[META] {symbol} needs discovery (status={ingestion_status}, sector={getattr(stock,'sector',None)})")
+        from app.workers.stock_ingestion import quick_discover_stock
+        result = await quick_discover_stock(symbol, db)
 
-    if result.get("status") == "not_found":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stock {symbol} not found on NSE or BSE exchanges."
-        )
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail="Discovery failed. Please try again.")
+        if result.get("status") == "not_found":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Stock {symbol} not found on NSE or BSE exchanges."
+            )
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail="Discovery failed. Please try again.")
 
-    logger.info(f"[META] {symbol} discovered ({_ms()}ms)")
+        logger.info(f"[META] {symbol} discovered ({_ms()}ms)")
+        if response is not None:
+            response.status_code = 202
+        return {
+            "symbol": symbol,
+            "company_name": result.get("company_name", f"Discovering {symbol}..."),
+            "isin": result.get("isin"),
+            "sector": result.get("sector", "Unknown"),
+            "industry": result.get("industry", "Unknown"),
+            "market_cap": result.get("market_cap"),
+            "current_price": result.get("current_price"),
+            "exchange": result.get("exchange", "NSE"),
+            "status": "DISCOVERED",
+            "stage_message": "Downloading historical price data...",
+        }
+
+    # ── Fallback: stock exists but state is unclear — return what we have ─────
+    logger.warning(f"[META] {symbol} fallback — status={ingestion_status} sector={getattr(stock,'sector',None)}")
     if response is not None:
         response.status_code = 202
     return {
         "symbol": symbol,
-        "company_name": result.get("company_name", f"Discovering {symbol}..."),
-        "isin": result.get("isin"),
-        "sector": result.get("sector", "Unknown"),
-        "industry": result.get("industry", "Unknown"),
-        "market_cap": result.get("market_cap"),
-        "current_price": result.get("current_price"),
-        "exchange": result.get("exchange", "NSE"),
-        "status": "DISCOVERED",
-        "stage_message": "Downloading historical price data...",
+        "company_name": getattr(stock, "company_name", symbol),
+        "isin": getattr(stock, "isin", None),
+        "sector": getattr(stock, "sector", "Unknown"),
+        "industry": getattr(stock, "industry", "Unknown"),
+        "market_cap": getattr(stock, "market_cap", None),
+        "current_price": getattr(stock, "current_price", None),
+        "exchange": getattr(stock, "exchange", "NSE"),
+        "status": ingestion_status or "DISCOVERED",
+        "stage_message": "Resolving analytics...",
     }
 
 
