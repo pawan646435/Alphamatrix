@@ -127,12 +127,15 @@ def _verify_jwt(token: str, signing_key: str, url: str, body: bytes) -> bool:
             # Don't hard-fail on URL mismatch in case of proxy/load balancer differences
             # Log but continue to body hash check
 
-        # 4. Verify body hash
+        # 4. Verify body hash — QStash encodes this claim as base64url WITH
+        # padding (unlike the JWT segments themselves), so compare against
+        # both padded and unpadded forms rather than assuming one.
         body_hash_claim = payload.get("body")
         if body_hash_claim and body:
             actual_hash = hashlib.sha256(body).digest()
-            actual_b64 = base64.urlsafe_b64encode(actual_hash).rstrip(b"=").decode()
-            if actual_b64 != body_hash_claim:
+            actual_b64_padded = base64.urlsafe_b64encode(actual_hash).decode()
+            actual_b64_unpadded = actual_b64_padded.rstrip("=")
+            if body_hash_claim not in (actual_b64_padded, actual_b64_unpadded):
                 logger.warning("[QStash] JWT body hash mismatch")
                 return False
 
