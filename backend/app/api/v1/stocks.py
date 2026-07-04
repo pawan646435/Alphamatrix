@@ -583,8 +583,7 @@ async def get_stock_detail(
                 raise HTTPException(status_code=500, detail="Failed to initialize stock metadata.")
 
     if is_new or (stock.alpha_score is None and stock.sector == "Unknown"):
-        if symbol not in ingesting_tickers:
-            ingesting_tickers.add(symbol)
+        if await _acquire_ingest_lock(symbol):
             logger.info(f"Stock {symbol} is in skeleton/discovering state — scheduling background ingestion")
             async def _ingest_and_brief(sym: str):
                 from app.core.database import async_session_maker
@@ -595,7 +594,7 @@ async def get_stock_detail(
                         if result["status"] == "ingested":
                             await generate_briefing_background(sym)
                 finally:
-                    ingesting_tickers.discard(sym)
+                    await _release_ingest_lock(sym)
             background_tasks.add_task(_ingest_and_brief, symbol)
 
     # Trigger background AI briefing if missing

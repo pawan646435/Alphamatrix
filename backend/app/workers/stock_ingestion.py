@@ -1204,29 +1204,31 @@ def parse_briefing_sections(briefing: str) -> Tuple[Optional[str], Optional[str]
     
     return bull, bear, rat
 
-# Single-flight registry to deduplicate concurrent dynamic ingestions
-in_flight_ingestions: Dict[str, asyncio.Event] = {}
+# Distributed ingestion lock — an in-memory set doesn't work across separate
+# Vercel invocations (each gets a fresh process), so single-flight dedup must
+# live in Redis instead.
+_DYNAMIC_INGEST_LOCK_TTL = 120
+_DYNAMIC_INGEST_LOCK_KEY = "ingesting:{}"
 
 async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     import asyncio
     symbol = symbol.upper().strip()
 
-    if symbol in in_flight_ingestions:
-        logger.info(f"[SingleFlight] Waiting for ongoing dynamic ingestion of {symbol}...")
-        try:
-            # Wait at most 55s for the in-flight ingestion to complete
-            await asyncio.wait_for(in_flight_ingestions[symbol].wait(), timeout=55.0)
-        except asyncio.TimeoutError:
-            logger.warning(f"[SingleFlight] Timed out waiting for in-flight ingestion of {symbol}")
-        logger.info(f"[SingleFlight] In-flight ingestion for {symbol} finished (or timed out). Returning.")
-        return {"status": "already_exists", "symbol": symbol}
+    from app.core.redis import redis_client
+    lock_key = _DYNAMIC_INGEST_LOCK_KEY.format(symbol)
 
-    event = asyncio.Event()
-    in_flight_ingestions[symbol] = event
+    try:
+        acquired = await redis_client.set_nx(lock_key, "1", ex=_DYNAMIC_INGEST_LOCK_TTL)
+    except Exception as e:
+        logger.warning(f"[DynamicIngest] Redis lock check failed for {symbol}: {e} — proceeding anyway")
+        acquired = True
+
+    if not acquired:
+        logger.info(f"[DynamicIngest] {symbol} is already being ingested elsewhere — skipping duplicate trigger")
+        return {"status": "already_exists", "symbol": symbol}
 
     # Write initial progress to Redis so the frontend can poll status
     try:
-        from app.core.redis import redis_client
         await redis_client.setex(
             f"ingest_progress:{symbol}", 120,
             '{"stage": "starting", "progress": 0}'
@@ -1246,6 +1248,8 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
                 f"ingest_progress:{symbol}", 120,
                 '{"stage": "completed", "progress": 100}'
             )
+            if result.get("status") in ("ingested", "already_exists"):
+                await redis_client.setex(f"stock_ready:{symbol}", 3600, "1")
         except Exception:
             pass
         return result
@@ -1263,8 +1267,10 @@ async def dynamic_ingest_stock(symbol: str, db: AsyncSession) -> Dict[str, Any]:
         logger.error(f"[DynamicIngest] Ingestion for {symbol} failed: {exc}")
         return {"status": "error", "symbol": symbol, "reason": str(exc)}
     finally:
-        in_flight_ingestions.pop(symbol, None)
-        event.set()
+        try:
+            await redis_client.delete(lock_key)
+        except Exception:
+            pass
 
 async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     """

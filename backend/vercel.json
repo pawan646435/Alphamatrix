@@ -10,6 +10,10 @@
     {
       "path": "/api/v1/stocks/prewarm",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/health",
+      "schedule": "0 3 * * *"
     }
   ]
 }
