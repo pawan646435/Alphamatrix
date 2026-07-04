@@ -66,7 +66,7 @@ export default function RiskScatterplot({ funds = [] }) {
   };
 
   return (
-    <div className="bg-brand-surface border border-brand-border rounded-xl p-6 shadow-2xl h-full flex flex-col">
+    <div className="bg-brand-surface border border-brand-border rounded-xl p-6 shadow-2xl min-h-full flex flex-col">
       <div className="mb-4">
         <h3 className="text-lg font-bold text-black dark:text-white tracking-wide">Risk-Return Scatter Matrix</h3>
         <p className="text-brand-textMuted text-xs mt-0.5">Plotting Beta (Volatility) against CAGR 3Y. Node size indicates Sharpe ratio.</p>
