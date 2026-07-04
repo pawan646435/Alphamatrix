@@ -13,6 +13,7 @@
  *   Fund data          → 1hr    (NAV data)
  *   Fund list          → 5min   (explorer grid)
  */
+import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../services/api';
 
@@ -216,7 +217,7 @@ export function useStockNews(symbol, options = {}) {
  * The caller uses available_sections to decide which page sections to render.
  */
 export function useStockStatus(symbol, options = {}) {
-  const startedAt = React.useRef(Date.now());
+  const startedAt = useRef(Date.now());
   return useQuery({
     queryKey: ['stocks', 'status', symbol],
     queryFn: async () => {
