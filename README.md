@@ -232,12 +232,14 @@ A historical verdict accuracy engine that measures how well past verdicts predic
 | **FastAPI** | Asynchronous API gateway |
 | **SQLAlchemy + Asyncpg** | Async ORM with PostgreSQL driver |
 | **Neon PostgreSQL** | Serverless cloud PostgreSQL with connection pooling |
-| **Upstash Redis** | Serverless Redis (REST + TCP) for multi-layer caching |
+| **Upstash Redis** | Serverless Redis (REST + TCP) for multi-layer caching, ingestion progress, and distributed locks |
+| **Upstash QStash** | Async job queue driving the background stock ingestion pipeline outside the request/response cycle, working around Vercel's short function timeouts |
 | **Groq Llama 3.3 70B** | AI briefings, chatbots, news analysis, market regime |
 | **Yahoo Finance (yfinance)** | Stock price history, real-time quotes, fallback news |
 | **MFAPI.in** | Indian Mutual Fund NAV data |
-| **httpx** | Async HTTP client for RSS feed fetching |
+| **httpx** | Async HTTP client for RSS feed fetching + QStash publish calls |
 | **feedparser** | RSS/Atom feed parsing |
+| **Firebase Admin (public keys)** | Verifies Firebase ID tokens for real user authentication |
 
 ### Frontend
 | Technology | Purpose |
@@ -266,61 +268,89 @@ alphamatrix/
 ├── backend/
 │   ├── app/
 │   │   ├── api/v1/
-│   │   │   ├── auth.py          # JWT authentication
+│   │   │   ├── auth.py          # Mock JWT auth (legacy/demo — real auth is Firebase)
 │   │   │   ├── funds.py         # Fund CRUD + rating + peers endpoints
-│   │   │   ├── stocks.py        # Stock CRUD + regime + backtest endpoints
+│   │   │   ├── stocks.py        # Stock CRUD + split detail endpoints + progressive
+│   │   │   │                    #   discovery pipeline (meta/status/ingest) + regime + backtest
+│   │   │   ├── internal.py      # QStash-only webhook: runs the 4-stage ingestion pipeline
 │   │   │   ├── news.py          # Multi-source news aggregation endpoints
-│   │   │   ├── ai.py            # AI chat and analysis endpoints
-│   │   │   └── search.py        # Global search + discovery endpoint
+│   │   │   ├── ai.py            # AI chat and semantic-query endpoints
+│   │   │   └── search.py        # Global search + yfinance discovery suggestion
 │   │   ├── models/
-│   │   │   ├── fund.py          # FundMaster + FundNAVHistory ORM models
-│   │   │   └── stock.py         # StockMaster + StockPriceHistory ORM models
+│   │   │   ├── fund.py          # FundMaster + NAVHistory ORM models
+│   │   │   ├── stock.py         # StockMaster (+ ingestion_status state machine),
+│   │   │   │                    #   StockPriceHistory, WatchlistItem
+│   │   │   └── user.py          # User table (vestigial — Firebase is real identity)
 │   │   ├── schemas/
 │   │   │   ├── fund_schema.py   # Pydantic response schemas for funds
-│   │   │   └── stock_schema.py  # Pydantic response schemas for stocks
+│   │   │   ├── stock_schema.py  # Pydantic response schemas for stocks
+│   │   │   └── ai_schema.py     # Pydantic schemas for AI chat/semantic-query
 │   │   ├── services/
 │   │   │   ├── fund_rating_engine.py    # Deterministic 6-factor fund scoring
-│   │   │   ├── rating_engine.py         # Deterministic 5-factor stock scoring
-│   │   │   ├── news_aggregator.py       # Multi-source RSS aggregator
+│   │   │   ├── news_aggregator.py       # Multi-source RSS aggregator + Jaccard dedup
 │   │   │   ├── backtesting.py           # Historical verdict accuracy engine
-│   │   │   ├── ai_agent.py              # Groq LLM integration
-│   │   │   └── cache_service.py         # Upstash Redis abstraction layer
+│   │   │   ├── ai_agent.py              # Groq LLM integration (all AI features)
+│   │   │   ├── analytics.py             # CAGR / Sharpe / Sortino / drawdown math
+│   │   │   ├── qstash.py                # Publish ingestion jobs + verify webhook JWT signatures
+│   │   │   └── cache_service.py         # Redis cache abstraction (search/news)
 │   │   ├── workers/
-│   │   │   ├── ingestion.py             # Fund data ingestion pipeline
-│   │   │   └── stock_ingestion.py       # Stock data ingestion pipeline
+│   │   │   ├── ingestion.py             # Fund NAV ingestion + rating computation
+│   │   │   ├── stock_ingestion.py       # Alpha Score model + progressive ingestion
+│   │   │   │                            #   pipeline steps (quick_discover/step1/2/3)
+│   │   │   └── cron_jobs.py             # Overnight fund re-sync batch job
 │   │   └── core/
-│   │       ├── database.py              # Async SQLAlchemy engine
-│   │       ├── security.py             # JWT + rate limiting
-│   │       └── config.py               # Settings via pydantic-settings
+│   │       ├── database.py              # Async SQLAlchemy engine, SQLite/Postgres dual-mode
+│   │       ├── redis.py                 # Dual-mode Redis client (TCP redis-py / Upstash REST)
+│   │       ├── security.py              # Firebase token verification + rate limiting
+│   │       ├── cache_ttl.py             # Centralized Redis TTL constants
+│   │       └── config.py                # Settings via pydantic-settings
 │   └── requirements.txt
 │
 └── frontend/
     └── src/
         ├── pages/
-        │   ├── Home.jsx          # Platform landing page
+        │   ├── Home.jsx          # Platform landing page (funds)
         │   ├── Explorer.jsx      # Mutual Fund explorer grid
         │   ├── Detail.jsx        # Mutual Fund detail (score ring, AI, chat)
         │   ├── StockHome.jsx     # Stock platform home + backtesting accuracy
         │   ├── StockExplorer.jsx # Stock grid
-        │   ├── StockDetail.jsx   # Stock detail (alpha ring, backtesting, AI)
+        │   ├── StockDetail.jsx   # Progressive-discovery stock detail (alpha ring,
+        │   │                     #   incrementally-rendered sections, backtesting, AI)
         │   ├── StockSector.jsx   # Sector drill-down
         │   ├── StockCompare.jsx  # Multi-stock comparison
         │   ├── StockWatchlist.jsx# Portfolio + AI diagnostics
         │   └── News.jsx          # Multi-source news intelligence
         ├── components/
         │   ├── charts/
-        │   │   ├── InteractiveChart.jsx     # Area chart with period tabs
-        │   │   └── StockRiskScatterplot.jsx # Risk/return coordinate plot
+        │   │   ├── InteractiveChart.jsx       # Area chart with period tabs (mobile-aware)
+        │   │   ├── StockComparisonChart.jsx   # Dual-line comparison chart (mobile-aware)
+        │   │   ├── RiskScatterplot.jsx        # Sharpe vs CAGR scatter (funds)
+        │   │   └── StockRiskScatterplot.jsx   # Beta vs CAGR scatter (stocks)
         │   ├── GlobalSearch.jsx             # Unified search with portal
+        │   ├── FloatingChatAssistant.jsx    # Shared floating AI chat drawer (mobile bottom-sheet)
         │   ├── FundLogo.jsx                 # AMC vector monogram renderer
         │   ├── StockLogo.jsx                # Equity lettermark renderer
         │   └── AnalystResponseCard.jsx      # AI chat message renderer
         ├── hooks/
-        │   ├── useQueries.js    # All React Query hooks
-        │   ├── useFunds.js      # Fund-specific mutations
-        │   └── useStocks.js     # Stock-specific mutations + chat
+        │   ├── useQueries.js     # React Query layer — split stock endpoints,
+        │   │                     #   useStockStatus adaptive polling, fund/news/backtest hooks
+        │   ├── useIsMobile.js    # Reactive matchMedia hook for responsive charts/UI
+        │   ├── useSearchCache.js # Client-side LRU cache in front of search API
+        │   ├── useFunds.js       # Legacy imperative fund fetch hooks
+        │   └── useStocks.js      # Legacy imperative stock fetch hooks + chat
         └── index.css            # Design system + Tailwind config
 ```
+
+### Progressive Stock Discovery & QStash Pipeline
+
+Stocks aren't ingested synchronously — a symbol moves through a state machine (`StockMaster.ingestion_status`): `DISCOVERING → DISCOVERED → INGESTING → ANALYTICS_RUNNING → READY` (or `FAILED`).
+
+1. Visiting an unseeded symbol calls `GET /stocks/detail/{symbol}/meta`. If QStash is configured, the endpoint stubs a `DISCOVERING` row, publishes an ingestion job to **Upstash QStash**, and returns 202 in under 300ms.
+2. QStash calls back `POST /api/v1/internal/ingest-background`, verified via an `Upstash-Signature` JWT (HMAC-SHA256, with key-rotation support and a Redis lock making retries idempotent).
+3. The webhook handler runs 4 pipeline stages back-to-back in one invocation: **quick discover** (yfinance `.info` only) → **history** (3y OHLC) → **analytics** (full Alpha Score model) → **AI briefing** (Groq).
+4. The frontend polls `GET /stocks/status/{symbol}` (adaptive 1.5s→3s interval) and progressively renders chart/metrics/briefing/news as each section becomes available — no full-page loading spinner.
+5. If QStash isn't configured (e.g. Vercel Hobby plan), the pipeline falls back to a frontend-driven mode: each poll cycle calls `POST /stocks/ingest/{symbol}` to advance exactly one step, bounded to fit within the platform's shorter function timeout.
+6. A daily Vercel Cron hits `GET /stocks/prewarm` to pre-ingest the NIFTY 50/Next 50 + popular mid-caps ahead of user demand, informed by a Redis-tracked `cold_misses` sorted set of real search misses.
 
 ---
 
@@ -341,14 +371,29 @@ alphamatrix/
 
 | Method | Endpoint | Description | Cache |
 |:-------|:---------|:------------|:------|
-| `GET` | `/api/v1/stocks/list` | All stocks with scores | 6 hr |
-| `GET` | `/api/v1/stocks/{symbol}` | Stock detail + history | 6 hr |
+| `GET` | `/api/v1/stocks/search` | Symbol/name search | 10 min |
+| `GET` | `/api/v1/stocks/list` | All stocks with scores, filterable/sortable | 5 min |
+| `GET` | `/api/v1/stocks/detail/{symbol}` | Legacy monolithic detail (meta+metrics+chart+AI) | — |
+| `GET` | `/api/v1/stocks/detail/{symbol}/meta` | Progressive pipeline entry point (202 while discovering) | 24 hr |
+| `GET` | `/api/v1/stocks/detail/{symbol}/metrics` | Fundamentals + Alpha Score breakdown | 24 hr |
+| `GET` | `/api/v1/stocks/detail/{symbol}/chart` | Price history (DB 3y / live yfinance 5y-max) | 1 hr |
+| `GET` | `/api/v1/stocks/detail/{symbol}/briefing` | AI equity briefing | — |
+| `GET` | `/api/v1/stocks/detail/{symbol}/news` | Recent stock news | 15 min |
+| `GET` | `/api/v1/stocks/status/{symbol}` | Ingestion progress (adaptive polling) | — |
+| `POST` | `/api/v1/stocks/ingest/{symbol}` | Advance ingestion pipeline by one step | — |
+| `POST` | `/api/v1/internal/ingest-background` | QStash webhook — runs all 4 pipeline stages | — |
 | `GET` | `/api/v1/stocks/market-regime` | Macro regime classification | 1 hr |
 | `GET` | `/api/v1/stocks/sector/{sector}` | Sector stocks with peers | 30 min |
+| `GET` | `/api/v1/stocks/compare` | Side-by-side stock comparison + AI verdict | — |
 | `GET` | `/api/v1/stocks/backtest/summary` | Aggregate verdict accuracy | 24 hr |
 | `GET` | `/api/v1/stocks/backtest/{symbol}` | Per-stock backtest T+30/90/180/365 | 12 hr |
-| `POST` | `/api/v1/stocks/{symbol}/chat` | AI chat for stock | — |
-| `POST` | `/api/v1/stocks/{symbol}/watchlist` | Add to watchlist | — |
+| `GET` | `/api/v1/stocks/prewarm` | Daily cron: pre-ingest popular universe | — |
+| `GET` | `/api/v1/stocks/cold-misses` | Top unseeded symbols by search demand | — |
+| `POST` | `/api/v1/stocks/chat` | AI chat for stock | — |
+| `GET` | `/api/v1/stocks/watchlist` | List watchlist (auth) | — |
+| `POST` | `/api/v1/stocks/watchlist` | Add to watchlist (auth) | — |
+| `DELETE` | `/api/v1/stocks/watchlist/{symbol}` | Remove from watchlist (auth) | — |
+| `GET` | `/api/v1/stocks/watchlist/analytics` | AI watchlist diagnostics (auth) | — |
 
 ### News
 
@@ -470,11 +515,17 @@ Create `backend/.env` with the following:
 
 ```env
 # ── Database ────────────────────────────────────────────────────────
-DATABASE_URL=postgresql+asyncpg://user:password@host/dbname
+DATABASE_URL=postgresql+asyncpg://user:password@host/dbname   # defaults to local SQLite if unset
 
-# ── Redis (Upstash) ─────────────────────────────────────────────────
+# ── Redis (Upstash REST, or REDIS_URL for direct TCP) ────────────────
 UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
+
+# ── QStash (Upstash) — async stock ingestion pipeline ────────────────
+QSTASH_TOKEN=your_qstash_token
+QSTASH_CURRENT_SIGNING_KEY=your_current_signing_key
+QSTASH_NEXT_SIGNING_KEY=your_next_signing_key   # optional, for key rotation
+BACKEND_URL=https://your-backend.vercel.app     # public URL QStash calls back into
 
 # ── AI (Groq) ───────────────────────────────────────────────────────
 GROQ_API_KEY=your_groq_api_key
@@ -482,15 +533,28 @@ GROQ_API_KEY=your_groq_api_key
 # ── Security ────────────────────────────────────────────────────────
 SECRET_KEY=your_jwt_secret_key_min_32_chars
 
-# ── Firebase (optional — for Auth UI) ───────────────────────────────
-FIREBASE_API_KEY=your_firebase_web_api_key
+# ── Fund/Risk Benchmarks ──────────────────────────────────────────────
+BENCHMARK_SCHEME_CODE=120687   # default Nifty 50 index fund used as benchmark
+RISK_FREE_RATE=0.06
 ```
 
-> **Note:** If `GROQ_API_KEY` is not set, the platform gracefully falls back to deterministic mock AI responses — all scoring engines continue to function normally.
+> **Notes:**
+> - If `GROQ_API_KEY` is not set, the platform gracefully falls back to deterministic mock AI responses — all scoring engines continue to function normally.
+> - If QStash variables are not set, the stock discovery pipeline falls back to a synchronous/frontend-driven mode (each poll advances one ingestion step) instead of the async webhook flow.
+> - Firebase authentication is configured client-side in `frontend/src/services/firebase.js`; the backend verifies Firebase ID tokens against Google's public keys directly, with no Firebase env vars required server-side.
 
 ---
 
 ## Changelog
+
+### v3.1.0 — July 2026
+- **Progressive Stock Discovery Pipeline**: Async 4-stage ingestion (discover → history → analytics → AI briefing) driven by Upstash QStash webhooks, replacing single-request blocking ingestion
+- **QStash Signature Verification**: HMAC-SHA256 JWT verification with signing-key rotation support
+- **Split Stock Detail Endpoints**: `meta`/`metrics`/`chart`/`briefing`/`news` fetched independently so the UI renders sections as they become ready
+- **Adaptive Status Polling**: Single `useStockStatus` polling hook drives incremental rendering, replacing per-endpoint polling
+- **Cold-Miss-Aware Prewarming**: Daily cron pre-ingests high-demand unlisted symbols tracked via Redis
+- **Floating Chat Assistant**: Shared mobile-aware AI chat drawer on Home and Stock Home
+- **Mobile Responsiveness Pass**: `useIsMobile` hook, responsive charts, simplified hero panels
 
 ### v3.0.0 — July 2026
 - **Fund Rating Engine v1**: Deterministic 6-factor fund scoring (Elite/Strong/Good/Average/Avoid)
