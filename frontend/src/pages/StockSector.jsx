@@ -61,8 +61,8 @@ export default function StockSector() {
         className="relative border border-brand-border p-6 md:p-8 shadow-xl animate-fade-in-up bg-brand-surface"
         style={{ animationDelay: '50ms' }}
       >
-        <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[9px]">+ [SECTOR_LAB_SYSTEM]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted/60 sm:text-brand-textMuted font-mono text-[8px] sm:text-[9px]">+ [SECTOR_LAB_SYSTEM]</div>
+        <div className="hidden sm:block absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
         
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="space-y-1.5 min-w-0 pr-4">

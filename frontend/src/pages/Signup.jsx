@@ -67,8 +67,8 @@ export default function Signup() {
   return (
     <div className="min-h-[70vh] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8 bg-brand-surface border border-brand-border p-6 sm:p-8 shadow-2xl relative">
-        <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[8px]">+ [SECURE_SIGNUP_GATE]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[8px]">[NEW_ACCOUNT] +</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted/60 sm:text-brand-textMuted font-mono text-[8px]">+ [SECURE_SIGNUP_GATE]</div>
+        <div className="hidden sm:block absolute top-2 right-2 text-brand-textMuted font-mono text-[8px]">[NEW_ACCOUNT] +</div>
 
         <div className="text-center space-y-2 pt-4">
           <div className="mx-auto h-12 w-12 border border-brand-primary/30 rounded-lg flex items-center justify-center bg-brand-primary/5">

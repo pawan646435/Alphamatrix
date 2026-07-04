@@ -281,13 +281,13 @@ export default function StockCompare() {
         >
           <ArrowLeft className="h-4 w-4" /> [Back to Equities Hub]
         </button>
-        <span className="font-mono text-[9px] text-brand-textMuted uppercase">[SECURE_SESSION: active]</span>
+        <span className="hidden sm:inline font-mono text-[9px] text-brand-textMuted uppercase">[SECURE_SESSION: active]</span>
       </div>
 
       {/* Header Selector Box */}
       <div className="relative border border-brand-border p-4 sm:p-6 shadow-xl animate-fade-in-up bg-brand-surface">
-        <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[9px]">+ [COMPARATIVE_ENGINE]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[STABLE] +</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted/60 sm:text-brand-textMuted font-mono text-[8px] sm:text-[9px]">+ [COMPARATIVE_ENGINE]</div>
+        <div className="hidden sm:block absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[STABLE] +</div>
 
         {/* Step Progress Telemetry */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 border-b border-brand-border/40 pb-4 mb-6 font-mono text-[9px]">

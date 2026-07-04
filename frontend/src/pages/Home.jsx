@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Layers, MessageSquare, Star, Cpu } from 'lucide-react';
+import { TrendingUp, Layers, Star, Cpu } from 'lucide-react';
 import { useAIChat } from '../hooks/useFunds';
 import { useFundList } from '../hooks/useQueries';
 import RiskScatterplot from '../components/charts/RiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardSkeleton } from '../components/skeletons/Skeletons';
+import FloatingChatAssistant from '../components/FloatingChatAssistant';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -55,35 +56,35 @@ export default function Home() {
     <div className="space-y-8 sm:space-y-12 pb-20">
       {/* Hero Display Panel */}
       <div
-        className="relative border border-brand-border p-8 sm:p-10 md:p-14 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
+        className="relative border border-brand-border p-5 sm:p-10 md:p-14 overflow-hidden flex flex-col items-center text-center animate-fade-in-up bg-brand-surface"
       >
-        {/* Subtle corner markers — kept minimal */}
-        <div className="absolute top-3 left-3 text-brand-textMuted/40 select-none font-mono text-[9px] tracking-widest">ALPHAMATRIX</div>
-        <div className="absolute top-3 right-3 text-brand-textMuted/40 select-none font-mono text-[9px] tracking-widest">RESEARCH PLATFORM</div>
+        {/* Subtle corner markers — one on mobile, full pair on desktop */}
+        <div className="absolute top-3 left-3 text-brand-textMuted/40 select-none font-mono text-[8px] sm:text-[9px] tracking-widest">ALPHAMATRIX</div>
+        <div className="hidden sm:block absolute top-3 right-3 text-brand-textMuted/40 select-none font-mono text-[9px] tracking-widest">RESEARCH PLATFORM</div>
 
         {/* Subtle gradient accent */}
         <div className="absolute inset-0 bg-gradient-to-b from-brand-primary/4 via-transparent to-brand-primary/4 opacity-40 pointer-events-none" />
 
         {/* Platform badge */}
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-brand-primary/8 border border-brand-primary/30 text-brand-primary text-[10px] font-mono tracking-widest mb-7">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-brand-primary/8 border border-brand-primary/30 text-brand-primary text-[9px] sm:text-[10px] font-mono tracking-widest mb-4 sm:mb-7">
           <Cpu className="h-3 w-3" />
           <span>Quantitative Intelligence Engine · v2.0</span>
         </div>
 
         {/* Clean Institutional Headline */}
-        <h1 className="font-display text-[2.1rem] md:text-[3rem] font-bold text-black dark:text-white leading-[1.12] tracking-[-0.03em] max-w-3xl">
+        <h1 className="font-display text-[1.6rem] sm:text-[2.1rem] md:text-[3rem] font-bold text-black dark:text-white leading-[1.15] sm:leading-[1.12] tracking-[-0.03em] max-w-3xl">
           Navigate Mutual Funds with{' '}
           <span className="text-brand-primary">Quantitative Rigor</span>
         </h1>
 
         {/* Subtitle — lighter weight, relaxed line height */}
-        <p className="text-brand-textMuted text-[0.9rem] md:text-[1rem] max-w-xl mt-5 leading-[1.7] font-normal">
+        <p className="text-brand-textMuted text-[0.8rem] sm:text-[0.9rem] md:text-[1rem] max-w-xl mt-3 sm:mt-5 leading-[1.6] sm:leading-[1.7] font-normal">
           Rolling Sharpe, Sortino, CAGR, and CAPM Beta — computed across 10,000+&nbsp;Indian mutual funds.
           Institutional-grade ratings. AI&nbsp;explanations. Zero&nbsp;guesswork.
         </p>
 
         {/* Master Search Input */}
-        <div className="mt-9 w-full flex justify-center">
+        <div className="mt-5 sm:mt-9 w-full flex justify-center">
           <GlobalSearch />
         </div>
       </div>
@@ -183,88 +184,18 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Floating AI Chat Assistant Drawer */}
-      <div className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 transition-all duration-300 ${chatOpen ? 'w-[calc(100vw-32px)] sm:w-[360px] h-[480px]' : 'w-12 h-12'}`}>
-        {chatOpen ? (
-          <div className="w-full h-full bg-brand-surface border border-brand-border shadow-2xl flex flex-col overflow-hidden font-mono">
-            {/* Header */}
-            <div className="bg-brand-bg border-b border-brand-border px-4 py-3 flex justify-between items-center text-xs">
-              <div className="flex items-center gap-1.5 font-display">
-                <span className="w-2 h-2 rounded-full bg-brand-primary animate-pulse" />
-                <span className="font-bold text-black dark:text-white">COGNITIVE_ANALYST.EXE</span>
-              </div>
-              <button
-                onClick={() => setChatOpen(false)}
-                className="text-brand-textMuted hover:text-brand-primary font-bold"
-              >
-                [MIN]
-              </button>
-            </div>
-            
-            {/* Messages */}
-            <div className="flex-1 p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted px-2 space-y-2">
-                  <MessageSquare className="h-6 w-6 opacity-30 text-brand-primary" />
-                  <p className="text-[10px]">Ready to process queries. Ask about metrics, CAPM calculations, or portfolio risk parameters.</p>
-                </div>
-              ) : (
-                messages.map((m, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[85%] border px-3 py-2 ${
-                        m.role === 'user'
-                          ? 'bg-brand-primary/10 border-brand-primary text-black dark:text-white'
-                          : 'bg-brand-bg border-brand-border text-black dark:text-white'
-                      }`}
-                    >
-                      {m.content}
-                    </div>
-                  </div>
-                ))
-              )}
-              {chatLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-brand-bg border border-brand-border px-3 py-2 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce" />
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]" />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Input form */}
-            <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
-              <input
-                type="text"
-                inputMode="text"
-                placeholder="Query system database..."
-                value={chatMessage}
-                onChange={(e) => setChatMessage(e.target.value)}
-                className="flex-1 bg-brand-surface border border-brand-border px-3 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
-              />
-              <button
-                type="submit"
-                disabled={chatLoading}
-                className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[10px] px-3 min-h-[44px] transition-colors border border-brand-primary"
-              >
-                EXEC
-              </button>
-            </form>
-          </div>
-        ) : (
-          <button
-            onClick={() => setChatOpen(true)}
-            className="w-full h-full bg-brand-primary hover:bg-brand-primaryHover text-black flex items-center justify-center shadow-2xl transition-all border border-brand-primary hover:scale-105"
-          >
-            <MessageSquare className="h-5 w-5" />
-          </button>
-        )}
-      </div>
+      <FloatingChatAssistant
+        title="COGNITIVE_ANALYST.EXE"
+        emptyStateText="Ready to process queries. Ask about metrics, CAPM calculations, or portfolio risk parameters."
+        placeholder="Query system database..."
+        chatOpen={chatOpen}
+        setChatOpen={setChatOpen}
+        messages={messages}
+        chatLoading={chatLoading}
+        chatMessage={chatMessage}
+        setChatMessage={setChatMessage}
+        onSubmit={handleSendChat}
+      />
     </div>
   );
 }

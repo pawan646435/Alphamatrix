@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import useIsMobile from '../../hooks/useIsMobile';
 
-export default function StockComparisonChart({ 
-  priceHistory1 = [], 
-  priceHistory2 = [], 
-  symbol1 = 'Asset 1', 
-  symbol2 = 'Asset 2' 
+export default function StockComparisonChart({
+  priceHistory1 = [],
+  priceHistory2 = [],
+  symbol1 = 'Asset 1',
+  symbol2 = 'Asset 2'
 }) {
   const [range, setRange] = useState('3Y'); // 1M, 6M, 1Y, 3Y, 5Y, MAX
+  const isMobile = useIsMobile();
 
   const filteredData = useMemo(() => {
     if (!priceHistory1.length && !priceHistory2.length) return [];
@@ -178,7 +180,11 @@ export default function StockComparisonChart({
                 axisLine={{ stroke: 'var(--border-color)' }}
                 tickFormatter={(val) => `${val.toFixed(0)}%`}
               />
-              <Tooltip content={renderTooltip} />
+              <Tooltip
+                content={renderTooltip}
+                position={isMobile ? { y: 0 } : undefined}
+                wrapperStyle={isMobile ? { pointerEvents: 'none' } : undefined}
+              />
               <Line 
                 type="monotone" 
                 dataKey="norm1" 

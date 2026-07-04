@@ -1,8 +1,10 @@
 import { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import useIsMobile from '../../hooks/useIsMobile';
 
 export default function InteractiveChart({ navHistory = [], range: externalRange, onRangeChange }) {
   const [internalRange, setInternalRange] = useState('3Y'); // 1M, 6M, 1Y, 3Y, 5Y, MAX
+  const isMobile = useIsMobile();
   
   const range = externalRange || internalRange;
   const setRange = (r) => {
@@ -135,7 +137,11 @@ export default function InteractiveChart({ navHistory = [], range: externalRange
                 axisLine={{ stroke: 'var(--border-color)' }}
                 tickFormatter={(val) => `₹${val.toFixed(0)}`}
               />
-              <Tooltip content={renderTooltip} />
+              <Tooltip
+                content={renderTooltip}
+                position={isMobile ? { y: 0 } : undefined}
+                wrapperStyle={isMobile ? { pointerEvents: 'none' } : undefined}
+              />
               <Area 
                 type="monotone" 
                 dataKey="nav" 

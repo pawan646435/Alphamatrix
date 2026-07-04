@@ -421,7 +421,7 @@ export default function StockDetail() {
             <Cpu className="h-4 w-4" />
             <h3 className="text-xs font-bold text-black dark:text-white uppercase tracking-wider font-display">RESEARCH TIMELINE</h3>
           </div>
-          <span className="font-mono text-[9px] text-brand-textMuted uppercase">[CHRONO_TRACKER]</span>
+          <span className="hidden sm:inline font-mono text-[9px] text-brand-textMuted uppercase">[CHRONO_TRACKER]</span>
         </div>
         
         <div className="relative pl-6 border-l border-brand-primary/30 space-y-6 ml-3 py-2">
@@ -582,8 +582,8 @@ export default function StockDetail() {
         className="relative border border-brand-border p-4 sm:p-6 md:p-8 shadow-xl animate-fade-in-up bg-brand-surface"
         style={{ animationDelay: '50ms' }}
       >
-        <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[9px]">+ [STOCK_META]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted/60 sm:text-brand-textMuted font-mono text-[8px] sm:text-[9px]">+ [STOCK_META]</div>
+        <div className="hidden sm:block absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
         
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-center">
           <div className="lg:col-span-2 space-y-4">
@@ -665,7 +665,7 @@ export default function StockDetail() {
 
       {/* Numerical Metrics Grid */}
       <div 
-        className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-3 sm:gap-4 animate-fade-in-up"
+        className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-2.5 sm:gap-4 animate-fade-in-up"
         style={{ animationDelay: '100ms' }}
       >
         <div className="terminal-card text-center hover:shadow-[0_0_15px_rgba(197,168,128,0.15)]">
@@ -1021,8 +1021,9 @@ export default function StockDetail() {
         {/* Verdict Backtest Panel */}
         <StockBacktestPanel symbol={symbol} />
 
-        {/* Developer Performance Panel */}
-        <div className="fixed bottom-4 left-4 z-50 font-mono text-[9px]">
+        {/* Developer Performance Panel — dev builds only, never ships to production */}
+        {import.meta.env.DEV && (
+        <div className="fixed bottom-4 left-4 z-40 font-mono text-[9px] max-w-[calc(100vw-32px)]">
           <button
             onClick={() => setShowPerfPanel(!showPerfPanel)}
             className="bg-black/90 border border-brand-primary text-brand-primary px-3 py-1.5 hover:bg-brand-primary/10 transition-colors uppercase font-bold"
@@ -1030,7 +1031,7 @@ export default function StockDetail() {
             {showPerfPanel ? '[- Close Perf Panel]' : '[+ Dev Perf Panel]'}
           </button>
           {showPerfPanel && (
-            <div className="mt-2 bg-black/95 border border-brand-border p-4 w-64 space-y-2 text-brand-textMuted shadow-2xl">
+            <div className="mt-2 bg-black/95 border border-brand-border p-4 w-64 max-w-full space-y-2 text-brand-textMuted shadow-2xl">
               <p className="text-white font-bold border-b border-brand-border pb-1">PERFORMANCE METRICS</p>
               <div className="space-y-1">
                 <div className="flex justify-between">
@@ -1065,6 +1066,7 @@ export default function StockDetail() {
             </div>
           )}
         </div>
+        )}
 
       </div>
     </div>

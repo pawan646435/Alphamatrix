@@ -201,8 +201,8 @@ export default function Detail() {
         className="relative border border-brand-border p-6 md:p-8 shadow-xl animate-fade-in-up bg-brand-surface"
         style={{ animationDelay: '50ms' }}
       >
-        <div className="absolute top-2 left-2 text-brand-textMuted font-mono text-[9px]">+ [SCHEME_META]</div>
-        <div className="absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
+        <div className="absolute top-2 left-2 text-brand-textMuted/60 sm:text-brand-textMuted font-mono text-[8px] sm:text-[9px]">+ [SCHEME_META]</div>
+        <div className="hidden sm:block absolute top-2 right-2 text-brand-textMuted font-mono text-[9px]">[ACTIVE] +</div>
         
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 font-mono">
@@ -241,7 +241,7 @@ export default function Detail() {
 
       {/* Numerical Metrics Grid */}
       <div 
-        className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-3 sm:gap-4 animate-fade-in-up"
+        className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-9 gap-2.5 sm:gap-4 animate-fade-in-up"
         style={{ animationDelay: '100ms' }}
       >
         {/* Return cards */}

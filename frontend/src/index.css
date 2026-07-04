@@ -95,8 +95,14 @@
   position: relative;
   background-color: var(--card-bg);
   border: 1px solid var(--border-color);
-  padding: 1.5rem;
+  padding: 0.875rem;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (min-width: 640px) {
+  .terminal-card {
+    padding: 1.5rem;
+  }
 }
 
 .terminal-card:hover {

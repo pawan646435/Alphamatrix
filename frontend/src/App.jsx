@@ -610,7 +610,7 @@ function AppContent() {
       <footer className="border-t border-brand-border py-6 text-center mt-auto font-mono text-[9px] text-brand-textMuted bg-brand-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row justify-between items-center gap-2">
           <p>© {new Date().getFullYear()} ALPHAMATRIX TERMINAL. ALL METRICS CALCULATED LOCAL_DB.</p>
-          <p className="text-brand-primary uppercase">[RAG_GATEWAY: active // SECURE_CONSTRAINTS: forced]</p>
+          <p className="hidden sm:block text-brand-primary uppercase">[RAG_GATEWAY: active // SECURE_CONSTRAINTS: forced]</p>
         </div>
       </footer>
     </div>

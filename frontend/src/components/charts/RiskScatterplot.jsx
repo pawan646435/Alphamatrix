@@ -72,11 +72,11 @@ export default function RiskScatterplot({ funds = [] }) {
         <p className="text-brand-textMuted text-xs mt-0.5">Plotting Beta (Volatility) against CAGR 3Y. Node size indicates Sharpe ratio.</p>
       </div>
 
-      {/* Categories Legend */}
-      <div className="flex flex-wrap gap-3 mb-6 bg-brand-bg/50 p-2 rounded-lg border border-brand-border/40">
+      {/* Categories Legend — single scrollable row on mobile so it never eats more space than the chart */}
+      <div className="flex flex-nowrap sm:flex-wrap gap-3 mb-4 sm:mb-6 bg-brand-bg/50 p-2 rounded-lg border border-brand-border/40 overflow-x-auto scrollbar">
         {['Large Cap', 'Mid Cap', 'Small Cap', 'Index', 'Sectoral'].map((cat) => (
-          <div key={cat} className="flex items-center gap-1.5 text-xs text-brand-textMuted font-mono">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getCategoryColor(cat) }} />
+          <div key={cat} className="flex items-center gap-1.5 text-xs text-brand-textMuted font-mono shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getCategoryColor(cat) }} />
             {cat}
           </div>
         ))}

@@ -87,11 +87,11 @@ export default function StockRiskScatterplot({ stocks = [], isLoading = false })
         <p className="text-brand-textMuted text-xs mt-0.5 font-sans">Plotting Beta (Volatility) against CAGR 3Y. Node size indicates Alpha Score (0-100).</p>
       </div>
 
-      {/* Sectors Legend */}
-      <div className="flex flex-wrap gap-3 mb-6 bg-brand-bg/50 p-2 rounded-lg border border-brand-border/40">
+      {/* Sectors Legend — single scrollable row on mobile so it never eats more space than the chart */}
+      <div className="flex flex-nowrap sm:flex-wrap gap-3 mb-4 sm:mb-6 bg-brand-bg/50 p-2 rounded-lg border border-brand-border/40 overflow-x-auto scrollbar">
         {sectorsList.map((sec) => (
-          <div key={sec} className="flex items-center gap-1.5 text-xs text-brand-textMuted font-mono">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getSectorColor(sec) }} />
+          <div key={sec} className="flex items-center gap-1.5 text-xs text-brand-textMuted font-mono shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getSectorColor(sec) }} />
             {sec}
           </div>
         ))}
