@@ -26,6 +26,30 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="UPSTASH_REDIS_REST_TOKEN"
     )
+
+    # QStash — async job queue (Upstash)
+    QSTASH_URL: Optional[str] = Field(
+        default="https://qstash.upstash.io",
+        validation_alias="QSTASH_URL"
+    )
+    QSTASH_TOKEN: Optional[str] = Field(
+        default=None,
+        validation_alias="QSTASH_TOKEN"
+    )
+    QSTASH_CURRENT_SIGNING_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias="QSTASH_CURRENT_SIGNING_KEY"
+    )
+    QSTASH_NEXT_SIGNING_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias="QSTASH_NEXT_SIGNING_KEY"
+    )
+
+    # Backend public URL — used by QStash to call back our internal endpoint
+    BACKEND_URL: str = Field(
+        default="https://alphamatrixbackend.vercel.app",
+        validation_alias="BACKEND_URL"
+    )
     
     # AI models
     GROQ_API_KEY: Optional[str] = Field(

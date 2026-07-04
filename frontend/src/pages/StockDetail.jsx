@@ -54,15 +54,10 @@ export default function StockDetail() {
     triggeredStepsRef.current = new Set();
   }, [symbol]);
 
-  // 2. Fetch metadata (fast, returns immediately from cache or DB)
+  // 2. Fetch metadata once — creates the discovery stub / fires background
+  // ingestion for new stocks. Live updates (company_name, price, sector, ...)
+  // come from the /status poll above instead of re-polling /meta.
   const { data: metaData, isLoading: metaLoading, error: metaError } = useStockMeta(symbol, {
-    staleTime: isFullyReady ? 86400000 : 0,
-    refetchInterval: (query) => {
-      const d = query?.state?.data;
-      // Keep polling /meta until we get a READY status (so company_name/price update)
-      if (!d || d.status === 'DISCOVERED' || d.status === 'INGESTING' || d.status === 'ANALYTICS_RUNNING') return 5000;
-      return false;
-    },
     retry: (failureCount, error) => {
       if (error?.status === 404) return false;
       return failureCount < 2;
@@ -246,16 +241,20 @@ export default function StockDetail() {
     setChatMessage('');
   };
 
-  // Safe fallback placeholders for progressive loading
+  // Safe fallback placeholders for progressive loading.
+  // /status is polled continuously and reflects the live DB row as the
+  // background pipeline updates it, so it takes priority over the one-shot
+  // /meta fetch (which only refreshes on mount).
   const stock = {
     symbol: symbol,
-    company_name: metaData?.company_name || statusData?.company_name || `Discovering ${symbol}...`,
-    sector: metaData?.sector || statusData?.sector || 'Resolving...',
-    industry: metaData?.industry || statusData?.industry || 'Resolving...',
-    market_cap: metaData?.market_cap || null,
+    company_name: statusData?.company_name || metaData?.company_name || `Discovering ${symbol}...`,
+    sector: statusData?.sector || metaData?.sector || 'Resolving...',
+    industry: statusData?.industry || metaData?.industry || 'Resolving...',
+    market_cap: statusData?.market_cap || metaData?.market_cap || null,
+    isin: statusData?.isin || metaData?.isin || null,
     // current_price available from DISCOVERED state onwards (within 3-5s)
-    current_price: metaData?.current_price || statusData?.current_price || null,
-    exchange: metaData?.exchange || statusData?.exchange || 'NSE',
+    current_price: statusData?.current_price || metaData?.current_price || null,
+    exchange: statusData?.exchange || metaData?.exchange || 'NSE',
     status: metaData?.status || ingestionStatus || 'DISCOVERED',
 
     // Metrics (available after step 2 — ANALYTICS_RUNNING)

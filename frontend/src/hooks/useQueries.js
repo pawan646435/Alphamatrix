@@ -114,6 +114,14 @@ export function useStockDetail(symbol, options = {}) {
 
 /** Split React Query hooks for optimized parallel stock details load */
 
+/**
+ * useStockMeta — fired once per symbol to create the discovery stub (and kick
+ * off the background ingestion job) or to read cached fundamentals.
+ *
+ * Does NOT poll: /status is the single source of truth for live progress
+ * (company_name, price, sector, market_cap, isin all update there too) so we
+ * avoid running two overlapping polling loops against the same stock.
+ */
 export function useStockMeta(symbol, options = {}) {
   return useQuery({
     queryKey: ['stocks', 'detail', symbol, 'meta'],

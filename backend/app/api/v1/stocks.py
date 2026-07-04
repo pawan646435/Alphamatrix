@@ -784,8 +784,9 @@ async def get_stock_meta_split(
             response.status_code = 202
         return partial
 
-    # ── Stage 6: New stock OR legacy skeleton (NULL ingestion_status + Unknown sector) ─
-    # Covers: brand new stock, OR old skeleton records created by /detail/{symbol}
+    # ── Stage 6: New stock OR legacy skeleton ────────────────────────────────
+    # Path A (QStash configured): insert stub → fire QStash async → return <300ms
+    # Path B (QStash not configured): synchronous quick_discover_stock fallback
     needs_discover = (
         stock is None
         or ingestion_status is None
@@ -793,7 +794,77 @@ async def get_stock_meta_split(
         or (stock.sector in ("Unknown", None, "") and stock.alpha_score is None)
     )
     if needs_discover:
-        logger.info(f"[META] {symbol} needs discovery (status={ingestion_status}, sector={getattr(stock,'sector',None)})")
+        logger.info(f"[META] {symbol} needs discovery (status={ingestion_status})")
+
+        # Log cold miss (non-blocking)
+        if stock is None:
+            try:
+                await redis_client.zincrby("cold_misses", 1, symbol)
+                await redis_client.expire("cold_misses", 86400 * 30)
+            except Exception:
+                pass
+
+        # ── Path A: QStash async ─ return <300ms ─────────────────────────────
+        from app.services.qstash import is_qstash_configured, publish_ingestion_job
+        if is_qstash_configured() and ingestion_status not in ("DISCOVERING",):
+            if stock is None:
+                stub = StockMaster(
+                    symbol=symbol,
+                    company_name=f"Discovering {symbol}...",
+                    sector="Unknown",
+                    industry="Unknown",
+                    exchange="NSE",
+                    ingestion_status="DISCOVERING",
+                )
+                db.add(stub)
+                await db.commit()
+                logger.info(f"[META] {symbol} stub record created ({_ms()}ms)")
+            else:
+                stock.ingestion_status = "DISCOVERING"
+                await db.commit()
+
+            # Write initial progress so /status returns something immediately
+            try:
+                progress = json.dumps({
+                    "stage": "DISCOVERING", "progress": 5,
+                    "available_sections": ["meta"],
+                    "pending_sections": ["chart", "metrics", "briefing", "news"],
+                    "stage_message": "Fetching company information...",
+                })
+                await redis_client.setex(f"ingest_progress:{symbol}", 3600, progress)
+            except Exception:
+                pass
+
+            # Publish QStash job — must be awaited, not fire-and-forget: Vercel
+            # freezes the function as soon as the response is sent, so a
+            # detached asyncio task here can be killed before it runs.
+            published = await publish_ingestion_job(symbol)
+            if not published:
+                # QStash publish failed — fall back to synchronous discover so
+                # the stock isn't left stuck in DISCOVERING forever.
+                from app.workers.stock_ingestion import quick_discover_stock
+                try:
+                    await quick_discover_stock(symbol, db)
+                except Exception as exc:
+                    logger.error(f"[META] {symbol} fallback discover after QStash publish failure crashed: {exc}")
+            logger.info(f"[META] {symbol} QStash job queued ({_ms()}ms)")
+
+            if response is not None:
+                response.status_code = 202
+            return {
+                "symbol": symbol,
+                "company_name": f"Discovering {symbol}...",
+                "isin": None,
+                "sector": None,
+                "industry": None,
+                "market_cap": None,
+                "current_price": None,
+                "exchange": "NSE",
+                "status": "DISCOVERING",
+                "stage_message": "Fetching company information...",
+            }
+
+        # ── Path B: Synchronous discover (fallback without QStash) ───────────
         from app.workers.stock_ingestion import quick_discover_stock
         try:
             result = await quick_discover_stock(symbol, db)
@@ -801,7 +872,6 @@ async def get_stock_meta_split(
             import traceback
             tb = traceback.format_exc()
             logger.error(f"[META] quick_discover_stock crashed for {symbol}: {exc}\n{tb}")
-            # Return 503 with JSON error details for debugging (not plain-text 500)
             from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=503,
@@ -809,18 +879,10 @@ async def get_stock_meta_split(
                     "symbol": symbol,
                     "status": "error",
                     "error": str(exc),
-                    "traceback": tb[-1000:],  # last 1000 chars
+                    "traceback": tb[-1000:],
                     "stage_message": "Discovery temporarily unavailable. Please retry.",
                 }
             )
-
-        # —— Log cold miss for analytics (non-blocking) ——
-        if stock is None:
-            try:
-                await redis_client.zincrby("cold_misses", 1, symbol)
-                await redis_client.expire("cold_misses", 86400 * 30)  # 30 days
-            except Exception:
-                pass
 
         if result.get("status") == "not_found":
             raise HTTPException(
@@ -839,7 +901,7 @@ async def get_stock_meta_split(
                 }
             )
 
-        logger.info(f"[META] {symbol} discovered ({_ms()}ms)")
+        logger.info(f"[META] {symbol} sync-discovered ({_ms()}ms)")
         if response is not None:
             response.status_code = 202
         return {
@@ -1704,8 +1766,10 @@ async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
         "symbol": symbol,
         "status": ingestion_status,
         "company_name": stock.company_name,
+        "isin": stock.isin,
         "sector": stock.sector,
         "industry": stock.industry,
+        "market_cap": stock.market_cap,
         "current_price": getattr(stock, "current_price", None),
         "exchange": getattr(stock, "exchange", "NSE"),
         "alpha_score": stock.alpha_score,
