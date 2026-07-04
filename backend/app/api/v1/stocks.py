@@ -340,18 +340,19 @@ async def generate_briefing_background(symbol: str):
         
         try:
             from app.services.ai_agent import generate_stock_briefing
-            briefing = await generate_stock_briefing(
+            briefing_result = await generate_stock_briefing(
                 stock_dict,
                 news_list=news_list,
                 actions_list=actions_list,
                 calendar_dict=calendar_dict
             )
+            briefing = briefing_result.get("text") if isinstance(briefing_result, dict) else briefing_result
             from app.workers.stock_ingestion import parse_briefing_sections
             bull_case, bear_case, verdict_rationale = parse_briefing_sections(briefing)
             stock.bull_case = bull_case
             stock.bear_case = bear_case
             stock.verdict_rationale = verdict_rationale
-            stock.ai_summary = briefing
+            stock.ai_summary = json.dumps(briefing_result) if isinstance(briefing_result, dict) else briefing
             await session.commit()
             
             # Invalidate Redis cache
@@ -1183,19 +1184,30 @@ async def get_stock_briefing_split(
                 "cagr_1y": stock.cagr_1y,
                 "cagr_3y": stock.cagr_3y,
                 "cagr_5y": stock.cagr_5y,
+                "fundamental_score": stock.fundamental_score,
+                "quality_score": stock.quality_score,
+                "valuation_score": stock.valuation_score,
+                "technical_score": stock.technical_score,
+                "risk_score": stock.risk_score,
+                "sector_relative_score": stock.sector_relative_score,
+                "investor_verdict": stock.investor_verdict,
+                "trader_verdict": stock.trader_verdict,
+                "trend_structure": stock.trend_structure,
+                "confidence_score": stock.confidence_score,
             }
             from app.services.ai_agent import generate_stock_briefing
             from app.workers.stock_ingestion import parse_briefing_sections
 
             # 7s timeout — leaves 3s margin for Vercel's 10s limit
-            briefing = await asyncio.wait_for(
+            briefing_result = await asyncio.wait_for(
                 generate_stock_briefing(stock_dict, news_list=[], actions_list=[], calendar_dict={}),
                 timeout=7.0
             )
+            briefing = briefing_result.get("text") if isinstance(briefing_result, dict) else briefing_result
 
             if briefing and len(briefing) > 100:
                 bull_case, bear_case, verdict_rationale = parse_briefing_sections(briefing)
-                stock.ai_summary = briefing
+                stock.ai_summary = json.dumps(briefing_result) if isinstance(briefing_result, dict) else briefing
                 stock.bull_case = bull_case
                 stock.bear_case = bear_case
                 stock.verdict_rationale = verdict_rationale

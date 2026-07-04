@@ -582,100 +582,71 @@ async def generate_stock_briefing(
     news_list: List[Dict[str, Any]] = None,
     actions_list: List[Dict[str, Any]] = None,
     calendar_dict: Dict[str, Any] = None
-) -> str:
+) -> Dict[str, Any]:
     """
-    Generates a comprehensive Markdown equity research report briefing
-    using Llama 3.3 via Groq, incorporating live news and corporate actions.
+    Generates a comprehensive Markdown equity research report briefing using
+    Llama 3.3 via Groq, grounded in a deterministic scoring rubric and
+    validated for citation/anomaly compliance before being returned.
+
+    NOTE (v2): return type changed from `str` to `Dict[str, Any]` — a
+    {"text": ..., "meta": {...}} payload — since callers now need the trust
+    score / data-quality / verdict-anchor metadata to persist alongside the
+    briefing text (see briefing_intelligence.build_storage_payload). All three
+    call sites (stocks.py split endpoint + generate_briefing_background,
+    stock_ingestion.ingest_step3_briefing) were updated accordingly.
     """
+    import asyncio
+    from app.services.briefing_intelligence import (
+        assess_data_quality, resolve_sector_benchmark, score_verdict,
+        build_briefing_prompt, validate_briefing_output, build_storage_payload,
+    )
+
+    symbol = stock_data.get("symbol", "")
+    quality = assess_data_quality(stock_data)
+    logger.info(
+        f"[BRIEFING] {symbol} data quality: {quality['confidence_label']} "
+        f"({quality['data_completeness_pct']}%, {len(quality['missing_fields'])} missing fields)"
+    )
+    if quality["data_completeness_pct"] < 30:
+        logger.warning(
+            f"[BRIEFING] {symbol} completeness is only {quality['data_completeness_pct']}% — "
+            f"briefing may be unreliable, generating with DATA GAP flags anyway"
+        )
+
+    _, benchmarks = resolve_sector_benchmark(stock_data.get("sector"))
+    anchor = score_verdict(stock_data, benchmarks)
+
+    from app.services.briefing_intelligence import check_verdict_divergence
+    divergence = check_verdict_divergence(anchor, stock_data)
+
     _init_groq()
     if not groq_configured:
-        return _generate_mock_stock_briefing(stock_data)
-        
-    symbol = stock_data.get("symbol", "")
-    company_name = stock_data.get("company_name", "")
-    sector = stock_data.get("sector", "")
-    industry = stock_data.get("industry", "")
-    
+        mock_text = _generate_mock_stock_briefing(stock_data)
+        validation = validate_briefing_output(mock_text, stock_data, anchor)
+        logger.info(f"[BRIEFING] {symbol} ✓ trust={validation['trust_score']}/100 verdict={anchor['verdict']} (mock)")
+        return build_storage_payload(mock_text, quality, anchor, validation, divergence)
+
     import datetime
     current_date_str = datetime.date.today().strftime("%B %Y")
-    
-    # Format news
-    news_str = ""
-    if news_list:
-        news_str = "\n".join([
-            f"- **{item.get('title')}** ({item.get('provider')} - {item.get('pubDate')}): {item.get('summary')}"
-            for item in news_list
-        ])
-    else:
-        news_str = "No recent news headlines available."
-        
-    # Format actions
-    actions_str = ""
-    if actions_list:
-        actions_str = "\n".join([
-            f"- **{act.get('date')}**: {act.get('type')} of {act.get('amount')}"
-            for act in actions_list
-        ])
-    else:
-        actions_str = "No recent corporate actions recorded."
-        
-    # Format calendar
-    cal_str = ""
-    if calendar_dict:
-        cal_str = f"Ex-Dividend Date: {calendar_dict.get('ex_dividend_date', 'N/A')}, Next Earnings Release Date: {calendar_dict.get('earnings_date', 'N/A')}"
-    else:
-        cal_str = "No upcoming calendar events scheduled."
-    
-    fundamental_score = stock_data.get('fundamental_score') or 60.0
-    quality_score = stock_data.get('quality_score') or 60.0
-    valuation_score = stock_data.get('valuation_score') or 50.0
-    technical_score = stock_data.get('technical_score') or 55.0
-    risk_score = stock_data.get('risk_score') or 65.0
-    sector_relative_score = stock_data.get('sector_relative_score') or 50.0
-    event_score = stock_data.get('event_score') or 80.0
-    alpha_score = stock_data.get('alpha_score') or 50.0
-    investor_verdict = stock_data.get('investor_verdict') or 'HOLD'
-    trader_verdict = stock_data.get('trader_verdict') or 'HOLD'
-    trend_structure = stock_data.get('trend_structure') or 'SIDEWAYS'
-    confidence_score = stock_data.get('confidence_score') or 65.0
 
-    prompt = f"""
-You are a Lead Portfolio Manager and CFA specializing in Indian Equities.
+    news_str = "\n".join(
+        f"- **{item.get('title')}** ({item.get('provider')} - {item.get('pubDate')}): {item.get('summary')}"
+        for item in news_list
+    ) if news_list else "No recent news headlines available."
+
+    actions_str = "\n".join(
+        f"- **{act.get('date')}**: {act.get('type')} of {act.get('amount')}"
+        for act in actions_list
+    ) if actions_list else "No recent corporate actions recorded."
+
+    cal_str = (
+        f"Ex-Dividend Date: {calendar_dict.get('ex_dividend_date', 'N/A')}, "
+        f"Next Earnings Release Date: {calendar_dict.get('earnings_date', 'N/A')}"
+    ) if calendar_dict else "No upcoming calendar events scheduled."
+
+    system_prompt, _ = build_briefing_prompt(stock_data)
+    prompt = f"""{system_prompt}
 Current Date Context: {current_date_str}
-
-Analyze the following stock details, recent company news, corporate actions, and write a highly professional, comprehensive equity research report briefing.
-
-IMPORTANT ROLE DIRECTION:
-You MUST NOT decide or choose the final investment verdicts. The system's deterministic rating engine has calculated the following scores and verdicts for this company:
-- Fundamental Score: {fundamental_score}/100
-- Quality Score (Consistency & Moat): {quality_score}/100
-- Valuation Score: {valuation_score}/100
-- Technical Score: {technical_score}/100 (Detected Price Trend Structure: {trend_structure})
-- Risk Score: {risk_score}/100 (Classified Corporate Events Score: {event_score}/100)
-- Sector Relative Score: {sector_relative_score}/100
-- Final Score: {alpha_score}/100
-- Investor Stance (Long-Term): {investor_verdict}
-- Trader Stance (Short-Term): {trader_verdict}
-- Data Confidence Rating: {confidence_score}%
-
-Your sole responsibility is to explain these scores, summarize key findings, and highlight key opportunities and risks.
-
-Stock Details:
-- Symbol: {symbol}
-- Name: {company_name}
-- Sector: {sector}
-- Industry: {industry}
-- Market Cap: ₹{stock_data.get('market_cap')} Cr
-- PE Ratio: {stock_data.get('pe_ratio')}
-- PB Ratio: {stock_data.get('pb_ratio')}
-- ROE: {stock_data.get('roe')}%
-- Debt/Equity: {stock_data.get('debt_equity')}
-- Dividend Yield: {stock_data.get('dividend_yield')}%
-- Beta: {stock_data.get('beta')}
-- Alpha Score: {stock_data.get('alpha_score')}
-- 1-Year Price Trend: {round((stock_data.get('cagr_1y') or 0)*100, 2)}%
-- 3-Year CAGR: {round((stock_data.get('cagr_3y') or 0)*100, 2)}%
-- 5-Year CAGR: {round((stock_data.get('cagr_5y') or 0)*100, 2)}%
 
 Recent Company News & Events:
 {news_str}
@@ -685,75 +656,44 @@ Recent Corporate Actions (Dividends / Splits):
 
 Upcoming Calendar Events:
 {cal_str}
-
-Format:
-Return the output in clean Markdown. You MUST include these headers exactly:
-### Executive Summary
-(summary content based on stock fundamentals and positioning)
-
-### Performance Analysis
-(incorporate analysis of price trends, volatility, and recent news events)
-
-### Fundamental Analysis
-(analysis of profitability, leverage, valuation vs industry peers. Explain the Fundamental Score of {fundamental_score}/100)
-
-### Sector Analysis
-(industry drivers, tailwinds/headwinds and recent developments. Explain the Sector Relative Score of {sector_relative_score}/100)
-
-### Macro Analysis
-(interest rates, inflation impact, macro factors)
-
-### Geopolitical Analysis
-(trade policy, global supply chain implications and geopolitical risks)
-
-### Investment Thesis
-(detailed bullet points of the positive drivers, key catalysts, and reasons to invest)
-
-### Risk Factors
-(detailed bullet points of risk assessment, concerns, or reasons NOT to invest. Explain the Risk Score of {risk_score}/100)
-
-### Research Timeline
-(provide exactly 3 to 5 timeline entries of major company developments, earnings announcements, or corporate actions.
-The entries MUST be sorted chronologically from NEWEST to OLDEST (Newest → Oldest).
-Each timeline entry MUST be on a new line and use EXACTLY the format:
-- **Month Year - Event Title**: Detailed description of the event | Relevance Score: [1-10]/10 | Impact Assessment: [High | Medium | Low]
-Note: Do not use outdated years like 2022 or 2023 for recent news; prioritize events from 2025 and 2026. Projections can be in late 2026 or 2027.)
-
-### Bull Case
-(upside scenarios, provide at least 3 reasons)
-
-### Base Case
-(expected performance)
-
-### Bear Case
-(downside risks, provide at least 3 reasons)
-
-### Final Verdict
-Investor Verdict: {investor_verdict}
-Trader Verdict: {trader_verdict}
-
-Provide a professional, objective explanation of these verdicts based on the Fundamental Score ({fundamental_score}/100), Valuation Score ({valuation_score}/100), and Technical Score ({technical_score}/100). Do NOT decide a new verdict yourself.
-
-### Confidence Score
-Confidence Score: {confidence_score}%
-Explain the Data Confidence rating of {confidence_score}%, highlighting whether metric agreement or data completeness supports it.
-
-Safety Constraint: Do NOT state anything with absolute certainty. Always write using probability-based language (e.g., 'represents a likely possibility', 'potential risk factor under interest rate pressure', 'probable trend').
 """
-    try:
-        response = groq_client.chat.completions.create(
+
+    async def _call_llm() -> str:
+        response = await asyncio.to_thread(
+            groq_client.chat.completions.create,
             model=AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            timeout=30.0
+            timeout=30.0,
+            temperature=0.3,
+            max_tokens=2500,
         )
         raw_content = response.choices[0].message.content
-        briefing = clean_r1_response(raw_content)
+        return clean_r1_response(raw_content)
+
+    try:
+        briefing = await _call_llm()
         if not briefing:
-            return _generate_mock_stock_briefing(stock_data)
-        return briefing
+            raise ValueError("empty LLM response")
+        validation = validate_briefing_output(briefing, stock_data, anchor)
+
+        if not validation["is_valid"]:
+            logger.warning(f"[BRIEFING] {symbol} attempt 1 failed validation: {validation['warnings']}")
+            await asyncio.sleep(1)
+            try:
+                retry_briefing = await _call_llm()
+                retry_validation = validate_briefing_output(retry_briefing, stock_data, anchor)
+                if retry_validation["trust_score"] > validation["trust_score"]:
+                    briefing, validation = retry_briefing, retry_validation
+            except Exception as retry_err:
+                logger.warning(f"[BRIEFING] {symbol} retry failed: {retry_err}")
+
+        logger.info(f"[BRIEFING] {symbol} ✓ trust={validation['trust_score']}/100 verdict={anchor['verdict']}")
+        return build_storage_payload(briefing, quality, anchor, validation, divergence)
     except Exception as e:
         logger.error(f"Groq stock briefing generation failed: {e}. Falling back to mock.")
-        return _generate_mock_stock_briefing(stock_data)
+        mock_text = _generate_mock_stock_briefing(stock_data)
+        validation = validate_briefing_output(mock_text, stock_data, anchor)
+        return build_storage_payload(mock_text, quality, anchor, validation, divergence)
 
 async def run_stock_chat(message: str, history: List[ChatMessage], stock_data: Optional[Dict[str, Any]] = None) -> str:
     """

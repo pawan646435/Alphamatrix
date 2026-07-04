@@ -1992,14 +1992,49 @@ async def ingest_step3_briefing(symbol: str, db: AsyncSession) -> Dict[str, Any]
     briefing_text = None
     try:
         from app.services.ai_agent import generate_stock_briefing
-        briefing_text = await generate_stock_briefing(symbol, db)
+        # NOTE: this previously called generate_stock_briefing(symbol, db) — a
+        # signature mismatch (the function expects a stock_data dict, not a
+        # symbol string + session) that silently threw and was swallowed by
+        # this except block, so the main QStash ingestion pipeline never
+        # actually produced a briefing via this path. Fixed to build the
+        # stock_data dict the function actually expects.
+        stock_dict = {
+            "symbol": stock.symbol,
+            "company_name": stock.company_name,
+            "sector": stock.sector,
+            "industry": stock.industry,
+            "market_cap": stock.market_cap,
+            "pe_ratio": stock.pe_ratio,
+            "pb_ratio": stock.pb_ratio,
+            "roe": stock.roe,
+            "debt_equity": stock.debt_equity,
+            "dividend_yield": stock.dividend_yield,
+            "beta": stock.beta,
+            "alpha_score": stock.alpha_score,
+            "cagr_1y": stock.cagr_1y,
+            "cagr_3y": stock.cagr_3y,
+            "cagr_5y": stock.cagr_5y,
+            "fundamental_score": stock.fundamental_score,
+            "quality_score": stock.quality_score,
+            "valuation_score": stock.valuation_score,
+            "technical_score": stock.technical_score,
+            "risk_score": stock.risk_score,
+            "sector_relative_score": stock.sector_relative_score,
+            "investor_verdict": stock.investor_verdict,
+            "trader_verdict": stock.trader_verdict,
+            "trend_structure": stock.trend_structure,
+            "confidence_score": stock.confidence_score,
+        }
+        briefing_result = await generate_stock_briefing(stock_dict)
+        briefing_text = briefing_result.get("text") if isinstance(briefing_result, dict) else briefing_result
         logger.info(f"[IngestStep3] {symbol}: briefing ready ({len(briefing_text or '')} chars)")
     except Exception as e:
         logger.warning(f"[IngestStep3] briefing failed for {symbol}: {e}")
+        briefing_result = None
 
     if briefing_text:
         bull, bear, rationale = parse_briefing_sections(briefing_text)
-        stock.ai_summary = briefing_text
+        stock.ai_summary = json.dumps(briefing_result) if isinstance(briefing_result, dict) else briefing_text
         stock.bull_case = bull
         stock.bear_case = bear
         stock.verdict_rationale = rationale
