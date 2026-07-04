@@ -75,7 +75,7 @@ export const qk = {
   newsGlobal:      (cat)         => ['news', 'global', cat],
   watchlist:       ()            => ['watchlist'],
   backtestSummary: ()            => ['stocks', 'backtest', 'summary'],
-  backtestStock:   (symbol)      => ['stocks', 'backtest', symbol],
+  backtestStock:   (symbol, verdictVersion) => ['stocks', 'backtest', symbol, verdictVersion],
 };
 
 // ─── STOCK HOOKS ─────────────────────────────────────────────────────────────
@@ -375,16 +375,21 @@ export function useBacktestSummary() {
   });
 }
 
-/** Returns per-stock backtest results */
-export function useStockBacktest(symbol) {
+/**
+ * Returns per-stock backtest results.
+ * `verdictVersion` (e.g. `${alpha_score}:${investor_verdict}`) is folded into the
+ * query key so a re-ingestion that changes the verdict busts the cache instead of
+ * serving a stale pre-ingestion backtest.
+ */
+export function useStockBacktest(symbol, verdictVersion, { enabled = true } = {}) {
   return useQuery({
-    queryKey: qk.backtestStock(symbol),
+    queryKey: qk.backtestStock(symbol, verdictVersion),
     queryFn: async () => {
       const { data } = await apiClient.get(`/stocks/backtest/${symbol}`);
       return data;
     },
     staleTime: STALE.BACKTEST_STOCK,
-    enabled: !!symbol,
+    enabled: !!symbol && !!verdictVersion && enabled,
     retry: 1,
   });
 }

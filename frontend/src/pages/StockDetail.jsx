@@ -1018,8 +1018,14 @@ export default function StockDetail() {
           </div>
         )}
 
-        {/* Verdict Backtest Panel */}
-        <StockBacktestPanel symbol={symbol} />
+        {/* Verdict Backtest Panel — gated on the same isFullyReady state as the other
+            panels, and re-keyed on the current verdict so a fresh ingestion cycle
+            can't leave this panel showing a stale pre-ingestion verdict. */}
+        <StockBacktestPanel
+          symbol={symbol}
+          isReady={isFullyReady}
+          verdictVersion={isFullyReady && stock.alpha_score != null ? `${stock.alpha_score}:${stock.investor_verdict}` : null}
+        />
 
         {/* Developer Performance Panel — dev builds only, never ships to production */}
         {import.meta.env.DEV && (
@@ -1074,10 +1080,10 @@ export default function StockDetail() {
 }
 
 // ─── Stock Backtest Panel ─────────────────────────────────────────────────────
-function StockBacktestPanel({ symbol }) {
-  const { data, isLoading, isError } = useStockBacktest(symbol);
+function StockBacktestPanel({ symbol, isReady, verdictVersion }) {
+  const { data, isLoading, isError } = useStockBacktest(symbol, verdictVersion, { enabled: isReady });
 
-  if (isLoading) {
+  if (!isReady || isLoading) {
     return (
       <div className="border border-brand-border bg-brand-surface p-5 animate-pulse">
         <div className="h-4 w-1/3 bg-brand-border/40 rounded mb-4" />
