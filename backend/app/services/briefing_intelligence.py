@@ -152,8 +152,24 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 10.0) -> float:
     return max(lo, min(hi, v))
 
 
+# Pillar weights for the deterministic briefing rubric. Technical carries the
+# Alpha Score model's own technical_score (RSI/MACD/DMA/trend) so the rubric is
+# no longer blind to market-structure signals; the other four weights are scaled
+# down proportionally (0.85x their original 30/25/20/25 split) so the total still
+# sums to 100%. See PHASE 0 divergence analysis: thresholds were already aligned
+# (rubric BUY >= 6.5/10 ~= Alpha Score BUY >= 66/100) — the real gap was missing
+# inputs, and Technical was the one available-but-unused signal.
+PILLAR_WEIGHTS: Dict[str, float] = {
+    "valuation": 0.26,
+    "quality": 0.21,
+    "momentum": 0.17,
+    "risk": 0.21,
+    "technical": 0.15,
+}
+
+
 def score_verdict(stock_data: Dict[str, Any], benchmarks: Dict[str, float]) -> Dict[str, Any]:
-    notes: Dict[str, List[str]] = {"valuation": [], "quality": [], "momentum": [], "risk": []}
+    notes: Dict[str, List[str]] = {"valuation": [], "quality": [], "momentum": [], "risk": [], "technical": []}
 
     # ── Valuation (30%) — P/E and P/B vs sector median, cheaper = higher score
     pe, pb = stock_data.get("pe_ratio"), stock_data.get("pb_ratio")
@@ -215,18 +231,28 @@ def score_verdict(stock_data: Dict[str, Any], benchmarks: Dict[str, float]) -> D
         risk_score = 5.0
         notes["risk"].append("Beta unavailable — scored neutral (data gap)")
 
+    # ── Technical (15%) — reuses the Alpha Score model's own technical_score
+    # (RSI/MACD/DMA50/DMA200/trend-structure, 0-100), rescaled to 0-10. This is
+    # the same signal `calculate_institutional_ratings` uses, so the rubric no
+    # longer ignores market-structure entirely.
+    technical_score_100 = stock_data.get("technical_score")
+    if technical_score_100 is not None:
+        technical_score = _clamp(technical_score_100 / 10.0)
+        notes["technical"].append(f"Technical score {technical_score_100}/100 (RSI/MACD/trend-derived)")
+    else:
+        technical_score = 5.0
+        notes["technical"].append("Technical score unavailable — scored neutral (data gap)")
+
     pillar_scores = {
         "valuation": round(valuation_score, 2),
         "quality": round(quality_score, 2),
         "momentum": round(momentum_score, 2),
         "risk": round(risk_score, 2),
+        "technical": round(technical_score, 2),
     }
 
     final_score = round(
-        pillar_scores["valuation"] * 0.30
-        + pillar_scores["quality"] * 0.25
-        + pillar_scores["momentum"] * 0.20
-        + pillar_scores["risk"] * 0.25,
+        sum(pillar_scores[k] * w for k, w in PILLAR_WEIGHTS.items()),
         2,
     )
 
@@ -282,12 +308,71 @@ def check_verdict_divergence(anchor: Dict[str, Any], stock_data: Dict[str, Any])
     }
 
 
+# Pillars the Alpha Score model scores that the briefing rubric still does not
+# (Technical was moved out of this list once it became a rubric pillar above).
+# Kept honest rather than hidden — see Task 3/5 in the divergence-explainability work.
+RUBRIC_MISSING_PILLARS = [
+    "Fundamental (ROCE/margins/growth)",
+    "Sector Relative (live peer comparison)",
+]
+
+_DIRECTION_RANK = {"SELL": 0, "HOLD": 1, "BUY": 2}
+
+
+def compute_divergence_reason(anchor: Dict[str, Any], divergence: Dict[str, Any]) -> Dict[str, Any]:
+    """Builds a specific, pillar-grounded explanation for why the briefing rubric's
+    verdict disagrees with the Alpha Score model, instead of a generic "diverges" flag.
+    Used both to ground the LLM prompt's reconciliation note and to populate the
+    `divergence_reason` field persisted in the briefing's meta payload."""
+    rubric_direction = anchor["verdict"]
+
+    if not divergence.get("diverges"):
+        return {
+            "rubric_verdict": rubric_direction,
+            "rubric_score": anchor["final_score"],
+            "alpha_verdict": divergence.get("investor_direction", "HOLD"),
+            "gap_explanation": "Rubric and Alpha Score model agree directionally — no reconciliation needed.",
+            "missing_pillars": RUBRIC_MISSING_PILLARS,
+        }
+
+    investor_direction = divergence.get("investor_direction", "HOLD")
+    trader_direction = divergence.get("trader_direction", "HOLD")
+    investor_gap = abs(_DIRECTION_RANK[rubric_direction] - _DIRECTION_RANK[investor_direction])
+    trader_gap = abs(_DIRECTION_RANK[rubric_direction] - _DIRECTION_RANK[trader_direction])
+    # Whichever of investor/trader sits furthest from the rubric drives the explanation.
+    alpha_direction = investor_direction if investor_gap >= trader_gap else trader_direction
+    rank_gap = max(investor_gap, trader_gap)
+    magnitude = "Opposite-direction (BUY vs SELL)" if rank_gap >= 2 else "Adjacent-tier"
+
+    strongest_pillar = max(anchor["pillar_scores"], key=anchor["pillar_scores"].get)
+    weakest_pillar = min(anchor["pillar_scores"], key=anchor["pillar_scores"].get)
+
+    gap_explanation = (
+        f"{magnitude} divergence: rubric says {rubric_direction} ({anchor['final_score']}/10), "
+        f"Alpha Score model says {alpha_direction}. The rubric is pulled toward {rubric_direction} "
+        f"mainly by its {strongest_pillar} pillar ({anchor['pillar_scores'][strongest_pillar]}/10) "
+        f"and dragged down by {weakest_pillar} ({anchor['pillar_scores'][weakest_pillar]}/10). The Alpha "
+        f"Score model additionally scores {' and '.join(RUBRIC_MISSING_PILLARS)}, which the rubric does "
+        f"not include — a strong rubric pillar here can outweigh a weaker signal visible only to the "
+        f"Alpha Score model."
+    )
+
+    return {
+        "rubric_verdict": rubric_direction,
+        "rubric_score": anchor["final_score"],
+        "alpha_verdict": alpha_direction,
+        "gap_explanation": gap_explanation,
+        "missing_pillars": RUBRIC_MISSING_PILLARS,
+    }
+
+
 # ── 1D. Prompt builder ──────────────────────────────────────────────────────
 def build_briefing_prompt(stock_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     quality = assess_data_quality(stock_data)
     sector_label, benchmarks = resolve_sector_benchmark(stock_data.get("sector"))
     anchor = score_verdict(stock_data, benchmarks)
     divergence = check_verdict_divergence(anchor, stock_data)
+    divergence_reason = compute_divergence_reason(anchor, divergence)
 
     context = {
         "data_quality": quality,
@@ -295,6 +380,7 @@ def build_briefing_prompt(stock_data: Dict[str, Any]) -> Tuple[str, Dict[str, An
         "sector": sector_label,
         "benchmarks": benchmarks,
         "divergence": divergence,
+        "divergence_reason": divergence_reason,
     }
 
     benchmark_table = "\n".join(f"- {k}: {v}" for k, v in benchmarks.items())
@@ -305,14 +391,11 @@ def build_briefing_prompt(stock_data: Dict[str, Any]) -> Tuple[str, Dict[str, An
     missing_str = ", ".join(quality["missing_fields"]) or "None"
     anomalies_str = "\n".join(f"- {a}" for a in quality["anomalies"]) or "None detected"
     pillar_str = "\n".join(
-        f"- {pillar.title()} ({w}%): {score}/10 — {'; '.join(notes)}"
-        for pillar, w, score, notes in [
-            ("valuation", 30, anchor["pillar_scores"]["valuation"], anchor["pillar_notes"]["valuation"]),
-            ("quality", 25, anchor["pillar_scores"]["quality"], anchor["pillar_notes"]["quality"]),
-            ("momentum", 20, anchor["pillar_scores"]["momentum"], anchor["pillar_notes"]["momentum"]),
-            ("risk", 25, anchor["pillar_scores"]["risk"], anchor["pillar_notes"]["risk"]),
-        ]
+        f"- {pillar.title()} ({int(PILLAR_WEIGHTS[pillar] * 100)}%): {anchor['pillar_scores'][pillar]}/10 — "
+        f"{'; '.join(anchor['pillar_notes'][pillar])}"
+        for pillar in ("valuation", "quality", "momentum", "risk", "technical")
     )
+    weights_str = ", ".join(f"{k.title()} {int(w * 100)}%" for k, w in PILLAR_WEIGHTS.items())
 
     system_prompt = f"""
 You are a Lead Portfolio Manager and CFA specializing in Indian Equities, writing
@@ -329,8 +412,8 @@ Every paragraph must be prefixed with [DATA] for direct metric claims or
 
 RULE 3 — HONOUR THE VERDICT ANCHOR
 Your investment verdict MUST be {anchor['verdict']} with stance {anchor['stance']}.
-This was computed from a deterministic rubric (Valuation 30%, Quality 25%,
-Momentum 20%, Risk 25% — weighted score {anchor['final_score']}/10). You may add
+This was computed from a deterministic rubric ({weights_str} — weighted score
+{anchor['final_score']}/10). You may add
 narrative nuance but you CANNOT reverse or contradict this direction. If you
 believe qualitative factors override this, write "OVERRIDE NOTE: [reason]" and
 it will be reviewed by a human analyst — do not silently substitute your own verdict.
@@ -354,13 +437,17 @@ RULE 7 — RECONCILE WITH THE ALPHA SCORE MODEL
 The platform's separate Alpha Score model (a different, independently-weighted
 scoring engine) gives Investor Verdict "{stock_data.get('investor_verdict') or 'HOLD'}"
 and Trader Verdict "{stock_data.get('trader_verdict') or 'HOLD'}" — this DIVERGES in
-direction from the rubric verdict above ({anchor['verdict']}). In the "### Final
-Verdict" section you MUST include a line in EXACTLY this format:
+direction from the rubric verdict above ({anchor['verdict']}).
+
+Specific, pre-computed reason for this divergence (grounded in the actual pillar
+scores below — cite it, do not invent a different explanation):
+{divergence_reason['gap_explanation']}
+
+In the "### Final Verdict" section you MUST include a line in EXACTLY this format:
 "NOTE: Rubric score ({anchor['final_score']}/10 → {anchor['verdict']}) diverges from
-Alpha Score model ({stock_data.get('investor_verdict') or 'HOLD'}). Possible reasons: [brief analysis]."
-Replace [brief analysis] with your own concise, data-grounded explanation for the
-disagreement (e.g. differing weight on momentum vs. quality, a metric moving
-sharply since the Alpha Score was last computed, etc). Do not omit this line.
+Alpha Score model ({divergence_reason['alpha_verdict']}). Reason: [briefly restate the
+pre-computed reason above in your own words, staying grounded in the cited pillars]."
+Do not omit this line.
 ''' if divergence['diverges'] else ''}
 ── STOCK DATA BLOCK ──
 Symbol: {stock_data.get('symbol')}
@@ -503,6 +590,8 @@ def build_storage_payload(
     divergence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assembles the v2 ai_summary storage payload (see Task 2 Step 6)."""
+    divergence = divergence or {"diverges": False, "investor_direction": "HOLD", "trader_direction": "HOLD"}
+    divergence_reason = compute_divergence_reason(anchor, divergence)
     return {
         "text": text,
         "meta": {
@@ -518,8 +607,9 @@ def build_storage_payload(
                 "stance": anchor["stance"],
                 "final_score": anchor["final_score"],
                 "pillar_scores": anchor["pillar_scores"],
-                "diverges_from_alpha_score": (divergence or {}).get("diverges", False),
+                "diverges_from_alpha_score": divergence.get("diverges", False),
             },
+            "divergence_reason": divergence_reason if divergence.get("diverges") else None,
             "validation_warnings": validation["warnings"],
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "briefing_version": "v2",

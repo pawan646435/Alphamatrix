@@ -200,7 +200,7 @@ A historical verdict accuracy engine that measures how well past verdicts predic
 
 ### Equities (Stocks)
 - **Stock Explorer**: All seeded stocks with Alpha Score, verdict badges, sector filter
-- **Stock Detail**: Price chart, fundamental metrics grid, Rating Engine v2 score breakdown, verdict history, AI briefing, watchlist, backtesting panel
+- **Stock Detail**: Price chart, fundamental metrics grid, Rating Engine v2 score breakdown, verdict history, grounded AI briefing (citation footnotes, trust score, rubric-vs-Alpha-Score verdict reconciliation), watchlist, backtesting panel
 - **Sector Intelligence Matrix**: 15 sectors — Banking, IT, Auto, Energy, Defence, FMCG, Pharma, Metals, Infrastructure, Chemicals, Consumer Durables, Realty, Telecom, PSU, Capital Goods
 - **Risk/Return Scatterplot**: Sharpe Ratio vs CAGR coordinate mapping
 - **Market Regime**: Automated BULLISH/BEARISH/SIDEWAYS classification with confidence score
@@ -546,6 +546,11 @@ RISK_FREE_RATE=0.06
 ---
 
 ## Changelog
+
+### v3.2.0 — July 2026
+- **Deterministic Briefing Grounding Rubric**: `services/briefing_intelligence.py` scores every AI briefing against an independent 5-pillar rubric (Valuation/Quality/Momentum/Risk/Technical) before the LLM ever runs, with per-fact `[FACT: metric=value]` citations, `[DATA]`/`[ANALYTICAL]`/`[MACRO CONTEXT]` reasoning labels, missing-data/anomaly flags, and a post-hoc trust score
+- **Verdict Reconciliation**: Rubric now includes a Technical pillar (reusing the Alpha Score model's own RSI/MACD/DMA-derived `technical_score`) so it no longer disagrees with the Alpha Score model purely from a blind spot; when the two verdicts still diverge, a computed `divergence_reason` (which pillar drove it, gap size, missing pillars) is stored in the briefing's metadata and surfaced in the prompt instead of a generic mismatch note
+- **AI Equity Briefing Report Redesign**: `BriefingReport.jsx` renders citations as superscript footnotes, reasoning labels as colored-border/badge paragraphs instead of inline tags, a single consolidated verdict card (rubric pillars + Alpha Score model side by side) instead of two redundant verdict boxes, and card-based risk factors/bull-base-bear cases
 
 ### v3.1.0 — July 2026
 - **Progressive Stock Discovery Pipeline**: Async 4-stage ingestion (discover → history → analytics → AI briefing) driven by Upstash QStash webhooks, replacing single-request blocking ingestion

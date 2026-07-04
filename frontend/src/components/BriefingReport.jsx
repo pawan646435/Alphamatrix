@@ -120,11 +120,14 @@ function SectionBlocks({ blocks, footnotes, plain = false }) {
   );
 }
 
+// Weights mirror briefing_intelligence.PILLAR_WEIGHTS on the backend — kept in
+// sync manually since the rubric's pillar_scores payload doesn't echo weights back.
 const PILLAR_META = [
-  { key: 'valuation', label: 'VALUATION', weight: 30 },
-  { key: 'quality', label: 'QUALITY', weight: 25 },
-  { key: 'momentum', label: 'MOMENTUM', weight: 20 },
-  { key: 'risk', label: 'RISK', weight: 25 },
+  { key: 'valuation', label: 'VALUATION', weight: 26 },
+  { key: 'quality', label: 'QUALITY', weight: 21 },
+  { key: 'momentum', label: 'MOMENTUM', weight: 17 },
+  { key: 'risk', label: 'RISK', weight: 21 },
+  { key: 'technical', label: 'TECHNICAL', weight: 15 },
 ];
 
 const CASE_STYLE = {
@@ -265,6 +268,14 @@ export default function BriefingReport({
   const verdictAnchor = meta?.verdict_anchor || null;
   const primaryVerdictType = verdictAnchor ? verdictToType(verdictAnchor.verdict) : alphaModelType;
   const showVerdictBox = !!verdictAnchor || !!stockStanceHtml;
+
+  // divergence_reason is only present on briefings generated after the
+  // divergence-explainability work — older cached v2 briefings only have the
+  // boolean `diverges_from_alpha_score` flag, so fall back to a generic line.
+  const divergenceReason = meta?.divergence_reason || (verdictAnchor?.diverges_from_alpha_score ? {
+    alpha_verdict: investorVerdict,
+    gap_explanation: 'Rubric and Alpha Score model use different inputs/weights — see analysis above for details.',
+  } : null);
 
   const verdictBoxTheme =
     primaryVerdictType === 'BUY'
@@ -429,13 +440,17 @@ export default function BriefingReport({
                             CONFIDENCE: {stockConfidence}
                           </span>
                         )}
-                        {verdictAnchor?.diverges_from_alpha_score && (
-                          <span className="text-[9px] font-mono font-bold px-2 py-0.5 border border-brand-warning/40 bg-brand-warning/10 text-brand-warning uppercase">
-                            ⚠️ DIVERGES FROM ALPHA SCORE MODEL
-                          </span>
-                        )}
                       </div>
                     </div>
+
+                    {/* Divergence explanation — specific pillar/gap reasoning instead of a generic badge */}
+                    {verdictAnchor?.diverges_from_alpha_score && divergenceReason && (
+                      <div className="text-[9px] font-mono px-3 py-2 border border-brand-warning/40 bg-brand-warning/10 text-brand-warning space-y-1">
+                        <div className="font-bold uppercase tracking-wider">⚠️ Rubric vs Alpha Score Divergence</div>
+                        <div>Rubric: {verdictAnchor.verdict} ({verdictAnchor.final_score}/10) · Alpha Score: {divergenceReason.alpha_verdict}</div>
+                        <div className="normal-case font-normal text-brand-warning/80 leading-relaxed">{divergenceReason.gap_explanation}</div>
+                      </div>
+                    )}
 
                     {/* Pillar bars — rubric model, v2 only */}
                     {verdictAnchor && (
@@ -460,28 +475,27 @@ export default function BriefingReport({
                     {verdictAnchor && (
                       <div className="flex flex-wrap justify-between gap-2 font-mono text-[10px] pt-2 border-t border-brand-border/20">
                         <span>WEIGHTED: <strong className="text-black dark:text-white">{verdictAnchor.final_score}/10</strong></span>
-                        <span>VERDICT: <strong className={verdictColorClass(primaryVerdictType)}>{verdictAnchor.verdict}</strong></span>
+                        <span>VERDICT: <strong className={verdictColorClass(primaryVerdictType)}>{verdictAnchor.verdict}</strong> <span className="text-brand-textMuted/60 normal-case">[RUBRIC SCORE]</span></span>
                         <span>STANCE: <strong className="text-black dark:text-white">{verdictAnchor.stance}</strong></span>
                       </div>
                     )}
 
                     {/* Alpha Score model — secondary row */}
-                    <div className="grid grid-cols-2 gap-4 border-t border-brand-border/20 pt-3 font-mono text-[10px]">
-                      <div className="space-y-0.5">
-                        <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Alpha Score Model — Investor (Long)</span>
-                        <span className={`text-xs font-extrabold ${verdictColorClass(verdictToType(investorVerdict))}`}>{investorVerdict}</span>
+                    <div className="border-t border-brand-border/20 pt-3">
+                      <div className="font-mono text-[9px] text-brand-textMuted uppercase tracking-wider mb-1.5">
+                        Alpha Score Model <span className="text-brand-textMuted/50">[Technical + Fundamental + Sector]</span>
                       </div>
-                      <div className="space-y-0.5">
-                        <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Alpha Score Model — Trader (Short)</span>
-                        <span className={`text-xs font-extrabold ${verdictColorClass(verdictToType(traderVerdict))}`}>{traderVerdict}</span>
+                      <div className="grid grid-cols-2 gap-4 font-mono text-[10px]">
+                        <div className="space-y-0.5">
+                          <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Investor (Long)</span>
+                          <span className={`text-xs font-extrabold ${verdictColorClass(verdictToType(investorVerdict))}`}>{investorVerdict}</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-brand-textMuted uppercase font-bold text-[8px] block">Trader (Short)</span>
+                          <span className={`text-xs font-extrabold ${verdictColorClass(verdictToType(traderVerdict))}`}>{traderVerdict}</span>
+                        </div>
                       </div>
                     </div>
-
-                    {verdictAnchor?.diverges_from_alpha_score && (
-                      <p className="text-[9px] font-mono text-brand-warning">
-                        NOTE: Rubric diverges from Alpha Score model — see analysis above.
-                      </p>
-                    )}
 
                     {stockStanceHtml && (
                       <p className="text-xs text-black dark:text-white leading-relaxed font-sans pt-3 border-t border-brand-border/20" dangerouslySetInnerHTML={{ __html: stockStanceHtml }} />

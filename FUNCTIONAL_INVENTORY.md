@@ -74,7 +74,7 @@ AlphaMatrix ingests stocks **progressively** rather than in one blocking request
 | Semantic Query | `POST /api/v1/ai/semantic-query` | `groq llama-3.3-70b-versatile` | Rule-based mock parser |
 | Fund AI Chat | `POST /api/v1/ai/chat` | Groq | Mock chat response |
 | Stock AI Chat | `POST /api/v1/stocks/chat` | Groq | Mock stock chat |
-| Stock AI Briefing | `generate_stock_briefing` (pipeline stage 3 / on-demand) | Groq | Structured mock briefing |
+| Stock AI Briefing | `generate_stock_briefing` (pipeline stage 3 / on-demand) | Groq, grounded by `services/briefing_intelligence.py`'s deterministic rubric | Structured mock briefing |
 | Fund AI Summary | `generate_fund_analysis` (background) | Groq | Mock bullet analysis |
 | Sector Outlook | `generate_sector_outlook` | Groq | Mock sector outlook |
 | Stock Comparison | `generate_stock_comparison` | Groq | Mock comparison |
@@ -136,6 +136,7 @@ All Groq calls gracefully fall back to deterministic mock responses when `GROQ_A
 | RiskScatterplot | `components/charts/RiskScatterplot.jsx` | Sharpe vs CAGR scatter for funds. |
 | StockComparisonChart | `components/charts/StockComparisonChart.jsx` | Dual-line comparison chart, mobile-aware via `useIsMobile`. |
 | AnalystResponseCard | `components/AnalystResponseCard.jsx` | AI chat/briefing message renderer. |
+| BriefingReport | `components/BriefingReport.jsx` | Stock Detail's AI Equity Briefing panel — parses `[FACT:]`/`[DATA]`/`[ANALYTICAL]`/`[MACRO CONTEXT]` tags into footnotes/labeled paragraphs, renders the consolidated rubric-vs-Alpha-Score verdict card and divergence explanation, bull/base/bear case cards, and risk factor cards. |
 | StockLogo / FundLogo | `components/StockLogo.jsx`, `components/FundLogo.jsx` | Auto-generated color-coded avatars. |
 | Skeletons | `components/skeletons/Skeletons.jsx` | `CardSkeleton`, `CardGridSkeleton`, `NewsCardSkeleton` loading placeholders. |
 
@@ -153,7 +154,8 @@ All Groq calls gracefully fall back to deterministic mock responses when `GROQ_A
 | Feature | File | Description |
 |---------|------|-------------|
 | Progressive Stock Pipeline | `workers/stock_ingestion.py` | `quick_discover_stock` / `ingest_step1_history` / `ingest_step2_analytics` / `ingest_step3_briefing` — see pipeline section above. |
-| Alpha Score Model | `workers/stock_ingestion.py:calculate_institutional_ratings` | 5-factor deterministic composite scoring (fundamental/valuation/technical/risk/sector-relative). |
+| Alpha Score Model | `workers/stock_ingestion.py:calculate_institutional_ratings` | 5-factor deterministic composite scoring (fundamental/valuation/technical/risk/sector-relative); drives `investor_verdict`/`trader_verdict`. |
+| Briefing Grounding Rubric | `services/briefing_intelligence.py:score_verdict` | Independent 5-pillar rubric (valuation/quality/momentum/risk/technical) anchoring the AI briefing's verdict + citations/labels/anomaly flags; `compute_divergence_reason` explains any disagreement with the Alpha Score model (pillar-level, not just a flag) and is stored as `divergence_reason` in the briefing's `meta`. |
 | QStash Publish | `services/qstash.py:publish_ingestion_job` | Publishes an ingestion job to Upstash QStash for async background execution. |
 | QStash Verify | `services/qstash.py:verify_qstash_signature` | HMAC-SHA256 JWT verification of inbound QStash webhooks. |
 | QStash Webhook Handler | `api/v1/internal.py:ingest_background` | Runs all 4 pipeline stages sequentially under a Redis lock. |

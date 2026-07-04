@@ -886,6 +886,7 @@ function StockBacktestPanel({ symbol, isReady, verdictVersion }) {
         <div className="flex items-center gap-2">
           <Target className="h-4 w-4 text-brand-primary" />
           <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Backtest</h3>
+          <span className="text-[9px] font-mono text-brand-textMuted/60 uppercase tracking-wider">[Historical — not current recommendation]</span>
         </div>
         <div className="flex flex-wrap items-center gap-3 font-mono text-[9px] text-brand-textMuted">
           <span>Historical Verdict: <strong className={`${verdictColor(data.historical_verdict)} font-bold`}>{data.historical_verdict}</strong></span>
