@@ -201,6 +201,102 @@ class RedisClient:
             return True
         return False
 
+    async def expire(self, key: str, seconds: int) -> bool:
+        """Set TTL on an existing key."""
+        self._ensure_client()
+        if self.redis_client:
+            try:
+                self.redis_client.expire(key, seconds)
+                return True
+            except Exception as e:
+                logger.error(f"TCP Redis EXPIRE failed: {e}")
+                return False
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["EXPIRE", key, str(seconds)],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                return response.status_code == 200
+            except Exception as e:
+                logger.error(f"Upstash Redis REST EXPIRE failed: {e}")
+                return False
+        return False
+
+    async def zincrby(self, key: str, increment: float, member: str) -> float:
+        """Increment the score of a member in a sorted set. Creates if not exists."""
+        self._ensure_client()
+        if self.redis_client:
+            try:
+                return float(self.redis_client.zincrby(key, increment, member))
+            except Exception as e:
+                logger.error(f"TCP Redis ZINCRBY failed: {e}")
+                return 0.0
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["ZINCRBY", key, str(increment), member],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    result = response.json().get("result")
+                    return float(result) if result is not None else 0.0
+            except Exception as e:
+                logger.error(f"Upstash Redis REST ZINCRBY failed: {e}")
+                return 0.0
+        return 0.0
+
+    async def zrevrange(self, key: str, start: int, stop: int, withscores: bool = False):
+        """Return members of sorted set in descending score order."""
+        self._ensure_client()
+        cmd = ["ZREVRANGE", key, str(start), str(stop)]
+        if withscores:
+            cmd.append("WITHSCORES")
+
+        if self.redis_client:
+            try:
+                if withscores:
+                    return self.redis_client.zrevrange(key, start, stop, withscores=True)
+                return self.redis_client.zrevrange(key, start, stop)
+            except Exception as e:
+                logger.error(f"TCP Redis ZREVRANGE failed: {e}")
+                return []
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=cmd,
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    result = response.json().get("result") or []
+                    if withscores and result:
+                        # Upstash returns flat [member, score, member, score, ...]
+                        pairs = []
+                        for i in range(0, len(result), 2):
+                            if i + 1 < len(result):
+                                pairs.append((result[i], float(result[i + 1])))
+                        return pairs
+                    return result
+            except Exception as e:
+                logger.error(f"Upstash Redis REST ZREVRANGE failed: {e}")
+                return []
+        return []
+
+    async def set(self, key: str, value: str, ex: int = None, nx: bool = False) -> bool:
+        """General SET with optional EX and NX flags (delegates to set_nx if nx=True)."""
+        if nx and ex:
+            return await self.set_nx(key, value, ex=ex)
+        return await self.setex(key, ex or 3600, value)
+
 
 # Singleton instance
 redis_client = RedisClient()

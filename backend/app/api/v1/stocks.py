@@ -814,6 +814,14 @@ async def get_stock_meta_split(
                 }
             )
 
+        # —— Log cold miss for analytics (non-blocking) ——
+        if stock is None:
+            try:
+                await redis_client.zincrby("cold_misses", 1, symbol)
+                await redis_client.expire("cold_misses", 86400 * 30)  # 30 days
+            except Exception:
+                pass
+
         if result.get("status") == "not_found":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1938,5 +1946,171 @@ async def get_stock_backtest(symbol: str, db: AsyncSession = Depends(get_db)):
         logger.error(f"Redis set stock backtest failed for {symbol}: {e}")
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# PRE-WARM CRON + COLD-MISS ANALYTICS
+# ═══════════════════════════════════════════════════════════════
+
+# NSE Top 200 universe for daily pre-warming
+_NSE_TOP_200 = [
+    # Nifty 50
+    "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFOSYS","SBIN",
+    "HINDUNILVR","KOTAKBANK","ITC","LT","AXISBANK","ASIANPAINT","MARUTI",
+    "BAJFINANCE","HCLTECH","TITAN","SUNPHARMA","WIPRO","NTPC","POWERGRID",
+    "ULTRACEMCO","ADANIENT","ADANIPORTS","BAJAJFINSV","NESTLEIND","HINDALCO",
+    "TATASTEEL","TECHM","COALINDIA","BPCL","DIVISLAB","ONGC","GRASIM",
+    "JSWSTEEL","CIPLA","EICHERMOT","BRITANNIA","DRREDDY","SHREECEM",
+    "TATACONSUM","HEROMOTOCO","APOLLOHOSP","BAJAJ-AUTO","TATAMOTORS",
+    "SBILIFE","HDFCLIFE","INDUSINDBK","M&M","UPL",
+    # Nifty Next 50
+    "ADANIGREEN","AMBUJACEM","AUROPHARMA","BANDHANBNK","BERGEPAINT",
+    "BIOCON","BOSCHLTD","COLPAL","DALBHARAT","DABUR","DLF","GAIL",
+    "GODREJCP","HAVELLS","HINDPETRO","IDFCFIRSTB","INDIGO","IOC",
+    "IRCTC","JINDALSTEL","LICI","LUPIN","MARICO","MUTHOOTFIN","NAUKRI",
+    "NMDC","OFSS","PAGEIND","PETRONET","PIIND","PIDILITIND","PNB",
+    "RECLTD","SAIL","SIEMENS","SRF","SUNTV","TORNTPHARM","TRENT",
+    "TVSMOTOR","VBL","VEDL","VOLTAS","ZYDUSLIFE",
+    # Popular new-age / mid-cap frequently searched
+    "ZOMATO","PAYTM","NYKAA","POLICYBZR","DELHIVERY","IRFC","RVNL",
+    "MAZAGON","HAL","BEL","MOTHERSON","MPHASIS","COFORGE","LTIM",
+    "PERSISTENT","KPITTECH","TATAELXSI","KAYNES","APARINDS",
+    "APOLLOMICRO","TITAGARH","RAILVIKAS","COCHINSHIP",
+]
+
+
+@router.get("/prewarm")
+async def prewarm_stock_universe(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(25, ge=1, le=50, description="Max new symbols to ingest per cron run"),
+):
+    """
+    Daily pre-warm cron endpoint — called by Vercel cron at 9:30 PM UTC (3 AM IST).
+    Ingests NSE Top 200 stocks that are not yet READY in the DB.
+    Runs in chunks of 3 (yfinance-rate-limit friendly), respects Vercel 60s maxDuration.
+    Idempotent: skips already-READY stocks.
+    """
+    from app.workers.stock_ingestion import quick_discover_stock, ingest_step1_history, ingest_step2_analytics
+    start_t = time.perf_counter()
+
+    logger.info(f"[Prewarm] Starting daily pre-warm for up to {limit} symbols")
+
+    # Find which symbols are already READY
+    existing_q = await db.execute(
+        select(StockMaster.symbol, StockMaster.ingestion_status, StockMaster.alpha_score)
+        .where(StockMaster.symbol.in_(_NSE_TOP_200))
+    )
+    existing = {
+        row.symbol: row.ingestion_status
+        for row in existing_q.all()
+    }
+
+    # Symbols to ingest: not in DB, or not READY
+    ready_statuses = {"READY"}
+    to_ingest = [
+        sym for sym in _NSE_TOP_200
+        if sym not in existing or existing.get(sym) not in ready_statuses
+    ][:limit]
+
+    if not to_ingest:
+        logger.info("[Prewarm] All pre-warm symbols already READY.")
+        return {
+            "status": "noop",
+            "message": "All pre-warm symbols are already READY.",
+            "duration_s": round(time.perf_counter() - start_t, 2),
+        }
+
+    processed, skipped_list, failed = [], [], []
+    CHUNK = 3  # parallel batch size — safe for yfinance rate limits
+
+    for i in range(0, len(to_ingest), CHUNK):
+        # Stop if approaching Vercel 60s maxDuration (leave 10s buffer)
+        if time.perf_counter() - start_t > 50:
+            logger.warning(f"[Prewarm] Time limit approaching — stopping after {len(processed)} symbols")
+            break
+
+        chunk = to_ingest[i : i + CHUNK]
+
+        async def _ingest_one(sym: str):
+            lock_key = f"ingest_lock:{sym}"
+            try:
+                lock_ok = await redis_client.set_nx(lock_key, "prewarm", ex=120)
+            except Exception:
+                lock_ok = True
+
+            if not lock_ok:
+                return {"symbol": sym, "status": "locked"}
+
+            try:
+                # Step 0: Quick discover (basic meta + current price)
+                disc = await quick_discover_stock(sym, db)
+                if disc.get("status") == "not_found":
+                    return {"symbol": sym, "status": "not_found"}
+
+                # Step 1: Download price history
+                step1 = await ingest_step1_history(sym, db)
+                if step1.get("status") == "failed":
+                    return {"symbol": sym, "status": "failed"}
+
+                # Step 2: Compute analytics
+                step2 = await ingest_step2_analytics(sym, db)
+                return {"symbol": sym, "status": step2.get("status", "done")}
+
+            except Exception as e:
+                logger.error(f"[Prewarm] {sym} failed: {e}")
+                return {"symbol": sym, "status": "error", "error": str(e)[:200]}
+            finally:
+                try:
+                    await redis_client.delete(lock_key)
+                except Exception:
+                    pass
+
+        results = await asyncio.gather(*[_ingest_one(s) for s in chunk], return_exceptions=True)
+
+        for r in results:
+            if isinstance(r, Exception):
+                failed.append(str(r)[:100])
+            elif r.get("status") in ("done", "analytics_running", "ingesting", "READY"):
+                processed.append(r["symbol"])
+            elif r.get("status") == "not_found":
+                skipped_list.append(r["symbol"])
+            elif r.get("status") == "locked":
+                skipped_list.append(r["symbol"])  # another instance is handling it
+            else:
+                failed.append(r.get("symbol", "?"))
+
+        await asyncio.sleep(0.5)  # Rate-limit pause between chunks
+
+    duration = round(time.perf_counter() - start_t, 2)
+    logger.info(f"[Prewarm] Done — processed={len(processed)}, skipped={len(skipped_list)}, failed={len(failed)}, duration={duration}s")
+
+    return {
+        "status": "completed",
+        "processed": processed,
+        "skipped": skipped_list,
+        "failed": failed,
+        "remaining": to_ingest[limit:],
+        "duration_s": duration,
+    }
+
+
+@router.get("/cold-misses", dependencies=[Depends(check_rate_limit)])
+async def get_cold_misses():
+    """
+    Returns the top 50 most-searched new symbols (cold misses) with search counts.
+    Used to decide which symbols to add to the pre-warm universe.
+    """
+    try:
+        raw = await redis_client.zrevrange("cold_misses", 0, 49, withscores=True)
+        return [
+            {
+                "symbol": (item[0].decode() if isinstance(item[0], bytes) else item[0]),
+                "searches": int(item[1]),
+            }
+            for item in (raw or [])
+        ]
+    except Exception as e:
+        logger.error(f"[ColdMiss] Fetch failed: {e}")
+        return []
 
 

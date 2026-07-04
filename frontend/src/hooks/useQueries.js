@@ -201,13 +201,14 @@ export function useStockNews(symbol, options = {}) {
 /**
  * useStockStatus — Progressive Discovery Pipeline v3
  *
- * Polls /stocks/status/{symbol} every 4s while the stock is not READY.
+ * Adaptive polling: 1.5s during active ingestion (first 15s), then 3s backoff.
  * Returns { status, available_sections, pending_sections, progress,
  *           stage_message, current_price, company_name, ... }
  *
  * The caller uses available_sections to decide which page sections to render.
  */
 export function useStockStatus(symbol, options = {}) {
+  const startedAt = React.useRef(Date.now());
   return useQuery({
     queryKey: ['stocks', 'status', symbol],
     queryFn: async () => {
@@ -221,9 +222,12 @@ export function useStockStatus(symbol, options = {}) {
     gcTime: 60000,
     refetchInterval: (query) => {
       const data = query?.state?.data;
-      if (!data) return 4000;
-      const done = data.status === 'READY' || data.status === 'NOT_FOUND';
-      return done ? false : 4000;
+      if (!data) return 1500;
+      const done = data.status === 'READY' || data.status === 'FAILED' || data.status === 'NOT_FOUND';
+      if (done) return false;
+      // Adaptive: fast polling for first 15s, then back off
+      const ageMs = Date.now() - startedAt.current;
+      return ageMs < 15000 ? 1500 : 3000;
     },
     retry: (failureCount, error) => {
       if (error?.status === 404) return false;
@@ -238,9 +242,10 @@ export function useStockStatus(symbol, options = {}) {
  * Returns a promise. The caller does NOT need to await it — it fires and the
  * /status poll will pick up the state change in the next interval.
  */
-export async function advanceIngestionPipeline(symbol) {
+export async function advanceIngestionPipeline(symbol, step = null) {
   try {
-    const { data } = await apiClient.post(`/stocks/ingest/${symbol}`);
+    const url = step ? `/stocks/ingest/${symbol}?step=${step}` : `/stocks/ingest/${symbol}`;
+    const { data } = await apiClient.post(url);
     return data;
   } catch (err) {
     // Swallow non-critical errors — the /status poll will show the real state

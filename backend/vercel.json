@@ -1,13 +1,15 @@
 {
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index"
-    }
-  ],
+  "rewrites": [{"source": "/(.*)", "destination": "/api/index"}],
   "functions": {
     "api/index.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "memory": 512
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/v1/stocks/prewarm",
+      "schedule": "0 21 * * *"
+    }
+  ]
 }
