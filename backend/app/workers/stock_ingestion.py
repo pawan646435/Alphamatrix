@@ -17,7 +17,7 @@ from sqlalchemy.future import select
 from sqlalchemy import delete, func
 
 from app.core.config import settings
-from app.models.stock import StockMaster, StockPriceHistory
+from app.models.stock import StockMaster, StockPriceHistory, VerdictSnapshot
 from app.models.fund import NAVHistory
 
 logger = logging.getLogger("app.workers.stock_ingestion")
@@ -896,6 +896,47 @@ TRADER_WEIGHTS = {
     "sector_relative": 0.10,
 }
 
+# Bump this whenever INVESTOR_WEIGHTS/TRADER_WEIGHTS or the underlying pillar
+# formulas in calculate_institutional_ratings change, so verdict_snapshots
+# rows (and any future backtest built on them) can distinguish "the model
+# was wrong" from "this snapshot predates a model change".
+ALPHA_MODEL_VERSION = "v2"
+
+
+async def write_verdict_snapshot(db: AsyncSession, symbol: str, ratings: Dict[str, Any]) -> None:
+    """
+    Records a point-in-time snapshot of the Alpha Score model's output for
+    `symbol` so a real backtest (services/backtesting_v2.py) can later
+    compare the model's own past verdicts against actual subsequent price
+    action — see models/stock.py:VerdictSnapshot for why this is a separate,
+    non-FK-linked audit table.
+
+    Adds the row to `db` but deliberately does NOT commit — callers already
+    commit the StockMaster update in the same transaction right after this
+    runs, so this rides along as a single extra INSERT rather than a second
+    round-trip, keeping ingestion latency essentially unchanged.
+    """
+    snapshot = VerdictSnapshot(
+        symbol=symbol,
+        snapshot_date=date.today(),
+        verdict=ratings["investor_verdict"],
+        score=ratings["final_score"],
+        pillar_scores=json.dumps({
+            "fundamental_score": ratings.get("fundamental_score"),
+            "quality_score": ratings.get("quality_score"),
+            "valuation_score": ratings.get("valuation_score"),
+            "technical_score": ratings.get("technical_score"),
+            "risk_score": ratings.get("risk_score"),
+            "sector_relative_score": ratings.get("sector_relative_score"),
+            "event_score": ratings.get("event_score"),
+            "confidence_score": ratings.get("confidence_score"),
+            "trader_score": ratings.get("trader_score"),
+            "trader_verdict": ratings.get("trader_verdict"),
+        }),
+        model_version=ALPHA_MODEL_VERSION,
+    )
+    db.add(snapshot)
+
 
 def calculate_institutional_ratings(
     stock: Dict[str, Any], 
@@ -1656,8 +1697,9 @@ async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[
         await db.execute(delete(StockPriceHistory).where(StockPriceHistory.symbol == symbol))
         db.add_all(prices_to_insert)
 
+    await write_verdict_snapshot(db, symbol, ratings)
     await db.commit()
-    
+
     # Invalidate Redis cache for this stock after dynamic ingestion
     try:
         from app.core.redis import redis_client
@@ -2006,6 +2048,7 @@ async def ingest_step2_analytics(symbol: str, db: AsyncSession) -> Dict[str, Any
     stock.investor_verdict = ratings["investor_verdict"]
     stock.trader_verdict = ratings["trader_verdict"]
     stock.trend_structure = ratings["trend_structure"]
+    await write_verdict_snapshot(db, symbol, ratings)
     await db.commit()
 
     logger.info(f"[IngestStep2] {symbol}: alpha={ratings['final_score']}, cagr_3y={cagr_3y:.2%}")
@@ -2385,7 +2428,9 @@ async def seed_stocks_data(db: AsyncSession):
         db.add_all(prices_to_insert)
         await db.flush()
         logger.info(f"Inserted {len(prices_to_insert)} price records for {symbol}.")
-        
+
+        await write_verdict_snapshot(db, symbol, ratings)
+
         # Sync to search index
         from app.core.database import is_sqlite
         from sqlalchemy import text

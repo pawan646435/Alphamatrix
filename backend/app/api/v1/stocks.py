@@ -12,7 +12,7 @@ from sqlalchemy import delete, case
 
 from app.core.database import get_db
 from app.core.security import check_rate_limit, get_current_user_email
-from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
+from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem, VerdictSnapshot
 from app.schemas.stock_schema import (
     StockGridItem, StockDetailResponse, StockMasterResponse, 
     StockPriceHistoryBase, WatchlistItemResponse, WatchlistAnalyticsResponse,
@@ -2040,6 +2040,65 @@ async def get_stock_backtest(symbol: str, db: AsyncSession = Depends(get_db)):
         await redis_client.setex(CACHE_KEY, 43200, json.dumps(result))  # 12hr TTL
     except Exception as e:
         logger.error(f"Redis set stock backtest failed for {symbol}: {e}")
+
+    return result
+
+
+@router.get("/backtest-v2/{symbol}", dependencies=[Depends(check_rate_limit)])
+async def get_stock_backtest_v2(symbol: str, db: AsyncSession = Depends(get_db)):
+    """
+    Phase 4 Track 2 — snapshot-based backtest (services/backtesting_v2.py).
+
+    Backtests the Alpha Score model's own real past verdicts (VerdictSnapshot
+    rows written on every ingestion, see workers/stock_ingestion.py) against
+    actual subsequent price returns — NOT the price-only proxy model behind
+    GET /backtest/{symbol} above (services/backtesting.py).
+
+    Deliberately NOT wired into GET /backtest/summary yet: verdict_snapshots
+    only starts accumulating from this feature's rollout date, so results
+    here will read "insufficient_data" for most/all symbols for months. This
+    route exists so it can be compared against the old engine over time
+    before switching the live summary/UI over — see Phase 4 summary for the
+    approximate date the first real comparison becomes possible.
+    """
+    symbol = symbol.upper().strip()
+    CACHE_KEY = f"backtest_v2:stock:{symbol}"
+    try:
+        cached = await redis_client.get(CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+    except Exception as e:
+        logger.error(f"Redis get stock backtest-v2 failed for {symbol}: {e}")
+
+    stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
+    stock = stock_q.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found.")
+
+    snapshots_q = await db.execute(
+        select(VerdictSnapshot.snapshot_date, VerdictSnapshot.verdict, VerdictSnapshot.score, VerdictSnapshot.model_version)
+        .where(VerdictSnapshot.symbol == symbol)
+        .order_by(VerdictSnapshot.snapshot_date.asc())
+    )
+    snapshots = [
+        {"snapshot_date": r.snapshot_date, "verdict": r.verdict, "score": r.score, "model_version": r.model_version}
+        for r in snapshots_q.all()
+    ]
+
+    prices_q = await db.execute(
+        select(StockPriceHistory.date, StockPriceHistory.close)
+        .where(StockPriceHistory.symbol == symbol)
+        .order_by(StockPriceHistory.date.asc())
+    )
+    prices = [{"date": r.date, "close": r.close} for r in prices_q.all()]
+
+    from app.services.backtesting_v2 import backtest_stock_from_snapshots
+    result = backtest_stock_from_snapshots(symbol=symbol, snapshots=snapshots, prices=prices)
+
+    try:
+        await redis_client.setex(CACHE_KEY, 43200, json.dumps(result))  # 12hr TTL — matches v1's cache lifetime
+    except Exception as e:
+        logger.error(f"Redis set stock backtest-v2 failed for {symbol}: {e}")
 
     return result
 
