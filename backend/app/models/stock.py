@@ -90,6 +90,38 @@ class WatchlistItem(Base):
     # Relationships
     stock = relationship("StockMaster", back_populates="watchlist_items")
 
+
+class VerdictSnapshot(Base):
+    """
+    Point-in-time record of what the Alpha Score model actually said about a
+    stock at ingestion time — written on every (re)ingestion so a real
+    backtest can later compare the model's own past verdicts against actual
+    subsequent price action, instead of the price-only proxy model in
+    services/backtesting.py (backtest_stock/aggregate_backtest_summary).
+
+    Deliberately NOT a ForeignKey to stock_masters.symbol: these are an
+    append-only historical audit trail for backtesting and must survive
+    independent of a StockMaster row's current lifecycle (e.g. a symbol
+    later re-discovered from scratch, or marked Invalid, should not lose or
+    cascade-delete its prior verdict history).
+    """
+    __tablename__ = "verdict_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String(50), nullable=False, index=True)
+    snapshot_date = Column(Date, nullable=False, index=True)
+    verdict = Column(String(50), nullable=False)          # investor_verdict at snapshot time
+    score = Column(Float, nullable=False)                 # investor final_score (0-100) at snapshot time
+    # JSON-encoded dict (stored as TEXT, matching this codebase's existing
+    # convention of storing structured data as serialized text rather than a
+    # DB-specific JSON column type — see ai_summary/bull_case elsewhere in
+    # this file). Holds the full ratings breakdown: fundamental/quality/
+    # valuation/technical/risk/sector_relative/event/confidence scores, plus
+    # trader_score/trader_verdict (not given dedicated columns to keep this
+    # migration minimal — see Phase 4 summary).
+    pillar_scores = Column(Text, nullable=True)
+    model_version = Column(String(20), nullable=False)    # e.g. "v2" — Alpha Score model version that produced this snapshot
+
 # Index for quick time-series queries
 Index("idx_stock_price_symbol_date", StockPriceHistory.symbol, StockPriceHistory.date)
 # Composite unique constraint to prevent duplicate symbols in a single user watchlist
@@ -98,3 +130,7 @@ Index("idx_watchlist_email_symbol", WatchlistItem.email, WatchlistItem.symbol, u
 # Indexes for sort-heavy list queries (alpha_score is the default sort column)
 Index("idx_stock_alpha_score", StockMaster.alpha_score.desc())
 Index("idx_stock_cagr3y", StockMaster.cagr_3y.desc())
+
+# Composite index for the backtest lookup pattern: "past snapshots for this
+# symbol near date X" (see services/backtesting_v2.py)
+Index("idx_verdict_snapshot_symbol_date", VerdictSnapshot.symbol, VerdictSnapshot.snapshot_date)

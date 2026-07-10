@@ -123,6 +123,32 @@ async def _set_migration_done():
     except Exception:
         pass  # Non-critical — worst case is re-running migrations next cold start
 
+# ── verdict_snapshots migration flag — deliberately a SEPARATE key from
+# schema_v3_done. Production already has schema_v3_done set from prior
+# phases, and init_db() returns early as soon as that flag is found (see
+# "Fast path" below) — so any new migration step added after that early
+# return would silently never run in an already-migrated production
+# environment. Gating verdict_snapshots setup behind its own flag, checked
+# and run independently of schema_v3_done, avoids that trap entirely. ────
+_VERDICT_SNAPSHOT_FLAG_KEY = "alphamatrix:schema_v4_verdict_snapshots_done"
+
+async def _check_verdict_snapshot_migration_done() -> bool:
+    """Returns True if the verdict_snapshots (schema_v4) migration has already been applied."""
+    try:
+        from app.core.redis import redis_client
+        val = await redis_client.get(_VERDICT_SNAPSHOT_FLAG_KEY)
+        return val is not None
+    except Exception:
+        return False  # Redis unavailable — assume not done, run migration
+
+async def _set_verdict_snapshot_migration_done():
+    """Marks the verdict_snapshots (schema_v4) migration as complete in Redis (TTL: 30 days)."""
+    try:
+        from app.core.redis import redis_client
+        await redis_client.setex(_VERDICT_SNAPSHOT_FLAG_KEY, 60 * 60 * 24 * 30, "1")
+    except Exception:
+        pass  # Non-critical — worst case is re-running this migration next cold start
+
 async def init_db():
     """
     Initializes tables and runs column migrations.
@@ -142,9 +168,42 @@ async def init_db():
     async with db_engine.begin() as conn:
         from app.models.fund import FundMaster, NAVHistory
         from app.models.user import User
-        from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem
+        from app.models.stock import StockMaster, StockPriceHistory, WatchlistItem, VerdictSnapshot
         await conn.run_sync(Base.metadata.create_all)
     logger.info("[DB] create_all completed.")
+
+    # ── verdict_snapshots (schema_v4) migration — checked and run
+    # independently of schema_v3_done below, and BEFORE that flag's early
+    # return, so it can never be silently skipped by schema_v3_done already
+    # being set in production. create_all above already created the
+    # verdict_snapshots table and its ORM-declared index unconditionally;
+    # this block just adds a defensive, idempotent explicit index creation
+    # (matching this function's existing style for other tables) and marks
+    # the step done so it isn't repeated every cold start.
+    verdict_snapshot_migrated = await _check_verdict_snapshot_migration_done()
+    if not verdict_snapshot_migrated:
+        logger.info("[DB] schema_v4 (verdict_snapshots) migration flag NOT found — running...")
+        from sqlalchemy import text
+        async with async_session_maker() as session:
+            try:
+                # Plain B-tree composite index — identical syntax on SQLite and
+                # Postgres (unlike the GIN trigram indexes elsewhere in this
+                # function), so no is_sqlite branch needed here.
+                await session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_verdict_snapshot_symbol_date "
+                    "ON verdict_snapshots (symbol, snapshot_date)"
+                ))
+                await session.commit()
+                logger.info("[DB] verdict_snapshots index confirmed.")
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"[DB] verdict_snapshots index creation failed: {e}")
+                # Don't fail startup — the ORM-declared index from create_all
+                # above already covers the common case either way.
+        await _set_verdict_snapshot_migration_done()
+        logger.info("[DB] schema_v4 (verdict_snapshots) migration flag written to Redis.")
+    else:
+        logger.info("[DB] schema_v4 (verdict_snapshots) migration flag found in Redis — skipping.")
 
     # Check Redis flag — skip heavy migrations if already applied
     already_migrated = await _check_migration_done()
