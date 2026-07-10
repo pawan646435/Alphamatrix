@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Response, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, case
+from sqlalchemy import delete, case, func
 
 from app.core.database import get_db
 from app.core.security import check_rate_limit, get_current_user_email
@@ -2239,6 +2239,196 @@ async def prewarm_stock_universe(
     duration = round(time.perf_counter() - start_t, 2)
     logger.info(f"[Prewarm] Done — processed={len(processed)}, skipped={len(skipped_list)}, failed={len(failed)}, duration={duration}s")
 
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 4b — rotating re-ingestion of already-READY stocks
+    # ═══════════════════════════════════════════════════════════════
+    # Appended after the section above, which is unchanged and only handles
+    # genuinely new/not-yet-READY symbols. This section exists purely so
+    # VerdictSnapshot rows (Phase 4) keep accumulating for stocks that are
+    # already READY — without it, backtest_stock_from_snapshots() would
+    # return insufficient_data forever, since neither StockPriceHistory nor
+    # VerdictSnapshot ever refresh for a READY stock otherwise (confirmed:
+    # this endpoint's own to_ingest filter above already excludes READY
+    # stocks, /stocks/ingest/{symbol} early-returns for READY stocks, and
+    # there is no stock-equivalent of funds' force_recompute=true).
+    #
+    # Deliberately runs only ingest_step1_history + ingest_step2_analytics
+    # (skips quick_discover_stock and ingest_step3_briefing):
+    #   - step1 is required, not optional — it re-downloads price history,
+    #     which is what actually advances "as of" date so the eventual T+30
+    #     etc. return can be computed at all; without it, price data stays
+    #     frozen at first-ingestion and the backtest would never resolve.
+    #   - step2 is required — it's what writes the new VerdictSnapshot.
+    #   - quick_discover_stock (company name/sector/current_price) is
+    #     skipped: that metadata is already fresh-ish from first ingestion
+    #     and isn't needed for the backtest; skipping it roughly halves the
+    #     per-stock cost (~1.2s saved out of ~2.5s observed for all 3 steps).
+    #   - ingest_step3_briefing (AI summary) is skipped: it's the slowest
+    #     step and the only one that costs a Groq API call; a fresh AI
+    #     briefing isn't needed just to record a score/verdict snapshot, and
+    #     the existing ai_summary/bull_case/bear_case are still valid to
+    #     keep showing. Because step2 alone leaves ingestion_status at
+    #     "ANALYTICS_RUNNING" (only step3 normally advances it to "READY"),
+    #     this section explicitly restores "READY" itself below — otherwise
+    #     the stock would appear stuck mid-ingestion to any user who visits
+    #     it after a rotation touch, and /stocks/ingest/{symbol}'s
+    #     early-return for READY stocks would stop applying to it.
+    #
+    # Batch size (25) and its ~250s time-budget check are derived from
+    # observed timing, not guessed — see reasoning below just before the
+    # ROTATE_BATCH_SIZE constant.
+    rotate_summary = {"attempted": [], "succeeded": [], "failed": [], "skipped_time_budget": False}
+    rotate_start_t = time.perf_counter()
+
+    # Observed (this deployment, live yfinance calls, 5-symbol sample):
+    # quick_discover ~1.1-1.7s, ingest_step1_history ~0.7-1.6s (avg ~1.18s),
+    # ingest_step2_analytics ~0.00-0.01s (pure DB/compute, no network).
+    # This section only runs step1+step2, so ~1.19s/stock sequential. The
+    # existing new-stock loop above already chunks 3-at-a-time via
+    # asyncio.gather (yfinance-rate-limit-friendly) with a 0.5s inter-chunk
+    # pause — reusing that exact pattern here, wall-clock cost per stock
+    # drops to roughly ~0.65-0.7s effective (3 concurrent I/O calls per
+    # chunk + fixed 0.5s sleep). A batch of 25 stocks is therefore expected
+    # to take roughly 25 * ~0.7s ~= 17-22s including chunk sleeps.
+    #
+    # Budget check: Fluid Compute confirmed in Phase 1 raises this
+    # function's maxDuration ceiling to 300s (see backend/vercel.json). The
+    # unchanged section above self-limits to ~50s worst case. Reserving a
+    # hard 250s-elapsed cutoff for starting this section leaves >200s of
+    # margin below the 300s ceiling even in the worst case (50s existing +
+    # ~22s rotation + Vercel/DB overhead) — comfortably inside budget with
+    # room to spare for yfinance slowness on a bad day, while staying
+    # "small" per-run rather than maximizing what technically fits.
+    ROTATE_BATCH_SIZE = 25
+    ROTATE_TIME_BUDGET_S = 250  # total elapsed since function start_t
+
+    if time.perf_counter() - start_t > ROTATE_TIME_BUDGET_S:
+        logger.warning("[Prewarm] Rotating re-ingestion skipped — time budget already exceeded by new-stock section.")
+        rotate_summary["skipped_time_budget"] = True
+    else:
+        # Oldest-snapshot-first, zero-snapshot stocks first (NULLS FIRST on
+        # the max-snapshot-date subquery). Not limited to _NSE_TOP_200 —
+        # dynamically-discovered stocks are just as eligible for backtest
+        # coverage as the seeded prewarm universe.
+        latest_snap_subq = (
+            select(
+                VerdictSnapshot.symbol.label("symbol"),
+                func.max(VerdictSnapshot.snapshot_date).label("last_snapshot_date"),
+            )
+            .group_by(VerdictSnapshot.symbol)
+            .subquery()
+        )
+        rotate_candidates_q = await db.execute(
+            select(StockMaster.symbol, latest_snap_subq.c.last_snapshot_date)
+            .select_from(StockMaster)
+            .outerjoin(latest_snap_subq, StockMaster.symbol == latest_snap_subq.c.symbol)
+            .where(
+                StockMaster.ingestion_status == "READY",
+                # ingestion_status defaults to "READY" at the DB column level
+                # (see models/stock.py) — the bulk NSE-ticker search-index
+                # seed (populate_search_indices/seed step) inserts thousands
+                # of bare symbol/name/exchange stub rows that inherit that
+                # default without ever going through the actual ingestion
+                # pipeline (alpha_score stays NULL). Without this check the
+                # rotation would burn its whole batch on those stubs instead
+                # of genuinely-ingested stocks — confirmed via integration
+                # test (2320 such stub rows existed against 41 real ones).
+                StockMaster.alpha_score.isnot(None),
+            )
+            .order_by(latest_snap_subq.c.last_snapshot_date.asc().nulls_first())
+            .limit(ROTATE_BATCH_SIZE)
+        )
+        rotate_batch = [row.symbol for row in rotate_candidates_q.all()]
+        rotate_summary["attempted"] = rotate_batch
+
+        if not rotate_batch:
+            logger.info("[Prewarm] Rotating re-ingestion: no READY stocks to rotate yet.")
+        else:
+            from app.workers.stock_ingestion import ingest_step1_history, ingest_step2_analytics
+
+            async def _rotate_one(sym: str):
+                # Each rotated symbol gets its OWN DB session rather than
+                # sharing the route's single `db` — SQLAlchemy's AsyncSession
+                # is not safe for concurrent use, and this function runs
+                # several symbols concurrently via asyncio.gather (chunked,
+                # same pattern as the new-stock section above). Sharing one
+                # session caused every concurrent commit() to fail with
+                # "_prepare_impl() already in progress" during integration
+                # testing — confirmed 100% failure rate before this fix.
+                # Matches the pattern already used for concurrent/background
+                # ingestion elsewhere (e.g. internal.py's QStash webhook,
+                # funds.py's BackgroundTasks fallback both open their own
+                # async_session_maker() session).
+                from app.core.database import async_session_maker
+
+                lock_key = f"ingest_lock:{sym}"
+                try:
+                    lock_ok = await redis_client.set_nx(lock_key, "prewarm-rotate", ex=120)
+                except Exception:
+                    lock_ok = True
+                if not lock_ok:
+                    return {"symbol": sym, "status": "locked"}
+
+                try:
+                    async with async_session_maker() as rotate_db:
+                        step1 = await ingest_step1_history(sym, rotate_db)
+                        if step1.get("status") == "failed":
+                            return {"symbol": sym, "status": "failed"}
+
+                        step2 = await ingest_step2_analytics(sym, rotate_db)
+
+                        # step2 leaves ingestion_status at "ANALYTICS_RUNNING"
+                        # (that transition normally waits for step3/briefing,
+                        # which this rotation deliberately skips — see comment
+                        # above). Restore READY explicitly so the stock doesn't
+                        # look stuck mid-ingestion; existing ai_summary/bull_case/
+                        # bear_case are left untouched and still valid.
+                        stock_q = await rotate_db.execute(select(StockMaster).where(StockMaster.symbol == sym))
+                        stock_row = stock_q.scalar_one_or_none()
+                        if stock_row is not None:
+                            stock_row.ingestion_status = "READY"
+                            await rotate_db.commit()
+
+                    return {"symbol": sym, "status": step2.get("status", "done")}
+                except Exception as e:
+                    logger.error(f"[Prewarm][Rotate] {sym} failed: {e}")
+                    return {"symbol": sym, "status": "error", "error": str(e)[:200]}
+                finally:
+                    try:
+                        await redis_client.delete(lock_key)
+                    except Exception:
+                        pass
+
+            for i in range(0, len(rotate_batch), CHUNK):
+                if time.perf_counter() - start_t > ROTATE_TIME_BUDGET_S:
+                    logger.warning(f"[Prewarm] Rotating re-ingestion time budget reached — stopping after {len(rotate_summary['succeeded'])} symbols")
+                    break
+
+                chunk = rotate_batch[i : i + CHUNK]
+                results = await asyncio.gather(*[_rotate_one(s) for s in chunk], return_exceptions=True)
+
+                for r in results:
+                    if isinstance(r, Exception):
+                        rotate_summary["failed"].append(str(r)[:100])
+                    elif r.get("status") == "locked":
+                        continue  # another instance is handling it — not a failure
+                    elif r.get("status") in ("done", "analytics_running"):
+                        rotate_summary["succeeded"].append(r["symbol"])
+                    else:
+                        rotate_summary["failed"].append(r.get("symbol", "?"))
+
+                await asyncio.sleep(0.5)  # Rate-limit pause between chunks — matches new-stock loop above
+
+    rotate_duration = round(time.perf_counter() - rotate_start_t, 2)
+    logger.info(
+        f"[Prewarm] Rotating re-ingestion done — "
+        f"attempted={len(rotate_summary['attempted'])}, succeeded={len(rotate_summary['succeeded'])} "
+        f"({', '.join(rotate_summary['succeeded']) or 'none'}), failed={len(rotate_summary['failed'])}, "
+        f"duration={rotate_duration}s"
+    )
+
+    total_duration = round(time.perf_counter() - start_t, 2)
+
     return {
         "status": "completed",
         "processed": processed,
@@ -2246,6 +2436,11 @@ async def prewarm_stock_universe(
         "failed": failed,
         "remaining": to_ingest[limit:],
         "duration_s": duration,
+        "rotating_reingest": {
+            **rotate_summary,
+            "duration_s": rotate_duration,
+        },
+        "total_duration_s": total_duration,
     }
 
 

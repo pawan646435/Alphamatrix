@@ -915,7 +915,24 @@ async def write_verdict_snapshot(db: AsyncSession, symbol: str, ratings: Dict[st
     commit the StockMaster update in the same transaction right after this
     runs, so this rides along as a single extra INSERT rather than a second
     round-trip, keeping ingestion latency essentially unchanged.
+
+    Guards against duplicate same-day snapshots: if `symbol` already has a
+    VerdictSnapshot dated today (e.g. a retry, a manual trigger, or the
+    Phase 4b rotating re-ingestion overlapping with an organic re-ingestion
+    on the same day), skips the insert rather than writing a second row for
+    the same (symbol, snapshot_date). Uses the idx_verdict_snapshot_symbol_date
+    composite index added in Phase 4.
     """
+    today = date.today()
+    existing_q = await db.execute(
+        select(VerdictSnapshot.id)
+        .where(VerdictSnapshot.symbol == symbol, VerdictSnapshot.snapshot_date == today)
+        .limit(1)
+    )
+    if existing_q.scalar_one_or_none() is not None:
+        logger.info(f"[VerdictSnapshot] {symbol} already has a snapshot for {today} — skipping duplicate write.")
+        return
+
     snapshot = VerdictSnapshot(
         symbol=symbol,
         snapshot_date=date.today(),
