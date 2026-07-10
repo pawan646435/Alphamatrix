@@ -83,6 +83,7 @@ class ChatMessage(BaseModel):
 class AIChatRequest(BaseModel):
     message: str
     scheme_code: Optional[int] = None  # If chatting within a specific fund detail context
+    symbol: Optional[str] = None  # If chatting within a specific stock detail context
     history: List[ChatMessage] = []
 
 class AIChatResponse(BaseModel):

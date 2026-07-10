@@ -140,7 +140,7 @@ export function useStockAIChat() {
       
       const response = await apiClient.post('/stocks/chat', {
         message: text,
-        scheme_code: symbol ? 0 : null, // Scheme code field placeholder
+        symbol: symbol || null,
         history: formattedHistory
       });
       
