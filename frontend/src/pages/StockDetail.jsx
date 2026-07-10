@@ -26,7 +26,13 @@ export default function StockDetail() {
   const { data: statusData } = useStockStatus(symbol, { enabled: !!symbol });
   const availableSections = statusData?.available_sections || [];
   const ingestionStatus = statusData?.status || null;
-  const isFullyReady = ingestionStatus === 'READY';
+  // Corroborate the status string with real analytics (alpha_score) rather
+  // than trusting 'READY' alone — the backend's ingestion_status column
+  // defaults to 'READY' for never-ingested stub rows, and a bare status
+  // check would flip every section's "enabled" flag on before there's
+  // actually any data behind it, permanently caching empty results.
+  const hasRealAnalytics = statusData?.alpha_score !== null && statusData?.alpha_score !== undefined;
+  const isFullyReady = ingestionStatus === 'READY' && hasRealAnalytics;
   const isFailed = ingestionStatus === 'FAILED';
 
   // Track which pipeline steps we've already triggered to avoid duplicate calls

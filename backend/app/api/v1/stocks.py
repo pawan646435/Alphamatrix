@@ -1763,15 +1763,33 @@ async def get_stock_status(symbol: str, db: AsyncSession = Depends(get_db)):
     except Exception:
         pass
 
-    # For READY stocks without Redis progress entry, return full sections
-    if ingestion_status == "READY" or (
-        stock.alpha_score is not None and stock.sector not in ("Unknown", None, "")
-    ):
+    # A stock is only genuinely READY once real analytics exist. The
+    # ingestion_status column defaults to "READY" at the DB level, so the
+    # ~2,320 bare stub rows the bulk NSE search-index seed inserts (symbol/
+    # company_name/exchange only, alpha_score never set — see Phase 4b's
+    # rotation-query comment for the same discovery) report "READY" here
+    # despite never having been through the pipeline. Trusting the column
+    # alone made /status return a false-positive READY (with all sections
+    # marked available) on the very first poll for any such stub — before
+    # /meta had even flipped it to DISCOVERING and kicked off real
+    # ingestion — which made the frontend's poll loop stop watching before
+    # ingestion had even started, and its child section queries cache that
+    # premature empty data for up to 24h. alpha_score is only ever written
+    # by ingest_step2_analytics, so it's the reliable completion signal
+    # (same check get_stock_meta_split's is_ready already uses above).
+    is_genuinely_ready = stock.alpha_score is not None and stock.sector not in ("Unknown", None, "")
+
+    if is_genuinely_ready:
         ingestion_status = "READY"
         available_sections = ["meta", "chart", "metrics", "briefing", "news"]
         pending_sections = []
         progress_pct = 100
         stage_message = "All analytics ready."
+    elif ingestion_status == "READY":
+        # Column says READY but nothing has actually been ingested yet —
+        # report it as still-discovering so the frontend keeps polling
+        # instead of treating this as a false completion signal.
+        ingestion_status = "DISCOVERING"
 
     return {
         "symbol": symbol,
