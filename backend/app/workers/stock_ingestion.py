@@ -1726,6 +1726,7 @@ async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[
             f"stock_history:{symbol}",
             f"stock_briefing:{symbol}",
             f"stock_search:{symbol.lower()}",
+            f"stock_metrics_split:{symbol}",
         )
         await redis_client.delete_pattern("stocks_list:*")
     except Exception as e:
@@ -2078,7 +2079,7 @@ async def ingest_step2_analytics(symbol: str, db: AsyncSession) -> Dict[str, Any
             "stage_message": "Generating AI Equity Intelligence Briefing..."
         })
         await redis_client.setex(f"ingest_progress:{symbol}", 3600, progress)
-        await redis_client.delete(f"stock_detail:{symbol}", f"stock_master:{symbol}")
+        await redis_client.delete(f"stock_detail:{symbol}", f"stock_master:{symbol}", f"stock_metrics_split:{symbol}")
     except Exception as e:
         logger.warning(f"[IngestStep2] Redis update failed: {e}")
 
@@ -2164,6 +2165,7 @@ async def ingest_step3_briefing(symbol: str, db: AsyncSession) -> Dict[str, Any]
             f"stock_detail:{symbol}", f"stock_master:{symbol}",
             f"stock_history:{symbol}", f"stock_briefing:{symbol}",
             f"stock_meta_split:{symbol}", f"stock_search:{symbol.lower()}",
+            f"stock_metrics_split:{symbol}",
         )
         await redis_client.delete_pattern("stocks_list:*")
         progress = json.dumps({
