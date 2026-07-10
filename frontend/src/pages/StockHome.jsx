@@ -1,32 +1,19 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Star, Cpu, Layers, ArrowUpRight, Activity, Target, Info } from 'lucide-react';
-import { useStockAIChat } from '../hooks/useStocks';
 import { useStockList, useMarketRegime, useBacktestSummary } from '../hooks/useQueries';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardGridSkeleton } from '../components/skeletons/Skeletons';
-import FloatingChatAssistant from '../components/FloatingChatAssistant';
 
 export default function StockHome() {
   const navigate = useNavigate();
   const { data: stocks = [], isLoading: stocksLoading } = useStockList();
   const { data: marketRegime, isLoading: regimeLoading } = useMarketRegime();
   const { data: backtestSummary } = useBacktestSummary();
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessage, setChatMessage] = useState('');
-  
-  const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
   const handleSectorClick = (sectorKey) => {
     navigate(`/stocks/sector/${sectorKey}`);
-  };
-
-  const handleSendChat = (e) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    sendMessage(chatMessage, null, messages);
-    setChatMessage('');
   };
 
   // Sector list configuration
@@ -304,18 +291,6 @@ export default function StockHome() {
         </div>
       </div>
 
-      <FloatingChatAssistant
-        title="EQUITY_ANALYST.EXE"
-        emptyStateText="Equity intelligence terminal online. Ask about PE ratios, Beta metrics, or request stock diagnostics."
-        placeholder="Ask about TCS vs Infosys, etc..."
-        chatOpen={chatOpen}
-        setChatOpen={setChatOpen}
-        messages={messages}
-        chatLoading={chatLoading}
-        chatMessage={chatMessage}
-        setChatMessage={setChatMessage}
-        onSubmit={handleSendChat}
-      />
     </div>
   );
 }

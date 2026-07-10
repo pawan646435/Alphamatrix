@@ -122,29 +122,37 @@ export function useStockAIChat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const sendMessage = useCallback(async (text, symbol = null, history = []) => {
+  // `groundedContext` is an optional snapshot ({ alpha_score, sector, verdict })
+  // of the stock already loaded on the current page when `symbol` is set —
+  // attached to the assistant reply so the UI can show a "Referenced: ..."
+  // citation footer without the backend needing to echo tool-call metadata back.
+  const sendMessage = useCallback(async (text, symbol = null, history = [], groundedContext = null) => {
     if (!text) return;
-    
+
     // Optimistic local update
     const userMsg = { role: 'user', content: text };
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     setError(null);
-    
+
     try {
       // Map message history to schema format
       const formattedHistory = history.map(m => ({
         role: m.role,
         content: m.content
       }));
-      
+
       const response = await apiClient.post('/stocks/chat', {
         message: text,
         symbol: symbol || null,
         history: formattedHistory
       });
-      
-      const assistantMsg = { role: 'assistant', content: response.data.response };
+
+      const assistantMsg = {
+        role: 'assistant',
+        content: response.data.response,
+        grounded: symbol ? groundedContext : null,
+      };
       setMessages((prev) => [...prev, assistantMsg]);
       return response.data;
     } catch (err) {

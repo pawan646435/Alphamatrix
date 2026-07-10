@@ -11,7 +11,8 @@
  * User messages stay as compact right-aligned query chips.
  */
 
-import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, AlertTriangle, Cpu } from 'lucide-react';
+import { stripLeadLabel, formatInline, LABEL_STYLE } from '../utils/analystText';
 
 // ─── Metric extraction ───────────────────────────────────────────────────────
 const METRIC_PATTERNS = [
@@ -134,7 +135,7 @@ function SectionHeader({ title }) {
   );
 }
 
-function ContentBlock({ text }) {
+function ContentBlock({ text, footnotes }) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const groups = [];
   let currentBullets = [];
@@ -169,30 +170,41 @@ function ContentBlock({ text }) {
         if (g.type === 'bullets') {
           return (
             <ul key={i} className="space-y-1.5 pl-1">
-              {g.items.map((item, j) => (
-                <li
-                  key={j}
-                  className="flex items-start gap-2 text-[11px] text-black dark:text-white leading-relaxed font-sans"
-                >
-                  <span className="text-brand-primary shrink-0 font-bold mt-0.5">›</span>
-                  <span
-                    dangerouslySetInnerHTML={{
-                      __html: item.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
-                    }}
-                  />
-                </li>
-              ))}
+              {g.items.map((item, j) => {
+                const { type, text: itemText } = stripLeadLabel(item);
+                const style = type ? LABEL_STYLE[type] : null;
+                return (
+                  <li
+                    key={j}
+                    className={`relative flex items-start gap-2 text-[11px] text-black dark:text-white leading-relaxed font-sans ${style ? `border-l-2 ${style.border} pl-2` : ''}`}
+                  >
+                    {!style && <span className="text-brand-primary shrink-0 font-bold mt-0.5">›</span>}
+                    <span dangerouslySetInnerHTML={{ __html: formatInline(itemText, footnotes) }} />
+                    {style && (
+                      <span className={`absolute top-0 right-0 font-mono uppercase tracking-wider opacity-35 ${style.badge}`} style={{ fontSize: '8px' }}>
+                        {type}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           );
         }
+        const { type, text: lineText } = stripLeadLabel(g.content);
+        const style = type ? LABEL_STYLE[type] : null;
         return (
-          <p
-            key={i}
-            className="text-[11px] text-black dark:text-white leading-relaxed font-sans"
-            dangerouslySetInnerHTML={{
-              __html: g.content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
-            }}
-          />
+          <div key={i} className={`relative ${style ? `border-l-2 ${style.border} pl-3 py-0.5` : ''}`}>
+            {style && (
+              <span className={`absolute top-0.5 right-0 font-mono uppercase tracking-wider opacity-35 ${style.badge}`} style={{ fontSize: '8px' }}>
+                {type}
+              </span>
+            )}
+            <p
+              className={`text-[11px] text-black dark:text-white leading-relaxed font-sans ${style ? 'pr-12' : ''}`}
+              dangerouslySetInnerHTML={{ __html: formatInline(lineText, footnotes) }}
+            />
+          </div>
         );
       })}
     </div>
@@ -257,9 +269,30 @@ function VerdictBanner({ verdict }) {
   );
 }
 
+/** "Referenced: Alpha Score 33/100 · Realty sector · Verdict AVOID" footer badge —
+ * shown when the response was produced with a get_stock_verdict tool call in
+ * this session, styled like BriefingReport's confidence/telemetry badges so it
+ * reads as the same citation language, not a new visual pattern. */
+function GroundedFooter({ grounded }) {
+  if (!grounded) return null;
+  const parts = [];
+  if (grounded.alpha_score != null) parts.push(`Alpha Score ${grounded.alpha_score}/100`);
+  if (grounded.sector) parts.push(`${grounded.sector} sector`);
+  if (grounded.verdict) parts.push(`Verdict ${grounded.verdict}`);
+  if (parts.length === 0) return null;
+  return (
+    <div className="border-t border-brand-border/40 px-4 py-2 flex items-center gap-1.5 flex-wrap">
+      <Cpu className="h-3 w-3 text-brand-primary/70 shrink-0" />
+      <span className="font-mono text-[9px] text-brand-textMuted uppercase tracking-wide">
+        Referenced: <span className="text-brand-primary/90">{parts.join(' · ')}</span>
+      </span>
+    </div>
+  );
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 export default function AnalystResponseCard({ message }) {
-  const { role, content } = message;
+  const { role, content, grounded } = message;
 
   // ── User query chip ──────────────────────────────────────────────────────
   if (role === 'user') {
@@ -273,9 +306,10 @@ export default function AnalystResponseCard({ message }) {
   }
 
   // ── AI Research Card ─────────────────────────────────────────────────────
-  const metrics  = extractMetrics(content);
-  const verdict  = extractVerdict(content);
-  const sections = parseSections(content);
+  const metrics   = extractMetrics(content);
+  const verdict   = extractVerdict(content);
+  const sections  = parseSections(content);
+  const footnotes = [];
 
   return (
     <div className="border border-brand-border/70 bg-brand-bg">
@@ -298,13 +332,26 @@ export default function AnalystResponseCard({ message }) {
         {sections.map((sec, i) => (
           <div key={i}>
             <SectionHeader title={sec.title} />
-            {sec.content && <ContentBlock text={sec.content} />}
+            {sec.content && <ContentBlock text={sec.content} footnotes={footnotes} />}
           </div>
         ))}
 
         {/* Verdict banner */}
         {verdict && <VerdictBanner verdict={verdict} />}
+
+        {/* [FACT:...] footnotes, if any were cited */}
+        {footnotes.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-brand-border/30 space-y-0.5">
+            {footnotes.map((f, i) => (
+              <p key={i} className="font-mono text-[9px] text-brand-textMuted/50 leading-relaxed">
+                <sup className="mr-1">{i + 1}</sup>{f}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
+
+      <GroundedFooter grounded={grounded} />
     </div>
   );
 }
