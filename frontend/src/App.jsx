@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { LayoutDashboard, Compass, Sun, Moon, Star, RefreshCw, GitCompare, Newspaper, Menu, X, LogOut, LogIn, ChevronDown, User, Settings, AlertCircle } from 'lucide-react';
 import AlphaMatrixLogo from './components/AlphaMatrixLogo';
+import FloatingChatAssistant from './components/FloatingChatAssistant';
 import { AuthProvider } from './context/AuthContext';
 import useAuth from './hooks/useAuth';
 
@@ -605,6 +606,11 @@ function AppContent() {
           </Routes>
         </Suspense>
       </main>
+
+      {/* Unified floating AI Analyst — one grounding implementation, visible
+          on every page except the auth pages where there's no account/page
+          context to chat about. */}
+      {!['/login', '/signup'].includes(location.pathname) && <FloatingChatAssistant />}
 
       {/* Global Footer */}
       <footer className="border-t border-brand-border py-6 text-center mt-auto font-mono text-[9px] text-brand-textMuted bg-brand-surface">

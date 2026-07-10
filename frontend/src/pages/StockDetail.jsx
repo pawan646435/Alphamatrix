@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Cpu, MessageSquare, Plus, Check, Zap, Activity, AlertTriangle, Target, Loader2, Info } from 'lucide-react';
-import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
+import { ArrowLeft, RefreshCw, Cpu, Plus, Check, Zap, Activity, AlertTriangle, Target, Loader2, Info } from 'lucide-react';
+import { useWatchlist } from '../hooks/useStocks';
 import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest, useStockMeta, useStockMetrics, useStockChart, useStockBriefing, useStockNews, useStockStatus, advanceIngestionPipeline } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
 import InteractiveChart from '../components/charts/InteractiveChart';
 import StockLogo from '../components/StockLogo';
-import AnalystResponseCard from '../components/AnalystResponseCard';
 import BriefingReport from '../components/BriefingReport';
 
 import useAuth from '../hooks/useAuth';
@@ -117,9 +116,6 @@ export default function StockDetail() {
 
   const { data: watchlist = [] } = useWatchlistQuery();
   const { addToWatchlist, removeFromWatchlist } = useWatchlist();
-  
-  const [chatMessage, setChatMessage] = useState('');
-  const { messages, loading: chatLoading, sendMessage } = useStockAIChat();
 
   const [timings, setTimings] = useState({
     start: null,
@@ -239,13 +235,6 @@ export default function StockDetail() {
     } catch (err) {
       console.error("Watchlist modification failed", err);
     }
-  };
-
-  const handleSendChat = (e) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    sendMessage(chatMessage, symbol, messages);
-    setChatMessage('');
   };
 
   // Safe fallback placeholders for progressive loading.
@@ -714,62 +703,10 @@ export default function StockDetail() {
           isLoading={isBriefingLoading}
         />
 
-        {/* Interactive Analyst Terminal — full width, below research */}
-        <div
-          className="w-full border border-brand-border bg-brand-surface shadow-xl flex flex-col font-mono animate-fade-in-up"
-          style={{ animationDelay: '250ms', minHeight: '480px', maxHeight: '640px' }}
-        >
-          {/* Panel header */}
-          <div className="bg-brand-bg border-b border-brand-border px-5 py-4 flex items-center gap-2 text-xs">
-            <MessageSquare className="h-4 w-4 text-brand-primary" />
-            <div>
-              <h3 className="font-bold text-black dark:text-white uppercase font-display">Interactive Analyst Terminal</h3>
-              <p className="text-[9px] text-brand-textMuted mt-0.5 font-mono">Pre-contextualized session for {stock.symbol}</p>
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-4 scrollbar text-[11px] leading-relaxed" style={{ minHeight: '200px' }}>
-            {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center text-brand-textMuted space-y-2">
-                <Cpu className="h-6 w-6 opacity-30 text-brand-primary" />
-                <p className="text-[9px]">Ready to process equities queries. Ask things like: "Is {stock.symbol} a buy?" or "Explain its high P/E ratio."</p>
-              </div>
-            ) : (
-              messages.map((m, idx) => (
-                <AnalystResponseCard key={idx} message={m} />
-              ))
-            )}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="bg-brand-bg border border-brand-border px-3 py-2 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce" />
-                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]" />
-                  <span className="w-1.5 h-1.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Input form */}
-          <form onSubmit={handleSendChat} className="p-3 bg-brand-bg border-t border-brand-border flex gap-2">
-            <input
-              type="text"
-              inputMode="text"
-              placeholder={`Query analyst about ${stock.symbol}...`}
-              value={chatMessage}
-              onChange={(e) => setChatMessage(e.target.value)}
-              className="flex-1 bg-brand-surface border border-brand-border px-3.5 py-2 min-h-[44px] text-xs text-black dark:text-white focus:outline-none focus:border-brand-primary"
-            />
-            <button
-              type="submit"
-              disabled={chatLoading}
-              className="bg-brand-primary hover:bg-brand-primaryHover disabled:opacity-50 text-black font-extrabold text-[9px] px-4 min-h-[44px] transition-colors border border-brand-primary"
-            >
-              EXEC
-            </button>
-          </form>
-        </div>
+        {/* Interactive Analyst Terminal now lives in the unified floating
+            chat (components/FloatingChatAssistant.jsx), which auto-detects
+            this page's symbol and pre-contextualizes the same way this
+            inline block used to — see App.jsx for the global mount. */}
 
         {/* Live Ticker Stream */}
         {newsData && newsData.length > 0 && (

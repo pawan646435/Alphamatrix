@@ -1,31 +1,17 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Layers, Star, Cpu } from 'lucide-react';
-import { useAIChat } from '../hooks/useFunds';
 import { useFundList } from '../hooks/useQueries';
 import RiskScatterplot from '../components/charts/RiskScatterplot';
 import GlobalSearch from '../components/GlobalSearch';
 import { CardSkeleton } from '../components/skeletons/Skeletons';
-import FloatingChatAssistant from '../components/FloatingChatAssistant';
 
 export default function Home() {
   const navigate = useNavigate();
   const { data: funds = [], isLoading: fundsLoading } = useFundList();
-  
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessage, setChatMessage] = useState('');
-  
-  const { messages, loading: chatLoading, sendMessage } = useAIChat();
 
   const handleCategoryClick = (category) => {
     navigate(`/explorer?category=${encodeURIComponent(category)}`);
-  };
-
-  const handleSendChat = (e) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-    sendMessage(chatMessage, null, messages);
-    setChatMessage('');
   };
 
   // High-level cards details
@@ -183,19 +169,6 @@ export default function Home() {
           <RiskScatterplot funds={funds} />
         </div>
       </div>
-
-      <FloatingChatAssistant
-        title="COGNITIVE_ANALYST.EXE"
-        emptyStateText="Ready to process queries. Ask about metrics, CAPM calculations, or portfolio risk parameters."
-        placeholder="Query system database..."
-        chatOpen={chatOpen}
-        setChatOpen={setChatOpen}
-        messages={messages}
-        chatLoading={chatLoading}
-        chatMessage={chatMessage}
-        setChatMessage={setChatMessage}
-        onSubmit={handleSendChat}
-      />
     </div>
   );
 }
