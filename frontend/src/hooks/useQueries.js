@@ -232,7 +232,15 @@ export function useStockStatus(symbol, options = {}) {
     refetchInterval: (query) => {
       const data = query?.state?.data;
       if (!data) return 1500;
-      const done = data.status === 'READY' || data.status === 'FAILED' || data.status === 'NOT_FOUND';
+      // A bare status:'READY' string isn't proof the pipeline actually ran —
+      // treat it as complete only when corroborated by real analytics
+      // (alpha_score), regardless of how many intermediate stages the
+      // backend does or doesn't report along the way. This keeps polling
+      // robust to the backend changing how many round-trips it takes, and
+      // also guards against ingestion_status defaulting to "READY" on
+      // never-ingested stub rows.
+      const genuinelyReady = data.status === 'READY' && data.alpha_score !== null && data.alpha_score !== undefined;
+      const done = genuinelyReady || data.status === 'FAILED' || data.status === 'NOT_FOUND';
       if (done) return false;
       // Adaptive: fast polling for first 15s, then back off
       const ageMs = Date.now() - startedAt.current;
