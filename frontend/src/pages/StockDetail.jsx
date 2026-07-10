@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Cpu, MessageSquare, Plus, Check, Zap, Activity, AlertTriangle, Target, Loader2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Cpu, MessageSquare, Plus, Check, Zap, Activity, AlertTriangle, Target, Loader2, Info } from 'lucide-react';
 import { useStockAIChat, useWatchlist } from '../hooks/useStocks';
 import { useStockDetail, useWatchlistQuery, getStandardizedSector, useStockBacktest, useStockMeta, useStockMetrics, useStockChart, useStockBriefing, useStockNews, useStockStatus, advanceIngestionPipeline } from '../hooks/useQueries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -882,18 +882,32 @@ function StockBacktestPanel({ symbol, isReady, verdictVersion }) {
   return (
     <div className="border border-brand-border bg-brand-surface p-5 sm:p-6 animate-fade-in-up">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-2">
-          <Target className="h-4 w-4 text-brand-primary" />
-          <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Backtest</h3>
-          <span className="text-[9px] font-mono text-brand-textMuted/60 uppercase tracking-wider">[Historical — not current recommendation]</span>
+      <div className="mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Target className="h-4 w-4 text-brand-primary" />
+            <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Backtest</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[9px] text-brand-textMuted">
+            <span>Backtest Verdict: <strong className={`${verdictColor(data.historical_verdict)} font-bold`}>{data.historical_verdict}</strong></span>
+            <span className="text-brand-border">|</span>
+            <span>Score: <strong className="text-black dark:text-white">{data.historical_score}</strong></span>
+            <span className="text-brand-border">|</span>
+            <span>From: <strong className="text-black dark:text-white">{data.eval_start_date}</strong></span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 font-mono text-[9px] text-brand-textMuted">
-          <span>Historical Verdict: <strong className={`${verdictColor(data.historical_verdict)} font-bold`}>{data.historical_verdict}</strong></span>
-          <span className="text-brand-border">|</span>
-          <span>Score: <strong className="text-black dark:text-white">{data.historical_score}</strong></span>
-          <span className="text-brand-border">|</span>
-          <span>From: <strong className="text-black dark:text-white">{data.eval_start_date}</strong></span>
+        {/* Independence disclaimer — this panel's verdict comes from a separate
+            price-momentum-only model (see services/backtesting.py), not the
+            Alpha Score model or the current AI briefing rubric shown elsewhere
+            on this page. A user seeing e.g. "Backtest Verdict: BUY" next to a
+            live "AVOID" Alpha Score verdict should not read that as the
+            platform contradicting itself — they're two different models. */}
+        <div
+          className="flex items-start gap-1.5 mt-2 text-[9px] font-mono text-brand-warning/90 uppercase tracking-wider"
+          title="This backtest replays a separate price-momentum model (moving averages, CAGR, drawdown) against historical prices only. It does not use the Alpha Score model's fundamentals/valuation/risk pillars or the AI briefing's rubric, so its verdict can legitimately differ from the live Alpha Score / AI verdicts shown above."
+        >
+          <Info className="h-3 w-3 mt-[1px] flex-shrink-0" />
+          <span>Independent Technical Backtest — does not evaluate today's AI or Alpha Score verdict</span>
         </div>
       </div>
 

@@ -865,6 +865,38 @@ def calculate_event_score(news_list: List[Dict[str, Any]]) -> float:
     score = 80.0 + (pos_count * 5.0) - (neg_count * 15.0)
     return max(0.0, min(100.0, score))
 
+# ─────────────────────────────────────────────────────────────
+# ALPHA SCORE WEIGHT PROFILES
+# ─────────────────────────────────────────────────────────────
+# Both profiles are weighted sums over the same six pillar scores
+# (fundamental/quality/valuation/technical/risk/sector_relative) — same
+# inputs, different emphasis, so investor_verdict and trader_verdict are
+# genuinely distinct outputs rather than both being map_verdict(final_score)
+# on the same number (the bug this profile split fixes).
+#
+# INVESTOR profile: fundamentals-led, for buy-and-hold / long-horizon framing.
+INVESTOR_WEIGHTS = {
+    "fundamental": 0.25,
+    "quality": 0.15,
+    "valuation": 0.20,
+    "technical": 0.15,
+    "risk": 0.15,
+    "sector_relative": 0.10,
+}
+# TRADER profile: momentum-biased — technical weighted up ~2x (15%→30%),
+# fundamental/quality weighted down (they lag price action), risk (which
+# includes beta/volatility) weighted up slightly (17%), valuation and
+# sector-relative left unchanged. Sums to 1.0, same as INVESTOR_WEIGHTS.
+TRADER_WEIGHTS = {
+    "fundamental": 0.15,
+    "quality": 0.08,
+    "valuation": 0.20,
+    "technical": 0.30,
+    "risk": 0.17,
+    "sector_relative": 0.10,
+}
+
+
 def calculate_institutional_ratings(
     stock: Dict[str, Any], 
     prices_list: List[float], 
@@ -1042,25 +1074,32 @@ def calculate_institutional_ratings(
     sector_relative_score = (roe_rel + de_rel + growth_rel) / 3.0
     sector_relative_score = round(max(0.0, min(100.0, sector_relative_score)), 1)
     
-    # ─── FINAL ALPHA SCORE (WEIGHTED MODEL) ───
-    final_score = (
-        0.25 * fundamental_score +
-        0.15 * quality_score +
-        0.20 * valuation_score +
-        0.15 * technical_score +
-        0.15 * risk_score +
-        0.10 * sector_relative_score
-    )
-    
-    # OVERHEAT PENALTIES
-    if rsi > 75.0:
-        final_score -= 10.0
-    if pe > sect_pe * 1.8:
-        final_score -= 15.0
-    if dma_200 and latest_price > dma_200 * 1.30:
-        final_score -= 10.0
-        
-    final_score = round(max(0.0, min(100.0, final_score)), 1)
+    # ─── FINAL ALPHA SCORE (INVESTOR-WEIGHTED MODEL) ───
+    pillars = {
+        "fundamental": fundamental_score,
+        "quality": quality_score,
+        "valuation": valuation_score,
+        "technical": technical_score,
+        "risk": risk_score,
+        "sector_relative": sector_relative_score,
+    }
+
+    def _weighted_sum(weights: Dict[str, float]) -> float:
+        return sum(pillars[k] * w for k, w in weights.items())
+
+    # OVERHEAT PENALTIES — same signals apply to both profiles (RSI/PE/DMA
+    # blow-off risk isn't investor-vs-trader specific, it's just risk).
+    def _apply_overheat_penalty(score: float) -> float:
+        if rsi > 75.0:
+            score -= 10.0
+        if pe > sect_pe * 1.8:
+            score -= 15.0
+        if dma_200 and latest_price > dma_200 * 1.30:
+            score -= 10.0
+        return round(max(0.0, min(100.0, score)), 1)
+
+    final_score = _apply_overheat_penalty(_weighted_sum(INVESTOR_WEIGHTS))
+    trader_final_score = _apply_overheat_penalty(_weighted_sum(TRADER_WEIGHTS))
     
     # ─── CONFIDENCE ENGINE CALIBRATION ───
     filled_fields = sum(1 for v in [stock.get("roe"), stock.get("pe_ratio"), stock.get("debt_equity"), stock.get("pb_ratio")] if v is not None)
@@ -1097,9 +1136,13 @@ def calculate_institutional_ratings(
         if val >= 46.0: return "REDUCE"
         return "AVOID"
         
+    # investor_verdict and trader_verdict are now genuinely distinct: same
+    # map_verdict() thresholds, but computed from two differently-weighted
+    # sums over the same six pillars (INVESTOR_WEIGHTS vs TRADER_WEIGHTS
+    # above) rather than both reading the same final_score.
     investor_verdict = map_verdict(final_score)
-    trader_verdict = map_verdict(final_score)
-    
+    trader_verdict = map_verdict(trader_final_score)
+
     return {
         "fundamental_score": fundamental_score,
         "quality_score": quality_score,
@@ -1109,6 +1152,7 @@ def calculate_institutional_ratings(
         "sector_relative_score": sector_relative_score,
         "event_score": event_score,
         "final_score": final_score,
+        "trader_score": trader_final_score,
         "confidence_score": confidence_score,
         "investor_verdict": investor_verdict,
         "trader_verdict": trader_verdict,

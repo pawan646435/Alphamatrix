@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Star, Cpu, Layers, ArrowUpRight, Activity, Target } from 'lucide-react';
+import { TrendingUp, Star, Cpu, Layers, ArrowUpRight, Activity, Target, Info } from 'lucide-react';
 import { useStockAIChat } from '../hooks/useStocks';
 import { useStockList, useMarketRegime, useBacktestSummary } from '../hooks/useQueries';
 import StockRiskScatterplot from '../components/charts/StockRiskScatterplot';
@@ -156,7 +156,7 @@ export default function StockHome() {
       {/* Verdict Accuracy Engine — Backtesting Results */}
       {backtestSummary && backtestSummary.status === 'completed' && (
         <div className="border border-brand-border bg-brand-surface p-5 sm:p-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-brand-primary" />
               <h2 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider">Verdict Accuracy Engine v3</h2>
@@ -169,6 +169,19 @@ export default function StockHome() {
                 {backtestSummary.overall_win_rate_365d != null ? `${backtestSummary.overall_win_rate_365d}% Win Rate` : ''}
               </span>
             </div>
+          </div>
+          {/* Independence disclaimer — the BUY/HOLD/AVOID buckets below are
+              labeled by a separate price-momentum-only backtest model (see
+              services/backtesting.py), not by the Alpha Score model or the
+              AI briefing rubric that drive the live verdicts shown on stock
+              pages. Accuracy % here should not be read as "the platform's
+              live verdicts are right X% of the time". */}
+          <div
+            className="flex items-start gap-1.5 mb-5 text-[9px] font-mono text-brand-warning/90 uppercase tracking-wider"
+            title="These accuracy numbers come from a separate historical backtest model (price momentum, CAGR, drawdown against past price data only) — not from the Alpha Score model or the live AI briefing rubric used elsewhere on this platform. They measure how a differently-weighted, price-only model would have performed, not how today's actual AI/Alpha Score verdicts have performed."
+          >
+            <Info className="h-3 w-3 mt-[1px] flex-shrink-0" />
+            <span>Independent Technical Backtest — does not evaluate today's AI or Alpha Score verdicts</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

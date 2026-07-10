@@ -45,41 +45,78 @@ AlphaMatrix is designed around a single principle: **AI explains the verdict, th
 
 ### Stock Institutional Rating Engine v2
 
-A 5-factor composite scoring model for equities producing a final score (0–100) and verdict.
+A 6-factor composite scoring model for equities. Six pillar scores (0–100
+each) are computed once from the same underlying metrics, then combined into
+**two** differently-weighted composites — an investor score and a trader
+score — each mapped through the same verdict bands. Both scores and both
+verdicts are computed and persisted for every stock (`StockMaster.alpha_score`
+is the investor score; the trader score is not separately persisted, only its
+resulting `trader_verdict`).
 
-#### Scoring Formula
+#### Pillar Scores (shared inputs)
+
+| Pillar | Computed from |
+| :--- | :--- |
+| `fundamental_score` | ROE, ROCE, operating/net margin, revenue/profit growth, FCF sign, 1Y/3Y CAGR consistency |
+| `quality_score` | Margin stability, cash conversion, debt quality, returns stability |
+| `valuation_score` | P/E, P/B (vs. live sector average), EV/EBITDA, PEG |
+| `technical_score` | RSI, MACD, 50-DMA/200-DMA position and alignment; capped at 45 if trend structure is BEARISH |
+| `risk_score` | Debt/equity, interest coverage, promoter holding, beta-derived volatility, recent news event classification |
+| `sector_relative_score` | ROE / D-E / 3Y-CAGR vs. live sector averages |
+
+#### Investor Score (fundamentals-led)
+
 ```
-Final Score = (
-    fundamental_score  × 0.30   +   # P/E, P/B, EPS growth, D/E ratio
-    valuation_score    × 0.20   +   # DCF discount, margin of safety
-    technical_score    × 0.20   +   # 52W momentum, RSI, trend
-    risk_score         × 0.15   +   # Beta, volatility, drawdown
-    sector_score       × 0.15       # Peer-relative rank within sector
+Investor Score = (
+    fundamental_score       × 0.25   +
+    quality_score            × 0.15   +
+    valuation_score           × 0.20   +
+    technical_score            × 0.15   +
+    risk_score                  × 0.15   +
+    sector_relative_score        × 0.10
 )
 ```
 
-#### Investor Verdict Mapping
-| Score | Verdict |
-|:------|:--------|
-| 75–100 | **STRONG BUY** |
-| 60–74 | **BUY** |
-| 45–59 | **HOLD** |
-| 30–44 | **REDUCE** |
-| 0–29 | **AVOID** |
+#### Trader Score (momentum-biased)
 
-#### Trader Verdict Mapping (Momentum-biased)
+Same six pillar scores, weighted to emphasize technical/risk (volatility)
+signal over fundamentals/quality, which lag price action:
+
+```
+Trader Score = (
+    fundamental_score       × 0.15   +
+    quality_score             × 0.08   +
+    valuation_score            × 0.20   +
+    technical_score             × 0.30   +
+    risk_score                   × 0.17   +
+    sector_relative_score         × 0.10
+)
+```
+
+Both scores then receive the same overheat penalties (RSI > 75 → −10,
+P/E > 1.8× sector average → −15, price > 1.30× 200-DMA → −10) before being
+clamped to 0–100.
+
+#### Verdict Mapping (shared bands — applied separately to each score)
+
 | Score | Verdict |
-|:------|:--------|
-| 72+ | **STRONG BUY** |
-| 58–71 | **BUY** |
-| 43–57 | **HOLD** |
-| 28–42 | **REDUCE** |
-| 0–27 | **AVOID** |
+| :--- | :--- |
+| 74–100 | **STRONG BUY** |
+| 66–73 | **BUY** |
+| 56–65 | **HOLD** |
+| 46–55 | **REDUCE** |
+| 0–45 | **AVOID** |
+
+Investor and trader verdicts use the *same* bands on *different* scores — a
+momentum-driven, fundamentally-weak stock can legitimately land in different
+bands for each (e.g. investor `AVOID`, trader `REDUCE`/`BUY` on strong
+technicals), which is the point of having two verdicts at all.
 
 #### Features
-- Sector-relative scoring (stocks ranked against NIFTY sector peers)
-- Confidence score indicating data completeness
-- Separate investor (fundamentals-biased) and trader (momentum-biased) verdicts
+
+- Sector-relative scoring (stocks ranked against live NIFTY sector peers)
+- Confidence score indicating data completeness and fundamental/technical signal agreement
+- Genuinely distinct investor (fundamentals-biased) and trader (momentum-biased) verdicts, not the same score read twice
 - AI-generated explanation of the score — does **not** generate the score
 - Alpha Score ring visual on stock detail page
 

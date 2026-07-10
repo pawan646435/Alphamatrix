@@ -366,6 +366,50 @@ def compute_divergence_reason(anchor: Dict[str, Any], divergence: Dict[str, Any]
     }
 
 
+# ── 1C-bis. Confidence-proportional hedging guidance ────────────────────────
+# The Safety Constraint used to blanket-apply probability-hedged language to
+# every claim regardless of how complete/strong the underlying data was — a
+# [FACT: pe_ratio=45] citation and a speculative forward-looking read were
+# hedged identically. [DATA]-labelled claims (RULE 2) are citations of actual
+# figures, not predictions, so they don't need hedging at all; what genuinely
+# warrants hedging is [ANALYTICAL] interpretation/projection, and how heavily
+# that should be hedged should scale with assess_data_quality()'s
+# confidence_label — a HIGH-confidence, near-complete metric set supports
+# ordinary professional-analyst conviction, while a LOW-confidence one should
+# read as visibly more provisional. Does not touch RULE 1-7 or their exact
+# wording — this only replaces the trailing "Safety Constraint" line.
+CONFIDENCE_HEDGING_GUIDANCE = {
+    "HIGH": (
+        "Safety Constraint: Data completeness here is HIGH ({completeness}% of key metrics "
+        "available, {available}/{total}). [DATA] claims are citations of actual figures — state "
+        "them plainly and directly; a cited ratio is a fact, not a probability, so do not hedge it. "
+        "[ANALYTICAL] claims (interpretation, projection, forward-looking conclusions) still warrant "
+        "ordinary professional-analyst caution, since predicting future stock performance is "
+        "inherently uncertain regardless of data quality — use confident-but-not-absolute language "
+        "(e.g. \"suggests\", \"points to\", \"is likely to\"). Do NOT state future performance with "
+        "absolute certainty."
+    ),
+    "MEDIUM": (
+        "Safety Constraint: Data completeness here is MEDIUM ({completeness}% of key metrics "
+        "available, {available}/{total}). [DATA] claims are citations of actual figures — state them "
+        "plainly. [ANALYTICAL] claims need stronger hedging than usual: prefer \"tentatively "
+        "suggests\", \"may indicate\", \"a plausible but unconfirmed reading is...\", and where a "
+        "conclusion leans on a field flagged missing under RULE 4, say so explicitly. Do NOT state "
+        "anything about future performance with certainty."
+    ),
+    "LOW": (
+        "Safety Constraint: Data completeness here is LOW ({completeness}% of key metrics "
+        "available, {available}/{total}) — treat this as a genuinely thin evidence base. [DATA] "
+        "claims are still citations of actual figures and should be stated plainly, but [ANALYTICAL] "
+        "claims must be heavily hedged and should explicitly name the data gaps driving the "
+        "uncertainty (e.g. \"with only {available}/{total} key metrics available, this is a "
+        "provisional read, not a firm conclusion\"). Do NOT state anything about future performance "
+        "with certainty, and avoid confident-sounding language anywhere the analysis extends beyond "
+        "the cited figures."
+    ),
+}
+
+
 # ── 1D. Prompt builder ──────────────────────────────────────────────────────
 def build_briefing_prompt(stock_data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     quality = assess_data_quality(stock_data)
@@ -382,6 +426,12 @@ def build_briefing_prompt(stock_data: Dict[str, Any]) -> Tuple[str, Dict[str, An
         "divergence": divergence,
         "divergence_reason": divergence_reason,
     }
+
+    safety_constraint = CONFIDENCE_HEDGING_GUIDANCE[quality["confidence_label"]].format(
+        completeness=quality["data_completeness_pct"],
+        available=quality["available_metrics"],
+        total=quality["total_metrics"],
+    )
 
     benchmark_table = "\n".join(f"- {k}: {v}" for k, v in benchmarks.items())
     metrics_vs_benchmark = "\n".join(
@@ -508,8 +558,7 @@ the system Investor/Trader Verdict from the note above.
 Confidence Score: {quality['confidence_label']} ({quality['data_completeness_pct']}%)
 Explain this rating with reference to data completeness and metric agreement.
 
-Safety Constraint: Do NOT state anything with absolute certainty. Always use
-probability-based language (e.g. "represents a likely possibility", "probable trend").
+{safety_constraint}
 """
     return system_prompt, context
 
