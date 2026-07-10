@@ -1314,17 +1314,17 @@ async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_d
     """
     stock_dict = None
     sources = []
-    
-    if payload.scheme_code: # We will use scheme_code field in the request payload to pass stock ID/symbol for convenience
-        symbol = str(payload.scheme_code).upper().strip() # Or pass symbol
-    else:
-        symbol = None
-        
-    # Let's inspect the message query to see if a symbol is mentioned
+
+    # The current page's symbol is always sent explicitly by the frontend as
+    # `payload.symbol` — the user shouldn't have to name the stock in their
+    # message for it to be grounded (see useStockAIChat / StockDetail.jsx).
+    symbol = (payload.symbol or "").upper().strip() or None
+
+    # Fallback only for symbol-agnostic sessions (e.g. a general chat entry
+    # point with no page context): scan the message for a ticker mention.
     if not symbol:
         for word in payload.message.split():
             clean_word = word.replace("$", "").upper().strip()
-            # Check if this matches a seeded symbol
             q = await db.execute(select(StockMaster.symbol).where(StockMaster.symbol == clean_word))
             if q.scalar_one_or_none():
                 symbol = clean_word
@@ -1334,10 +1334,14 @@ async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_d
         stock_q = await db.execute(select(StockMaster).where(StockMaster.symbol == symbol))
         stock = stock_q.scalar_one_or_none()
         if stock:
+            # Full field set — matches the briefing endpoint's stock_dict so
+            # get_stock_verdict (briefing_intelligence.get_verdict_snapshot)
+            # scores identically to the Alpha Score badge and AI Briefing.
             stock_dict = {
                 "symbol": stock.symbol,
                 "company_name": stock.company_name,
                 "sector": stock.sector,
+                "industry": stock.industry,
                 "market_cap": stock.market_cap,
                 "pe_ratio": stock.pe_ratio,
                 "pb_ratio": stock.pb_ratio,
@@ -1348,10 +1352,20 @@ async def ai_stock_chat(payload: AIChatRequest, db: AsyncSession = Depends(get_d
                 "alpha_score": stock.alpha_score,
                 "cagr_1y": stock.cagr_1y,
                 "cagr_3y": stock.cagr_3y,
-                "cagr_5y": stock.cagr_5y
+                "cagr_5y": stock.cagr_5y,
+                "fundamental_score": stock.fundamental_score,
+                "quality_score": stock.quality_score,
+                "valuation_score": stock.valuation_score,
+                "technical_score": stock.technical_score,
+                "risk_score": stock.risk_score,
+                "sector_relative_score": stock.sector_relative_score,
+                "investor_verdict": stock.investor_verdict,
+                "trader_verdict": stock.trader_verdict,
+                "trend_structure": stock.trend_structure,
+                "confidence_score": stock.confidence_score,
             }
             sources.append(stock.company_name)
-            
+
     try:
         from app.services.ai_agent import run_stock_chat
         ai_response = await run_stock_chat(payload.message, payload.history, stock_dict)

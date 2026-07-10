@@ -631,6 +631,62 @@ def validate_briefing_output(
     }
 
 
+def get_verdict_snapshot(stock_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Assembles the same grounding facts as the AI Equity Briefing / Alpha Score
+    badge (data quality, deterministic rubric, sector benchmark, Alpha Score model
+    verdicts) into a single dict. Used as the `get_stock_verdict` tool result for
+    the Interactive Analyst Terminal chat agent, so chat answers are built from
+    the exact same numbers as the rest of the page and can't drift from them."""
+    quality = assess_data_quality(stock_data)
+    sector_label, benchmarks = resolve_sector_benchmark(stock_data.get("sector"))
+    anchor = score_verdict(stock_data, benchmarks)
+    divergence = check_verdict_divergence(anchor, stock_data)
+    divergence_reason = compute_divergence_reason(anchor, divergence)
+
+    return {
+        "symbol": stock_data.get("symbol"),
+        "company_name": stock_data.get("company_name"),
+        "sector": stock_data.get("sector"),
+        "sector_benchmark_used": sector_label,
+        "industry": stock_data.get("industry"),
+        "key_metrics": {
+            "market_cap_cr": stock_data.get("market_cap"),
+            "pe_ratio": stock_data.get("pe_ratio"),
+            "pb_ratio": stock_data.get("pb_ratio"),
+            "roe_pct": stock_data.get("roe"),
+            "debt_equity": stock_data.get("debt_equity"),
+            "dividend_yield_pct": stock_data.get("dividend_yield"),
+            "beta": stock_data.get("beta"),
+            "cagr_1y_pct": round((stock_data.get("cagr_1y") or 0) * 100, 2) if stock_data.get("cagr_1y") is not None else None,
+            "cagr_3y_pct": round((stock_data.get("cagr_3y") or 0) * 100, 2) if stock_data.get("cagr_3y") is not None else None,
+            "cagr_5y_pct": round((stock_data.get("cagr_5y") or 0) * 100, 2) if stock_data.get("cagr_5y") is not None else None,
+        },
+        "alpha_score": stock_data.get("alpha_score"),
+        "alpha_score_model_verdict": {
+            "investor_verdict": stock_data.get("investor_verdict") or "HOLD",
+            "trader_verdict": stock_data.get("trader_verdict") or "HOLD",
+            "trend_structure": stock_data.get("trend_structure"),
+        },
+        "deterministic_rubric": {
+            "pillar_scores_0_to_10": anchor["pillar_scores"],
+            "pillar_notes": anchor["pillar_notes"],
+            "weighted_score_0_to_10": anchor["final_score"],
+            "verdict": anchor["verdict"],
+            "stance": anchor["stance"],
+        },
+        "verdict_agreement": {
+            "diverges_from_alpha_score_model": divergence["diverges"],
+            "explanation_if_diverges": divergence_reason["gap_explanation"] if divergence["diverges"] else None,
+        },
+        "data_quality": {
+            "confidence_label": quality["confidence_label"],
+            "completeness_pct": quality["data_completeness_pct"],
+            "missing_fields": quality["missing_fields"],
+            "anomalies": quality["anomalies"],
+        },
+    }
+
+
 def build_storage_payload(
     text: str,
     quality: Dict[str, Any],

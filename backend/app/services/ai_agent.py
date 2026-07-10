@@ -1,4 +1,5 @@
 from datetime import datetime
+import asyncio
 import json
 import logging
 import re
@@ -695,58 +696,182 @@ Upcoming Calendar Events:
         validation = validate_briefing_output(mock_text, stock_data, anchor)
         return build_storage_payload(mock_text, quality, anchor, validation, divergence)
 
+STOCK_VERDICT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_stock_verdict",
+        "description": (
+            "Returns the deterministic Alpha Score verdict, pillar breakdown, sector "
+            "benchmark comparison, and key fundamental/valuation/risk metrics for a "
+            "stock symbol. This is the SAME scoring engine that drives the Alpha "
+            "Score badge and AI Equity Briefing on the page — always call this for "
+            "the stock currently being discussed before answering any question about "
+            "its valuation, quality, risk, or outlook, so your answer can never "
+            "contradict the deterministic verdict shown elsewhere on the page."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The stock ticker symbol, e.g. ABREL",
+                }
+            },
+            "required": ["symbol"],
+        },
+    },
+}
+
+
+def _make_stock_verdict_tool_executor(stock_data: Optional[Dict[str, Any]]):
+    """Binds the get_stock_verdict tool to the single stock already loaded for
+    this chat session (the page's current symbol). Scoped to one stock for now,
+    per the single-stock chat context — compare_stocks / get_sector_outlook /
+    get_watchlist_analytics tools would follow this same pattern for
+    multi-stock chat contexts."""
+    from app.services.briefing_intelligence import get_verdict_snapshot
+
+    def _execute(symbol_arg: str) -> Dict[str, Any]:
+        requested = (symbol_arg or "").upper().strip()
+        loaded_symbol = (stock_data.get("symbol") or "").upper().strip() if stock_data else ""
+        if not stock_data or not loaded_symbol:
+            return {"error": "No stock is loaded in this chat session. Ask the user which stock they mean."}
+        if requested and requested != loaded_symbol:
+            return {
+                "error": (
+                    f"'{requested}' is not the stock loaded in this session. "
+                    f"Only live data for {loaded_symbol} is available here."
+                )
+            }
+        return get_verdict_snapshot(stock_data)
+
+    return _execute
+
+
 async def run_stock_chat(message: str, history: List[ChatMessage], stock_data: Optional[Dict[str, Any]] = None) -> str:
     """
-    Conversational chatbot for stocks with context injection.
+    Tool-calling chatbot for stocks. Automatically has the current page's stock
+    symbol injected as context, and is instructed to call get_stock_verdict —
+    the same deterministic scoring engine behind the Alpha Score badge and AI
+    Equity Briefing — before answering questions about the stock, so its answers
+    are grounded in real data rather than generic market commentary.
     """
     _init_groq()
     if not groq_configured:
         return _mock_stock_chat_response(message, stock_data)
-        
-    system_instruction = (
-        "You are AlphaMatrix AI Equity Analyst. You help users analyze Indian stocks, explain fundamental ratios, and compare companies. "
-        "When the user asks about investing in a stock, you must check its returns, sector metrics, valuation parameters, and give a clear recommendation of "
-        "either BUY, HOLD, or AVOID in bold, considering macroeconomic risks. Never claim certainty."
-    )
-    
-    context = ""
+
+    from app.services.briefing_intelligence import assess_data_quality, CONFIDENCE_HEDGING_GUIDANCE
+
+    symbol = (stock_data.get("symbol") if stock_data else None) or None
+
+    hedging_note = ""
     if stock_data:
-        context = f"""
-Currently the user is viewing details for the stock: {stock_data.get('company_name')} ({stock_data.get('symbol')}).
-Metrics:
-- Sector: {stock_data.get('sector')}
-- Market Cap: ₹{stock_data.get('market_cap')} Cr
-- P/E Ratio: {stock_data.get('pe_ratio')}
-- P/B Ratio: {stock_data.get('pb_ratio')}
-- ROE: {stock_data.get('roe')}%
-- Debt/Equity: {stock_data.get('debt_equity')}
-- Dividend Yield: {stock_data.get('dividend_yield')}%
-- Beta: {stock_data.get('beta')}
-- Alpha Score: {stock_data.get('alpha_score')}
-- CAGR 1Y: {round((stock_data.get('cagr_1y') or 0)*100, 2)}%
-- CAGR 3Y: {round((stock_data.get('cagr_3y') or 0)*100, 2)}%
-- CAGR 5Y: {round((stock_data.get('cagr_5y') or 0)*100, 2)}%
-Use these details to answer user queries about this stock.
-"""
-    
-    messages = [{"role": "system", "content": system_instruction}]
-    if context:
-        messages.append({"role": "system", "content": context})
-        
+        quality = assess_data_quality(stock_data)
+        hedging_note = "\n\n" + CONFIDENCE_HEDGING_GUIDANCE[quality["confidence_label"]].format(
+            completeness=quality["data_completeness_pct"],
+            available=quality["available_metrics"],
+            total=quality["total_metrics"],
+        )
+
+    system_instruction = (
+        "You are AlphaMatrix AI Equity Analyst, embedded in the Interactive Analyst "
+        "Terminal beneath a stock's AI Equity Briefing. You help users understand "
+        "Indian stocks, explain fundamental ratios, and discuss outlook — always "
+        "grounded in the platform's own deterministic Alpha Score verdict, never in "
+        "generic market commentary.\n\n"
+        + (
+            f"The user is currently viewing {symbol}. Before your FIRST substantive "
+            f"reply about this stock, call get_stock_verdict('{symbol}') if you have "
+            f"not already received its result in this conversation — do this even if "
+            f"the user's question doesn't name the stock explicitly (e.g. 'why is the "
+            f"ROE negative?' or 'what is the future prediction?' both refer to {symbol}).\n\n"
+            if symbol else
+            "No stock is currently loaded in this session. If the user asks about a "
+            "specific company, ask them to confirm the ticker; do not fabricate metrics.\n\n"
+        )
+        + "RULES:\n"
+        "1. Label factual claims from get_stock_verdict as [DATA] and interpretation/"
+        "forward-looking commentary as [ANALYTICAL] — never invent a number that isn't "
+        "in the tool result.\n"
+        "2. Your investment stance MUST match the tool's deterministic rubric verdict "
+        "and the Alpha Score model verdict (investor/trader). You may add narrative "
+        "nuance, but do not contradict them; if you think qualitative factors argue "
+        "otherwise, say so explicitly as a caveat rather than silently overriding it.\n"
+        "3. If a metric is missing from the tool result, say so plainly instead of "
+        "guessing a value.\n"
+        "4. Never claim certainty about future stock performance. This is not "
+        "financial advice — frame forward-looking statements as hedged, probabilistic "
+        "reads, not guarantees, scaled to the data confidence noted below."
+        + hedging_note
+    )
+
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_instruction}]
     for msg in history:
         role = "user" if msg.role == "user" else "assistant"
         messages.append({"role": role, "content": msg.content})
-        
     messages.append({"role": "user", "content": message})
-    
+
+    tool_executor = _make_stock_verdict_tool_executor(stock_data)
+    already_called_tool = any(m.get("role") == "tool" for m in messages)
+    # Force the verdict lookup on the first turn of a session so grounding never
+    # depends on the model choosing to call it; subsequent turns use "auto" since
+    # the tool result is already in the running conversation context.
+    force_first_call = bool(symbol) and not already_called_tool
+
     try:
-        response = groq_client.chat.completions.create(
+        for _ in range(3):
+            tool_choice = (
+                {"type": "function", "function": {"name": "get_stock_verdict"}}
+                if force_first_call else "auto"
+            )
+            response = await asyncio.to_thread(
+                groq_client.chat.completions.create,
+                model=AI_MODEL,
+                messages=messages,
+                tools=[STOCK_VERDICT_TOOL],
+                tool_choice=tool_choice,
+                timeout=30.0,
+            )
+            force_first_call = False
+            choice_msg = response.choices[0].message
+            tool_calls = getattr(choice_msg, "tool_calls", None)
+
+            if not tool_calls:
+                return clean_r1_response(choice_msg.content or "")
+
+            messages.append({
+                "role": "assistant",
+                "content": choice_msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in tool_calls
+                ],
+            })
+            for tc in tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result = tool_executor(args.get("symbol", symbol or ""))
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": "get_stock_verdict",
+                    "content": json.dumps(result, default=str),
+                })
+
+        # Tool-call loop exhausted without a final answer — ask once more without tools.
+        final = await asyncio.to_thread(
+            groq_client.chat.completions.create,
             model=AI_MODEL,
             messages=messages,
-            timeout=30.0
+            timeout=30.0,
         )
-        raw_content = response.choices[0].message.content
-        return clean_r1_response(raw_content)
+        return clean_r1_response(final.choices[0].message.content or "")
     except Exception as e:
         logger.error(f"Groq stock chat failed: {e}")
         return f"I apologize, I encountered an issue interacting with the AI endpoint. Here is a baseline response based on stock context:\n{_mock_stock_chat_response(message, stock_data)}"
