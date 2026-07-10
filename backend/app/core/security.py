@@ -1,6 +1,6 @@
 import time
 import logging
-from typing import Dict, Tuple, Optional
+from typing import Optional
 from fastapi import Request, HTTPException, status, Depends
 from passlib.context import CryptContext
 from jose import jwt
@@ -30,37 +30,58 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 # --- Rate Limiter ---
-# Sliding window rate limiter
-# Key: IP Address, Value: List of request timestamps
-rate_limit_store: Dict[str, list] = {}
-
+# Redis-backed fixed-window rate limiter (key: ratelimit:{ip}:{window_bucket}).
+#
+# Replaces the previous in-process `rate_limit_store` dict, which lived in a
+# single Python process's memory — on Vercel, each serverless invocation can
+# land on a different (or freshly cold-started) instance, so that dict never
+# actually accumulated a global per-IP count in production; it only limited
+# requests that happened to hit the same warm instance. Same class of bug as
+# the stock pipeline's old in-memory ingestion lock, fixed the same way here:
+# move the counter into Redis so it's shared across all instances.
+#
+# This is a fixed window (bucketed by RATE_LIMIT_PERIOD-second intervals),
+# not the previous sliding log — simpler to implement atomically with a
+# single INCR, at the cost of allowing up to ~2x the configured rate right
+# at a window boundary (a well-known, generally-accepted fixed-window
+# tradeoff). If stricter enforcement at the boundary is needed later, this
+# would need to move to a Redis sorted-set sliding-log or a Lua script.
+#
+# Fail-open on Redis errors: reuses the same convention as
+# RedisClient.set_nx/zincrby elsewhere in this codebase (e.g. the QStash
+# pipeline locks) — if Redis is down, requests are allowed through rather
+# than blocked or the endpoint erroring. This was a deliberate choice to
+# stay consistent with the rest of the codebase rather than invent a new
+# policy just for rate limiting; the tradeoff is that abuse/DoS traffic
+# would go unthrottled for the duration of a Redis outage.
 async def check_rate_limit(request: Request):
     """
     Rate limiting dependency.
-    Prevents abuse by tracking requests per IP.
+    Prevents abuse by tracking requests per IP, shared across all instances via Redis.
     """
+    from app.core.redis import redis_client
+
     client_ip = request.client.host if request.client else "unknown-ip"
-    current_time = time.time()
-    
-    # Clean up older logs
-    window_start = current_time - settings.RATE_LIMIT_PERIOD
-    
-    # Get request logs for client
-    client_logs = rate_limit_store.get(client_ip, [])
-    client_logs = [t for t in client_logs if t > window_start]
-    
-    if len(client_logs) >= settings.RATE_LIMIT_CALLS:
+    window_bucket = int(time.time() // settings.RATE_LIMIT_PERIOD)
+    key = f"ratelimit:{client_ip}:{window_bucket}"
+
+    count = await redis_client.incr(key)
+    if count == 1:
+        # First request in this window — set the bucket to expire so it's
+        # self-cleaning (a couple of seconds of slack beyond the window
+        # itself is harmless and avoids a race with the INCR above).
+        try:
+            await redis_client.expire(key, settings.RATE_LIMIT_PERIOD + 5)
+        except Exception as e:
+            logger.error(f"Failed to set TTL on rate limit key {key}: {e}")
+
+    if count > settings.RATE_LIMIT_CALLS:
         logger.warning(f"Rate limit exceeded for client: {client_ip}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded. Please try again later."
         )
-        
-    client_logs.append(current_time)
-    rate_limit_store[client_ip] = client_logs
-    
-    # Header injections (standard rate limiting practice)
-    # We can inject these into response headers if needed, but standard dependency check is sufficient
+
     return True
 
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials

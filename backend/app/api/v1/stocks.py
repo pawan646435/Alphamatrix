@@ -1797,17 +1797,31 @@ async def advance_ingestion_pipeline(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Frontend-driven pipeline advancement — Vercel Hobby compatible.
+    Frontend-driven pipeline advancement — QStash-not-configured fallback
+    (e.g. Vercel Hobby without QSTASH_TOKEN set).
 
-    Checks the current ingestion_status and runs the NEXT pipeline step:
-      DISCOVERED        → run ingest_step1_history()  (downloads price data)
-      INGESTING         → run ingest_step2_analytics() (compute alpha score)
-      ANALYTICS_RUNNING → run ingest_step3_briefing()  (generate AI briefing)
+    Runs ALL remaining pipeline steps from the stock's current
+    ingestion_status through to READY in a single invocation:
+      DISCOVERED        → step1_history → step2_analytics → step3_briefing → READY
+      INGESTING         → step2_analytics → step3_briefing → READY
+      ANALYTICS_RUNNING → step3_briefing → READY
       READY             → no-op, return immediately
 
-    Each step completes within 8s — safe for Vercel Hobby 10s limit.
-    The frontend calls this endpoint after each /status poll shows a non-READY state.
-    Redis lock prevents duplicate concurrent runs.
+    Previously this advanced exactly one step per call (bounded to fit
+    Vercel's pre-Fluid ~10s Hobby limit), requiring up to 3 separate
+    frontend polling round-trips to reach READY. With Fluid Compute enabled
+    (maxDuration up to 300s on Hobby — see backend/vercel.json), running the
+    full remaining chain in one call is safely within budget (~15-25s worst
+    case for all three steps) and meaningfully cuts time-to-READY. This does
+    NOT change the frontend contract: /status and this endpoint's response
+    shape are unchanged, and the frontend's poll-then-call-if-not-READY loop
+    works identically whether it takes 1 or 3 round-trips to resolve — it
+    will just observe fewer, larger jumps in ingestion_status.
+
+    Stops early (without raising) if any step reports "failed"/"error", so a
+    mid-chain failure doesn't cascade into calling the next stage on bad data.
+    Redis lock is held for the whole multi-step run, not released between
+    steps, so a duplicate concurrent call can't interleave with a run in progress.
     """
     symbol = symbol.upper().strip()
 
@@ -1825,10 +1839,12 @@ async def advance_ingestion_pipeline(
     if ingestion_status == "READY":
         return {"symbol": symbol, "status": "READY", "message": "Already fully ingested."}
 
-    # Check Redis lock — prevent duplicate concurrent pipeline runs
+    # Check Redis lock — prevent duplicate concurrent pipeline runs.
+    # TTL bumped from 60s to 90s to cover the full multi-step chain (up to
+    # ~25s worst case) with headroom, rather than just a single step.
     lock_key = f"pipeline_lock:{symbol}"
     try:
-        lock_acquired = await redis_client.set_nx(lock_key, "1", ex=60)
+        lock_acquired = await redis_client.set_nx(lock_key, "1", ex=90)
     except Exception:
         lock_acquired = True  # Proceed if Redis is unavailable
 
@@ -1845,15 +1861,20 @@ async def advance_ingestion_pipeline(
         )
         from app.core.database import async_session_maker
 
+        STEP_CHAIN = {
+            "DISCOVERED": (ingest_step1_history, ingest_step2_analytics, ingest_step3_briefing),
+            "INGESTING": (ingest_step2_analytics, ingest_step3_briefing),
+            "ANALYTICS_RUNNING": (ingest_step3_briefing,),
+        }
+        steps_to_run = STEP_CHAIN.get(ingestion_status, ())
+        result = {"status": ingestion_status, "message": "Unknown state"}
+
         async with async_session_maker() as step_db:
-            if ingestion_status == "DISCOVERED":
-                result = await ingest_step1_history(symbol, step_db)
-            elif ingestion_status == "INGESTING":
-                result = await ingest_step2_analytics(symbol, step_db)
-            elif ingestion_status == "ANALYTICS_RUNNING":
-                result = await ingest_step3_briefing(symbol, step_db)
-            else:
-                result = {"status": ingestion_status, "message": "Unknown state"}
+            for step_fn in steps_to_run:
+                result = await step_fn(symbol, step_db)
+                # Stop early on failure — don't cascade into the next stage on bad data.
+                if result.get("status") in ("failed", "error"):
+                    break
 
         return {"symbol": symbol, **result}
 

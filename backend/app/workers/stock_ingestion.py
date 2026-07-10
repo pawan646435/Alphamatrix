@@ -1,3 +1,9 @@
+# PEP 563: defer evaluation of annotations to strings so the pd.DataFrame /
+# np.* type hints below don't require pandas/numpy to be imported at module
+# load time — they're only needed inside the specific functions that use them
+# (see lazy `import pandas as pd` / `import numpy as np` in those functions).
+from __future__ import annotations
+
 import asyncio
 import os
 import re
@@ -6,8 +12,6 @@ import logging
 import random
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Tuple, Optional
-import pandas as pd
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete, func
@@ -753,7 +757,8 @@ def calculate_technical_indicators(prices: List[float]) -> Dict[str, Any]:
     """
     if len(prices) < 20:
         return {"rsi": 50.0, "macd_bullish": True, "dma_50": None, "dma_200": None, "latest": prices[-1] if prices else 100.0}
-        
+
+    import pandas as pd
     s = pd.Series(prices)
     latest = prices[-1]
     dma_50 = float(s.rolling(window=min(50, len(prices))).mean().iloc[-1])
@@ -1126,6 +1131,7 @@ def fetch_ticker_data_yfinance(symbol: str) -> Tuple[Optional[pd.DataFrame], Opt
     Handles NSE suffix (.NS) for Indian equities.
     Parallelizes calls using ThreadPoolExecutor and enforces a strict 4.0s timeout.
     """
+    import pandas as pd
     import yfinance as yf
     import requests
     import concurrent.futures
@@ -1279,6 +1285,9 @@ async def _dynamic_ingest_stock_internal(symbol: str, db: AsyncSession) -> Dict[
 
     Returns a dict with status: 'ingested' | 'already_exists' | 'not_found' | 'error'
     """
+    import numpy as np
+    import pandas as pd
+
     logger.info(f"[DynamicIngest] Starting dynamic ingestion for symbol: {symbol}")
 
     # 1. Check if already exists with history (safety check — if fully ingested, skip)
@@ -1788,6 +1797,8 @@ async def ingest_step1_history(symbol: str, db: AsyncSession) -> Dict[str, Any]:
     """
     import asyncio
     import json
+    import numpy as np
+    import pandas as pd
     from app.core.redis import redis_client
 
     symbol = symbol.upper().strip()
@@ -1874,6 +1885,7 @@ async def ingest_step2_analytics(symbol: str, db: AsyncSession) -> Dict[str, Any
     alpha sub-scores. Transitions: INGESTING → ANALYTICS_RUNNING.
     """
     import json
+    import pandas as pd
     from app.core.redis import redis_client
 
     symbol = symbol.upper().strip()
@@ -2068,6 +2080,9 @@ async def seed_stocks_data(db: AsyncSession):
     Main background process to seed stocks metadata and generate
     deterministic daily close price timeseries in the database.
     """
+    import numpy as np
+    import pandas as pd
+
     logger.info("Initializing stock table verification & seeding...")
     
     # 5.5 years historical price range

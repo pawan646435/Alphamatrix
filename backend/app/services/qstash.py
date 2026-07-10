@@ -58,7 +58,7 @@ async def publish_ingestion_job(symbol: str) -> bool:
                     "Authorization": f"Bearer {settings.QSTASH_TOKEN}",
                     "Content-Type": "application/json",
                     "Upstash-Retries": "2",           # retry up to 2 times on failure
-                    "Upstash-Timeout": "55s",          # allow up to 55s (within our 60s maxDuration)
+                    "Upstash-Timeout": "280s",         # allow up to 280s (within our 300s Fluid maxDuration — see backend/vercel.json)
                     "Upstash-Delay": "0s",             # fire immediately
                 },
                 content=json.dumps({"symbol": symbol}),
@@ -74,6 +74,56 @@ async def publish_ingestion_job(symbol: str) -> bool:
 
     except Exception as e:
         logger.error(f"[QStash] Publish exception for {symbol}: {e}")
+        return False
+
+
+async def publish_fund_ingestion_job(scheme_code: int, mode: str = "full") -> bool:
+    """
+    Publish a background fund-ingestion job to QStash.
+
+    QStash will call POST /api/v1/internal/ingest-fund-background with
+    {"scheme_code": scheme_code, "mode": mode}.
+
+    mode:
+      "full"            — full NAV ingest + rating recompute + AI summary
+                           (mirrors the old funds.py `_ingest_and_brief`)
+      "ai_summary_only" — regenerate just the AI summary for an already-ingested fund
+
+    Returns True if published successfully, False otherwise. If QStash is not
+    configured (no QSTASH_TOKEN), returns False so the caller can fall back to
+    the legacy FastAPI BackgroundTasks path.
+    """
+    if not settings.QSTASH_TOKEN:
+        logger.warning("[QStash] QSTASH_TOKEN not set — falling back to BackgroundTasks for fund ingestion")
+        return False
+
+    target_url = f"{settings.BACKEND_URL}/api/v1/internal/ingest-fund-background"
+    publish_base = (settings.QSTASH_URL or "https://qstash.upstash.io").rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{publish_base}/v2/publish/{target_url}",
+                headers={
+                    "Authorization": f"Bearer {settings.QSTASH_TOKEN}",
+                    "Content-Type": "application/json",
+                    "Upstash-Retries": "2",           # retry up to 2 times on failure
+                    "Upstash-Timeout": "280s",         # allow up to 280s (within our 300s Fluid maxDuration)
+                    "Upstash-Delay": "0s",             # fire immediately
+                },
+                content=json.dumps({"scheme_code": scheme_code, "mode": mode}),
+            )
+
+        if resp.status_code in (200, 201, 202):
+            msg_id = resp.json().get("messageId", "?")
+            logger.info(f"[QStash] Published fund ingestion job for {scheme_code} (mode={mode}) → messageId={msg_id}")
+            return True
+        else:
+            logger.error(f"[QStash] Fund publish failed for {scheme_code}: HTTP {resp.status_code} — {resp.text[:200]}")
+            return False
+
+    except Exception as e:
+        logger.error(f"[QStash] Fund publish exception for {scheme_code}: {e}")
         return False
 
 

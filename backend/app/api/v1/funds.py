@@ -29,7 +29,6 @@ from app.core.cache_ttl import (
 
 router = APIRouter()
 logger = logging.getLogger("app.api.v1.funds")
-ingesting_funds = set()
 
 # In-memory cache for all Indian mutual funds search
 MF_MASTER_LIST = []
@@ -286,50 +285,94 @@ async def get_fund_detail(
             
     # Trigger background ingestion if new skeleton or if metrics are missing
     if is_new or (fund.cagr_1y is None and fund.category == "Equity" and fund.sub_category == "Unknown"):
-        if scheme_code not in ingesting_funds:
-            ingesting_funds.add(scheme_code)
-            logger.info(f"Fund {scheme_code} is in skeleton/discovering state — scheduling background ingestion")
-            async def _ingest_and_brief(code: int):
-                from app.core.database import async_session_maker
-                from app.workers.ingestion import ingest_fund, generate_summary_background
-                from app.models.fund import FundMaster
-                try:
-                    async with async_session_maker() as ingest_session:
-                        await ingest_fund(ingest_session, code, force_recompute=True)
-                        await generate_summary_background(code)
-                except Exception as e:
-                    logger.error(f"Background ingest failed for fund {code}: {e}")
-                    # Mark fund as invalid in database to prevent infinite discovery loops
-                    async with async_session_maker() as cleanup_session:
-                        res = await cleanup_session.execute(
-                            select(FundMaster).where(FundMaster.scheme_code == code)
-                        )
-                        f = res.scalar_one_or_none()
-                        if f:
-                            f.isin = "Invalid"
-                            f.fund_name = f"Invalid Fund ({code})"
-                            await cleanup_session.commit()
-                finally:
-                    ingesting_funds.discard(code)
-            background_tasks.add_task(_ingest_and_brief, scheme_code)
-        
+        # Short-lived Redis trigger-dedup key replaces the old in-process
+        # `ingesting_funds` set, which does not survive across separate Vercel
+        # serverless invocations. This is deliberately a DIFFERENT key from
+        # fund_pipeline_lock:{scheme_code} (acquired only inside
+        # internal.py:ingest_fund_background) — mirrors the stock pipeline,
+        # where /meta never pre-acquires pipeline_lock:{symbol} either; that
+        # lock exists solely to make QStash's own automatic retries idempotent.
+        trigger_key = f"fund_ingest_trigger:{scheme_code}"
+        try:
+            trigger_acquired = await redis_client.set_nx(trigger_key, "1", ex=60)
+        except Exception:
+            trigger_acquired = True  # Fail open if Redis is down
+
+        if trigger_acquired:
+            from app.services.qstash import publish_fund_ingestion_job, is_qstash_configured
+
+            published = False
+            if is_qstash_configured():
+                published = await publish_fund_ingestion_job(scheme_code, mode="full")
+
+            if not published:
+                # QStash not configured (or publish failed) — fall back to the
+                # legacy in-process BackgroundTasks path. Best-effort only: on
+                # Vercel this can be silently dropped if the instance freezes
+                # right after the response is sent.
+                logger.info(f"Fund {scheme_code} is in skeleton/discovering state — scheduling background ingestion (BackgroundTasks fallback)")
+
+                async def _ingest_and_brief(code: int):
+                    from app.core.database import async_session_maker
+                    from app.workers.ingestion import ingest_fund, generate_summary_background
+                    from app.models.fund import FundMaster
+                    try:
+                        async with async_session_maker() as ingest_session:
+                            await ingest_fund(ingest_session, code, force_recompute=True)
+                            await generate_summary_background(code)
+                    except Exception as e:
+                        logger.error(f"Background ingest failed for fund {code}: {e}")
+                        # Mark fund as invalid in database to prevent infinite discovery loops
+                        async with async_session_maker() as cleanup_session:
+                            res = await cleanup_session.execute(
+                                select(FundMaster).where(FundMaster.scheme_code == code)
+                            )
+                            f = res.scalar_one_or_none()
+                            if f:
+                                f.isin = "Invalid"
+                                f.fund_name = f"Invalid Fund ({code})"
+                                await cleanup_session.commit()
+                background_tasks.add_task(_ingest_and_brief, scheme_code)
+            # else: QStash job published — internal.py:ingest_fund_background
+            # owns fund_pipeline_lock:{scheme_code} for the actual run.
+
     # Trigger background AI summary if missing (for already ingested funds)
     trigger_background = False
     if fund.cagr_1y is not None:
         if not fund.ai_summary or fund.ai_summary == "Generating AI Analysis in the background...":
-            from app.workers.ingestion import generate_summary_background
-            logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
-            fund.ai_summary = "Generating AI Analysis in the background..."
-            await db.commit()
-            await db.refresh(fund)
-            trigger_background = True
-            
+            # Same trigger-dedup key as the skeleton-ingestion branch above —
+            # the two branches are mutually exclusive (cagr_1y is None vs. is
+            # not None) so sharing the key is safe and prevents duplicate
+            # QStash publishes/BackgroundTasks while a summary is in flight
+            # (the placeholder string alone doesn't dedupe: a concurrent
+            # request would otherwise see the same placeholder and re-trigger).
+            trigger_key = f"fund_ingest_trigger:{scheme_code}"
             try:
-                await redis_client.delete(f"fund_ai:{scheme_code}")
-            except Exception as e:
-                logger.error(f"Failed to clear Redis cache on summary status change: {e}")
-                    
-            background_tasks.add_task(generate_summary_background, scheme_code)
+                trigger_acquired = await redis_client.set_nx(trigger_key, "1", ex=60)
+            except Exception:
+                trigger_acquired = True  # Fail open if Redis is down
+
+            if trigger_acquired:
+                logger.info(f"Triggering background AI summary generation for existing fund: {scheme_code}")
+                fund.ai_summary = "Generating AI Analysis in the background..."
+                await db.commit()
+                await db.refresh(fund)
+                trigger_background = True
+
+                try:
+                    await redis_client.delete(f"fund_ai:{scheme_code}")
+                except Exception as e:
+                    logger.error(f"Failed to clear Redis cache on summary status change: {e}")
+
+                from app.services.qstash import publish_fund_ingestion_job, is_qstash_configured
+
+                published = False
+                if is_qstash_configured():
+                    published = await publish_fund_ingestion_job(scheme_code, mode="ai_summary_only")
+
+                if not published:
+                    from app.workers.ingestion import generate_summary_background
+                    background_tasks.add_task(generate_summary_background, scheme_code)
 
     navs = []
     if cached_chart:
@@ -560,13 +603,46 @@ async def sync_fund_manual(
 @router.post("/sync-all")
 async def trigger_all_funds_sync(background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """
-    Trigger overnight sync for all loaded funds in the background.
+    Trigger a resync of all loaded funds.
+
+    QStash configured: publishes one "full" ingestion job per fund (fan-out),
+    each independently locked/idempotent via fund_pipeline_lock:{scheme_code}
+    and individually bounded by the function's maxDuration — safer than one
+    long BackgroundTasks loop over every fund in a single invocation.
+
+    QStash not configured: falls back to the legacy single BackgroundTasks
+    loop (run_overnight_sync), which now opens its own DB session rather than
+    reusing this request's session (that session is closed by the time a
+    background task runs, since Starlette tears down request-scoped
+    dependencies before executing background tasks).
     """
     try:
         await redis_client.delete_pattern("funds_list:*")
     except Exception as e:
         logger.error(f"Failed to delete Redis cache keys for sync-all: {e}")
-    from app.workers.cron_jobs import run_overnight_sync
 
-    background_tasks.add_task(run_overnight_sync, db)
-    return {"status": "accepted", "message": "Overnight batch update task launched in the background."}
+    scheme_codes_q = await db.execute(select(FundMaster.scheme_code))
+    scheme_codes = scheme_codes_q.scalars().all()
+
+    from app.services.qstash import publish_fund_ingestion_job, is_qstash_configured
+
+    if is_qstash_configured():
+        published = 0
+        failed = []
+        for code in scheme_codes:
+            ok = await publish_fund_ingestion_job(code, mode="full")
+            if ok:
+                published += 1
+            else:
+                failed.append(code)
+        return {
+            "status": "accepted",
+            "message": f"Published {published}/{len(scheme_codes)} fund ingestion jobs to QStash.",
+            "published": published,
+            "total": len(scheme_codes),
+            "failed_to_publish": failed,
+        }
+
+    from app.workers.cron_jobs import run_overnight_sync
+    background_tasks.add_task(run_overnight_sync)
+    return {"status": "accepted", "message": "Overnight batch update task launched in the background (BackgroundTasks fallback — QStash not configured)."}

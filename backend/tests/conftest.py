@@ -14,6 +14,14 @@ os.environ["REDIS_URL"] = ""
 os.environ["UPSTASH_REDIS_REST_URL"] = ""
 os.environ["UPSTASH_REDIS_REST_TOKEN"] = ""
 os.environ["GROQ_API_KEY"] = ""
+# Blank QStash creds so is_qstash_configured() is False during tests — without
+# this, stock/fund ingestion routes that branch on QStash config pick up the
+# real QSTASH_TOKEN/BACKEND_URL from backend/.env and fire actual publish
+# calls to production QStash (targeting the real deployed backend URL), which
+# a local/CI pytest run can never observe a webhook callback from. Tests then
+# exercise the synchronous BackgroundTasks fallback path instead, matching
+# the rest of this file's existing pattern of neutralizing external services.
+os.environ["QSTASH_TOKEN"] = ""
 os.environ["SECRET_KEY"] = "TEST_SECRET_KEY_DONT_USE_IN_PROD"
 os.environ["RATE_LIMIT_CALLS"] = "10000"
 os.environ["RATE_LIMIT_PERIOD"] = "3600"

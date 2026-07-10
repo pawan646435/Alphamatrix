@@ -226,6 +226,37 @@ class RedisClient:
                 return False
         return False
 
+    async def incr(self, key: str) -> int:
+        """INCR key — atomic increment, creates key at 1 if missing.
+        Returns 0 on any Redis error (fail open — same convention as
+        zincrby/zrevrange below), so callers that compare the result against
+        a threshold (e.g. rate limiting) treat a Redis outage as "not over
+        the limit yet" rather than raising or blocking.
+        """
+        self._ensure_client()
+        if self.redis_client:
+            try:
+                return int(self.redis_client.incr(key))
+            except Exception as e:
+                logger.error(f"TCP Redis INCR failed: {e}")
+                return 0
+
+        if self.rest_url and self.rest_token:
+            try:
+                client = _get_http_client()
+                response = await client.post(
+                    self.rest_url,
+                    json=["INCR", key],
+                    headers={"Authorization": f"Bearer {self.rest_token}"},
+                )
+                if response.status_code == 200:
+                    result = response.json().get("result")
+                    return int(result) if result is not None else 0
+            except Exception as e:
+                logger.error(f"Upstash Redis REST INCR failed: {e}")
+                return 0
+        return 0
+
     async def zincrby(self, key: str, increment: float, member: str) -> float:
         """Increment the score of a member in a sorted set. Creates if not exists."""
         self._ensure_client()

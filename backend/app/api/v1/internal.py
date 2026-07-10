@@ -42,6 +42,11 @@ class IngestRequest(BaseModel):
     symbol: str
 
 
+class FundIngestRequest(BaseModel):
+    scheme_code: int
+    mode: str = "full"  # "full" | "ai_summary_only"
+
+
 # ── Dependency: verify QStash signature ──────────────────────────────────────
 
 async def _require_qstash_signature(
@@ -98,7 +103,14 @@ async def ingest_background(
     # ── Redis distributed lock — prevent duplicate runs ───────────────────────
     lock_key = f"pipeline_lock:{symbol}"
     try:
-        lock_acquired = await redis_client.set_nx(lock_key, "qstash", ex=120)
+        # TTL bumped from 120s to 280s to stay above the QStash publish
+        # timeout (also 280s, see services/qstash.py) now that Fluid Compute
+        # allows up to 300s maxDuration — previously both were tuned for the
+        # pre-Fluid 60s ceiling (120s lock, 55s QStash timeout). Keeping the
+        # lock TTL >= the QStash timeout avoids the lock expiring mid-run and
+        # letting a QStash retry acquire a fresh lock while the original
+        # invocation is still legitimately in progress.
+        lock_acquired = await redis_client.set_nx(lock_key, "qstash", ex=280)
     except Exception:
         lock_acquired = True  # Fail open if Redis is down
 
@@ -182,6 +194,85 @@ async def ingest_background(
 
     finally:
         # Always release the lock
+        try:
+            await redis_client.delete(lock_key)
+        except Exception:
+            pass
+
+
+# ── Fund ingestion endpoint ───────────────────────────────────────────────────
+# Mirrors the stock pipeline above: QStash calls this instead of the old
+# FastAPI BackgroundTasks.add_task(...) calls in api/v1/funds.py, which did not
+# reliably survive across separate Vercel serverless invocations.
+
+@router.post(
+    "/ingest-fund-background",
+    dependencies=[Depends(_require_qstash_signature)],
+    summary="QStash-triggered fund ingestion / AI summary regeneration",
+)
+async def ingest_fund_background(
+    payload: FundIngestRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fund ingestion triggered by QStash. Two modes:
+      "full"            — NAV ingest + rating recompute + AI summary
+                           (mirrors the old funds.py `_ingest_and_brief`)
+      "ai_summary_only" — regenerate just the AI summary
+
+    Protected by Redis lock (fund_pipeline_lock:{scheme_code}) to prevent
+    duplicate runs on QStash retry, same pattern as pipeline_lock:{symbol}.
+    """
+    from app.models.fund import FundMaster
+    from app.workers.ingestion import ingest_fund, generate_summary_background
+
+    scheme_code = payload.scheme_code
+    mode = payload.mode
+    start_t = time.perf_counter()
+
+    logger.info(f"[BgFundIngest] Starting fund pipeline for {scheme_code} (mode={mode})")
+
+    lock_key = f"fund_pipeline_lock:{scheme_code}"
+    try:
+        lock_acquired = await redis_client.set_nx(lock_key, "qstash", ex=280)
+    except Exception:
+        lock_acquired = True  # Fail open if Redis is down
+
+    if not lock_acquired:
+        logger.info(f"[BgFundIngest] {scheme_code} already being ingested — skipping (fund_pipeline_lock held)")
+        return {"scheme_code": scheme_code, "status": "already_running", "message": "Pipeline lock held by another instance"}
+
+    try:
+        if mode == "ai_summary_only":
+            await generate_summary_background(scheme_code)
+        else:
+            try:
+                await ingest_fund(db, scheme_code, force_recompute=True)
+                await generate_summary_background(scheme_code)
+            except Exception as e:
+                logger.error(f"[BgFundIngest] Full ingest failed for {scheme_code}: {e}")
+                # Mark fund as invalid in database to prevent infinite discovery loops
+                # (mirrors the old funds.py `_ingest_and_brief` except-block behavior)
+                res = await db.execute(select(FundMaster).where(FundMaster.scheme_code == scheme_code))
+                f = res.scalar_one_or_none()
+                if f:
+                    f.isin = "Invalid"
+                    f.fund_name = f"Invalid Fund ({scheme_code})"
+                    await db.commit()
+                total = round(time.perf_counter() - start_t, 2)
+                return {"scheme_code": scheme_code, "status": "error", "error": str(e)[:500], "total_seconds": total}
+
+        total = round(time.perf_counter() - start_t, 2)
+        logger.info(f"[BgFundIngest] ✅ {scheme_code} done in {total}s (mode={mode})")
+        return {"scheme_code": scheme_code, "status": "READY", "mode": mode, "total_seconds": total}
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[BgFundIngest] {scheme_code} pipeline crashed: {e}\n{tb}")
+        return {"scheme_code": scheme_code, "status": "error", "error": str(e)[:500]}
+
+    finally:
         try:
             await redis_client.delete(lock_key)
         except Exception:
